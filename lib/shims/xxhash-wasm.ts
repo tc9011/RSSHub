@@ -1,3 +1,4 @@
+// oxlint-disable unicorn/prefer-math-trunc unicorn-js/no-this-outside-of-class
 // xxhash-wasm shim for Cloudflare Workers
 // Uses Web Crypto API instead of WebAssembly
 
@@ -28,7 +29,7 @@ const simpleHash32 = (input: Uint8Array, seed = 0): number => {
     return hash >>> 0;
 };
 
-function xxhash(): Promise<XXHashAPI> {
+function xxhash(): XXHashAPI {
     return {
         h32: (input: string, seed?: number): number => simpleHash32(encoder.encode(input), seed),
         h32ToString: (input: string, seed?: number): string => simpleHash32(encoder.encode(input), seed).toString(16).padStart(8, '0'),
@@ -37,7 +38,7 @@ function xxhash(): Promise<XXHashAPI> {
             const chunks: Uint8Array[] = [];
             return {
                 update(input: string | Uint8Array) {
-                    chunks.push(typeof input === 'string' ? encoder.encode(input) : input);
+                    chunks.push(input instanceof Uint8Array ? input : encoder.encode(input));
                     return this;
                 },
                 digest() {

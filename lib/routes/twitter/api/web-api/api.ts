@@ -3,7 +3,9 @@ import InvalidParameterError from '@/errors/types/invalid-parameter';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 
-import { baseUrl, gqlFeatures, gqlMap } from './constants';
+import { getTwitterUserCacheKey } from '../../utils';
+import { baseUrl, gqlFeatures, gqlMap, initGqlMap } from './constants';
+import type { ApiParams } from './utils';
 import { gatherLegacyFromData, paginationTweets, twitterGot } from './utils';
 
 const getUserData = (id) =>
@@ -41,20 +43,18 @@ const getUserData = (id) =>
         });
     });
 
-const cacheTryGet = async (_id, params, func) => {
+const cacheTryGet = async (_id, params, operationName, func) => {
     const userData: any = await getUserData(_id);
-    const id = (userData.data?.user || userData.data?.user_result)?.result?.rest_id;
+    const id = userData.data?.user?.result?.rest_id;
     if (id === undefined) {
         cache.set(`twitter-userdata-${_id}`, '', config.cache.contentExpire);
         throw new InvalidParameterError('User not found');
     }
-    const funcName = func.name;
-    const paramsString = JSON.stringify(params);
-    return cache.tryGet(`twitter:${id}:${funcName}:${paramsString}`, () => func(id, params), config.cache.routeExpire, false);
+    return cache.tryGet(getTwitterUserCacheKey(id, operationName, params), () => func(id, params), config.cache.routeExpire, false);
 };
 
-const getUserTweets = (id: string, params?: Record<string, any>) =>
-    cacheTryGet(id, params, async (id, params = {}) =>
+const getUserTweets = (id: string, params?: ApiParams) =>
+    cacheTryGet(id, params, 'getUserTweets', async (id, params = {}) =>
         gatherLegacyFromData(
             await paginationTweets('UserTweets', id, {
                 ...params,
@@ -67,8 +67,8 @@ const getUserTweets = (id: string, params?: Record<string, any>) =>
         )
     );
 
-const getUserTweetsAndReplies = (id: string, params?: Record<string, any>) =>
-    cacheTryGet(id, params, async (id, params = {}) =>
+const getUserTweetsAndReplies = (id: string, params?: ApiParams) =>
+    cacheTryGet(id, params, 'getUserTweetsAndReplies', async (id, params = {}) =>
         gatherLegacyFromData(
             await paginationTweets('UserTweetsAndReplies', id, {
                 ...params,
@@ -83,8 +83,8 @@ const getUserTweetsAndReplies = (id: string, params?: Record<string, any>) =>
         )
     );
 
-const getUserMedia = (id: string, params?: Record<string, any>) =>
-    cacheTryGet(id, params, async (id, params = {}) =>
+const getUserMedia = (id: string, params?: ApiParams) =>
+    cacheTryGet(id, params, 'getUserMedia', async (id, params = {}) =>
         gatherLegacyFromData(
             await paginationTweets('UserMedia', id, {
                 ...params,
@@ -98,8 +98,8 @@ const getUserMedia = (id: string, params?: Record<string, any>) =>
         )
     );
 
-const getUserLikes = (id: string, params?: Record<string, any>) =>
-    cacheTryGet(id, params, async (id, params = {}) =>
+const getUserLikes = (id: string, params?: ApiParams) =>
+    cacheTryGet(id, params, 'getUserLikes', async (id, params = {}) =>
         gatherLegacyFromData(
             await paginationTweets('Likes', id, {
                 ...params,
@@ -112,8 +112,8 @@ const getUserLikes = (id: string, params?: Record<string, any>) =>
         )
     );
 
-const getUserTweet = (id: string, params?: Record<string, any>) =>
-    cacheTryGet(id, params, async (id, params = {}) =>
+const getUserTweet = (id: string, params?: ApiParams) =>
+    cacheTryGet(id, params, 'getUserTweet', async (id, params = {}) =>
         gatherLegacyFromData(
             await paginationTweets(
                 'TweetDetail',
@@ -132,7 +132,7 @@ const getUserTweet = (id: string, params?: Record<string, any>) =>
         )
     );
 
-const getSearch = async (keywords: string, params?: Record<string, any>) =>
+const getSearch = async (keywords: string, params?: ApiParams) =>
     gatherLegacyFromData(
         await paginationTweets(
             'SearchTimeline',
@@ -148,7 +148,7 @@ const getSearch = async (keywords: string, params?: Record<string, any>) =>
         )
     );
 
-const getList = async (id: string, params?: Record<string, any>) =>
+const getList = async (id: string, params?: ApiParams) =>
     gatherLegacyFromData(
         await paginationTweets(
             'ListLatestTweetsTimeline',
@@ -159,19 +159,28 @@ const getList = async (id: string, params?: Record<string, any>) =>
                 count: 20,
             },
             ['list', 'tweets_timeline', 'timeline']
-        )
+        ),
+        ['listConversation-']
     );
 
 const getUser = async (id: string) => {
     const userData: any = await getUserData(id);
+
+    if (!userData.data.user) {
+        throw new InvalidParameterError("This account doesn't exist");
+    }
+    if (userData.data.user.result.__typename === 'UserUnavailable') {
+        throw new InvalidParameterError(userData.data.user.result.message || 'User is unavailable');
+    }
+
     return {
         profile_image_url: userData.data?.user?.result?.avatar?.image_url,
+        description: userData.data?.user?.result?.profile_bio?.description,
         ...userData.data?.user?.result?.core,
-        ...(userData.data?.user || userData.data?.user_result)?.result?.legacy,
     };
 };
 
-const getHomeTimeline = async (id: string, params?: Record<string, any>) =>
+const getHomeTimeline = async (id: string, params?: ApiParams) =>
     gatherLegacyFromData(
         await paginationTweets(
             'HomeTimeline',
@@ -188,7 +197,7 @@ const getHomeTimeline = async (id: string, params?: Record<string, any>) =>
         )
     );
 
-const getHomeLatestTimeline = async (id: string, params?: Record<string, any>) =>
+const getHomeLatestTimeline = async (id: string, params?: ApiParams) =>
     gatherLegacyFromData(
         await paginationTweets(
             'HomeLatestTimeline',
@@ -216,5 +225,5 @@ export default {
     getList,
     getHomeTimeline,
     getHomeLatestTimeline,
-    init: () => {},
+    init: initGqlMap,
 };
