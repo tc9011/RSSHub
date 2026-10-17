@@ -3,9 +3,10 @@ import { load } from 'cheerio';
 import type { Route } from '@/types';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import timezone from '@/utils/timezone';
 
 export const route: Route = {
-    path: '/tianjin/tjftz-notice/:channelId',
+    path: '/tjftz-notice/:channelId',
     categories: ['government'],
     example: '/gov/tianjin/tjftz-notice/6302',
     parameters: {
@@ -13,18 +14,16 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['tjftz.gov.cn/channels/:channelId.html'],
-            target: '/tianjin/tjftz-notice/:channelId',
+            source: ['www.tjftz.gov.cn/channels/6302.html', 'tjftz.gov.cn/channels/6302.html'],
+            target: '/tjftz-notice/6302',
         },
     ],
-    name: '天津港保税区-公告',
+    name: '港保税区公告',
     url: 'tjftz.gov.cn',
     maintainers: ['HaoyuLee'],
-    description: `
-| 公告类别         | channelId |
-| ------------ | -- |
-| 首页>新闻>保税区要闻>区域聚焦     | 6302  |
-    `,
+    description: `| 公告类别                            | channelId |
+| ----------------------------------- | --------- |
+| 首页 > 新闻 > 保税区要闻 > 区域聚焦 | 6302      |`,
     async handler(ctx) {
         const { channelId = '6302' } = ctx.req.param();
         const url = `https://www.tjftz.gov.cn/channels/${channelId}.html`;
@@ -34,10 +33,12 @@ export const route: Route = {
             .toArray()
             .map((el) => {
                 const $ = load(el);
+                const date = $('span').text().trim();
+                const pubDate = date ? timezone(parseDate(date, 'YYYY-MM-DD', true), 8) : undefined;
                 return {
                     title: `天津保税区:${$('a').attr('title')}`,
                     link: `https://www.tjftz.gov.cn${$('a').attr('href')}`,
-                    pubDate: parseDate($('span').text().trim()),
+                    pubDate: pubDate && Number.isFinite(pubDate.getTime()) ? pubDate : undefined,
                     author: '天津保税区',
                     description: `
                         <h4>${noticeCate}</h4>

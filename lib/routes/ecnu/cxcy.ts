@@ -1,6 +1,8 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
+import { fetchItems } from '@/routes/ecnu/utils';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
@@ -16,12 +18,16 @@ export const route: Route = {
             source: ['cxcy.ecnu.edu.cn'],
             target: '/cxcy',
         },
+        {
+            source: ['www.cxcy.ecnu.edu.cn'],
+            target: '/cxcy',
+        },
     ],
     name: '本科创新创业教育网',
     maintainers: ['FrozenStarrrr', 'ChiyoYuki', 'ECNU-minus'],
-    description: `| 通知公告     | 新闻动态     | 学科竞赛     | 常用资源     |
-| ------------ | ------------ | ------------ | ------------ |
-| announcement | news         | contest      | resources    |`,
+    description: `| 通知公告     | 新闻动态 | 学科竞赛 | 常用资源  |
+| ------------ | -------- | -------- | --------- |
+| announcement | news     | contest  | resources |`,
     handler: async (ctx) => {
         const fragList = {
             announcement: {
@@ -42,41 +48,41 @@ export const route: Route = {
             },
         };
         const type = ctx.req.param('type') ?? 'announcement';
+        if (!Object.hasOwn(fragList, type)) {
+            throw new InvalidParameterError(`Invalid category: ${type}. Expected announcement, news, contest, or resources.`);
+        }
         const baseUrl = 'http://www.cxcy.ecnu.edu.cn/';
 
         const response = await got(baseUrl);
         const $ = load(response.data);
 
         const filteredEls = $(`div.limit_style1[frag="${fragList[type].frag}"]`).find('table > tbody > tr > td').toArray();
-        const links = filteredEls.map((el) => ({
-            pubDate: timezone(parseDate($(el).find('.data').text()), +8),
-            link: new URL($(el).find('a').attr('href'), baseUrl).toString(),
+        const links = filteredEls.map((el): DataItem & { link: string } => ({
+            pubDate: timezone(parseDate($(el).find('.data').text()), 8),
+            link: new URL($(el).find('a').attr('href')!, baseUrl).href,
             title: $(el).find('.news_title').text(),
         }));
-        const items = await Promise.all(
-            links.map((item) =>
-                cache.tryGet(item.link, async () => {
-                    if (item.link.split('.').pop() === 'htm') {
-                        const { data } = await got(item.link);
-                        const $ = load(data);
-                        const $read = $('div.wp_articlecontent').length > 0 ? $('div.wp_articlecontent') : $('div.m3nEditor');
-                        $read.find('img[src], a[href]').each((_, el) => {
-                            const $el = $(el);
-                            const attr = el.tagName === 'img' ? 'src' : 'href';
-                            const val = $el.attr(attr);
-                            if (val) {
-                                $el.attr(attr, new URL(val, baseUrl).toString());
-                            }
-                        });
-                        item.description = $read.html()?.trim();
-                        return item;
-                    } else {
-                        // file to download
-                        item.description = '请到原网页访问';
-                        return item;
-                    }
-                })
-            )
+        const items = await fetchItems(links, (item) =>
+            cache.tryGet(item.link, async () => {
+                if (item.link.split('.').pop() === 'htm') {
+                    const { data } = await got(item.link);
+                    const $ = load(data);
+                    const $read = $('div.wp_articlecontent').length > 0 ? $('div.wp_articlecontent') : $('div.m3nEditor');
+                    $read.find('img[src], a[href]').each((_, el) => {
+                        const $el = $(el);
+                        const attr = el.tagName === 'img' ? 'src' : 'href';
+                        const val = $el.attr(attr);
+                        if (val) {
+                            $el.attr(attr, new URL(val, baseUrl).href);
+                        }
+                    });
+                    item.description = $read.html();
+                    return item;
+                }
+                // file to download
+                item.description = '请到原网页访问';
+                return item;
+            })
         );
 
         return {

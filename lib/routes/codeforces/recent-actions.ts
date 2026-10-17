@@ -23,7 +23,7 @@ export const route: Route = {
         },
     ],
     name: 'Recent actions',
-    maintainers: [],
+    maintainers: ['ftiasch'],
     handler,
     url: 'codeforces.com/recent-actions',
 };
@@ -52,7 +52,6 @@ async function handler(ctx) {
         }
         return {
             title: `@${blog.authorHandle} posted "${blogTitle}"`,
-            description: blogTitle,
             pubDate,
             link: `https://codeforces.com/blog/entry/${blogId}`,
             rating: blog.rating,

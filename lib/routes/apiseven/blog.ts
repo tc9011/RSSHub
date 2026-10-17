@@ -19,7 +19,7 @@ async function getArticles() {
     return json.props.pageProps.list.map((item) => ({
         title: item.title,
         link: 'https://www.apiseven.com' + item.slug,
-        pubDate: timezone(parseDate(item.published_at), +8),
+        pubDate: timezone(parseDate(item.published_at), 8),
         category: item.tags,
     }));
 }
@@ -55,6 +55,7 @@ async function handler() {
                     description: md.render(json.props.pageProps.post.content),
                     link: item.link,
                     pubDate: item.pubDate,
+                    category: item.category,
                     author: json.props.pageProps.post.author_name,
                 };
             })

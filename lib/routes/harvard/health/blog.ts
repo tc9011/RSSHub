@@ -1,6 +1,6 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
@@ -42,18 +42,19 @@ async function handler() {
 
     const list = $(String.raw`.lg\:text-2xl`)
         .toArray()
-        .map((item) => {
-            item = $(item).parent();
+        .map((item): DataItem => {
+            const $item = $(item).parent();
 
             return {
-                title: item.text(),
-                link: item.attr('href'),
+                title: $item.text(),
+                link: $item.attr('href'),
             };
         });
 
     const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
+        list.map(async (item) => ({
+            ...item,
+            ...(await cache.tryGet(item.link!, async () => {
                 const detailResponse = await got({
                     method: 'get',
                     url: item.link,
@@ -62,13 +63,13 @@ async function handler() {
 
                 const ldJson = JSON.parse(content('script[type="application/ld+json"]').text())['@graph'].find((i) => i['@type'] === 'Article');
 
-                item.description = content('.content-repository-content').html();
-                item.pubDate = parseDate(ldJson.datePublished);
-                item.author = ldJson.author.name;
-
-                return item;
-            })
-        )
+                return {
+                    description: content('.content-repository-content').html(),
+                    pubDate: parseDate(ldJson.datePublished),
+                    author: ldJson.author.name,
+                };
+            })),
+        }))
     );
 
     return {

@@ -1,10 +1,10 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
 
 export const route: Route = {
     path: '/global/tag/:tag?',
@@ -25,7 +25,7 @@ export const route: Route = {
         },
     ],
     name: '轉角國際 - 標籤',
-    maintainers: ['emdoe', 'nczitzk'],
+    maintainers: ['emdoe', 'nczitzk', 'pseudoyu'],
     handler,
     description: `| 過去 24 小時 | 鏡頭背後 | 深度專欄 | 重磅廣播 |
 | ------------ | -------- | -------- | -------- |`,
@@ -36,32 +36,34 @@ async function handler(ctx) {
 
     const rootUrl = 'https://global.udn.com';
     const currentUrl = `${rootUrl}/search/tagging/1020/${tag}`;
-    const apiUrl = `${rootUrl}/search/ajax_tag/1020/${tag}`;
+    const apiUrl = `${rootUrl}/global_vision/load/article/newest/tag:${tag}`;
 
     const response = await got({
         method: 'get',
         url: apiUrl,
     });
 
-    let items = response.data.articles.map((item) => ({
-        title: item.art_title,
-        // author: item.art_author_name,
-        // pubDate: timezone(parseDate(item.art_time), +8),
-        link: `${rootUrl}${item.link}`,
-    }));
+    let items: Array<DataItem & { link: string }> = response.data.lists.map((item) => {
+        const pubDate = item.time?.dateTime ? parseDate(item.time.dateTime) : undefined;
+        return {
+            title: item.title,
+            author: item.author?.title,
+            pubDate: pubDate && !Number.isNaN(pubDate.getTime()) ? pubDate : undefined,
+            link: item.url,
+            category: item.hash?.map((h) => h.title),
+        };
+    });
 
-    items = await Promise.all(
-        items.map((item) =>
-            cache.tryGet(item.link, async () => {
+    items = await pMap(
+        items,
+        async (item) => {
+            const detail = await cache.tryGet(`udn:global:tag:v3:${item.link}`, async () => {
                 const detailResponse = await got({
                     method: 'get',
                     url: item.link,
                 });
 
                 const content = load(detailResponse.data);
-
-                item.author = content('.article-content__authors-name').first().text().trim();
-                item.pubDate = timezone(parseDate(content('meta[property="article:published_time"]').attr('content')), +8);
 
                 const mainImage = content('.article-content__focus').html();
                 const articleBodyHtml = content('.article-content__editor')
@@ -70,12 +72,11 @@ async function handler(ctx) {
                     .map((e) => content.html(e))
                     .join('');
 
-                item.description = mainImage + articleBodyHtml;
-                item.category = content('meta[name="news_keywords"]').attr('content').split(',');
-
-                return item;
-            })
-        )
+                return { description: mainImage + articleBodyHtml };
+            });
+            return { ...item, ...detail };
+        },
+        { concurrency: 3 }
     );
 
     return {

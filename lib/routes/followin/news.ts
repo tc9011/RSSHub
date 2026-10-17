@@ -1,9 +1,7 @@
 import type { Route } from '@/types';
 import { ViewType } from '@/types';
-import cache from '@/utils/cache';
-import got from '@/utils/got';
 
-import { baseUrl, favicon, getBuildId, parseItem, parseList } from './utils';
+import { baseUrl, favicon, getApi, getPoolSize, processList } from './utils';
 
 export const route: Route = {
     path: '/news/:lang?',
@@ -42,13 +40,10 @@ export const route: Route = {
 
 async function handler(ctx) {
     const { lang = 'en' } = ctx.req.param();
-    const { limit = 20 } = ctx.req.query();
+    const poolSize = getPoolSize(ctx, 20);
 
-    const buildId = await getBuildId(cache.tryGet);
-    const { data: response } = await got(`${baseUrl}/_next/data/${buildId}/${lang}/news.json`);
-
-    const list = parseList(response.pageProps.dehydratedState.queries.find((q) => q.queryKey[0] === '/feed/list/recommended/news').state.data.pages[0].list.slice(0, limit), lang, buildId);
-    const items = await Promise.all(list.map((item) => parseItem(item, cache.tryGet)));
+    const response = await getApi('/feed/list/recommended/news', lang, { count: poolSize });
+    const items = await processList(response.list, lang, ctx, 20);
 
     return {
         title: `${lang === 'en' ? 'News' : lang === 'vi' ? 'Bản tin' : '快讯'} - Followin`,

@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
@@ -42,19 +43,21 @@ async function handler(ctx) {
     const list = $('.entry-title a')
         .slice(0, 15)
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem => {
+            const $item = $(item);
+            const date = $item.parent().next().find('.mh-meta-date').eq(-1).text().split('：', 2)[1];
 
             return {
-                title: item.text(),
-                link: item.attr('href'),
-                pubDate: parseDate(item.parent().next().find('.mh-meta-date').eq(-1).text().split('：')[1]),
+                title: $item.text(),
+                link: $item.attr('href'),
+                pubDate: date ? parseDate(date) : undefined,
             };
         });
 
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
+    const items = await pMap(
+        list,
+        (item) =>
+            cache.tryGet(item.link!, async () => {
                 const detailResponse = await got({
                     method: 'get',
                     url: item.link,
@@ -67,13 +70,13 @@ async function handler(ctx) {
                 item.enclosure_url = links.eq(-1).attr('href');
                 item.description = `<video controls><source src="${item.enclosure_url}"></video><br>`;
 
-                links.each(function () {
-                    item.description += `<li><a href="${content(this).attr('href')}">${content(this).text()}</a></li>`;
+                links.each((_, el) => {
+                    item.description += `<li><a href="${content(el).attr('href')}">${content(el).text()}</a></li>`;
                 });
 
                 return item;
-            })
-        )
+            }),
+        { concurrency: 3 }
     );
 
     return {

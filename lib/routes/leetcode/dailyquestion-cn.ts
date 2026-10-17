@@ -1,5 +1,6 @@
 import type { Route } from '@/types';
 import got from '@/utils/got';
+import { parseDate } from '@/utils/parse-date';
 
 import { renderQuestionDescription } from './templates/question-description';
 
@@ -7,13 +8,15 @@ const host = 'https://leetcode.cn';
 
 export const route: Route = {
     path: '/dailyquestion/cn',
+    categories: ['programming'],
+    example: '/leetcode/dailyquestion/cn',
     radar: [
         {
             source: ['leetcode.cn/'],
         },
     ],
-    name: 'Unknown',
-    maintainers: [],
+    name: '每日一题',
+    maintainers: ['IvanWng97'],
     handler,
     url: 'leetcode.cn/',
 };
@@ -26,19 +29,20 @@ async function handler() {
         content: '',
         frontedId: '',
         difficulty: '',
-        tags: '',
     };
     const url = host + '/graphql';
     const dailyQuestionPayload = {
-        query: `query questionOfToday {
-            todayRecord {
-                date
-                question {
-                    frontendQuestionId: questionFrontendId
-                    titleSlug
+        query: /* GraphQL */ `
+            query questionOfToday {
+                todayRecord {
+                    date
+                    question {
+                        frontendQuestionId: questionFrontendId
+                        titleSlug
+                    }
                 }
             }
-        } `,
+        `,
         variables: {},
     };
     const dailyQuestionResponse = await got({
@@ -56,25 +60,27 @@ async function handler() {
 
     const detailsPayload = {
         operationName: 'questionData',
-        query: `query questionData($titleSlug: String!) {
-            question(titleSlug: $titleSlug) {
-                questionId
-                questionFrontendId
-                title
-                titleSlug
-                content
-                translatedTitle
-                translatedContent
-                difficulty
-                topicTags {
-                    name
-                    slug
-                    translatedName
+        query: /* GraphQL */ `
+            query questionData($titleSlug: String!) {
+                question(titleSlug: $titleSlug) {
+                    questionId
+                    questionFrontendId
+                    title
+                    titleSlug
+                    content
+                    translatedTitle
+                    translatedContent
+                    difficulty
+                    topicTags {
+                        name
+                        slug
+                        translatedName
+                        __typename
+                    }
                     __typename
                 }
-                __typename
             }
-        }`,
+        `,
         variables: {
             titleSlug: question.titleSlug,
         },
@@ -98,14 +104,6 @@ async function handler() {
     question.frontedId = details.questionFrontendId;
     question.difficulty = emoji[details.difficulty];
 
-    let topicTags = details.topicTags;
-    topicTags = topicTags.map((item) => {
-        let slug = '#' + item.slug;
-        slug = slug.replaceAll('-', '_');
-        return slug;
-    });
-    question.tags = topicTags.join(' ');
-
     const rssData = {
         title: question.frontedId + '.' + question.titleSlug,
         description: renderQuestionDescription({
@@ -123,6 +121,8 @@ async function handler() {
                 title: rssData.title,
                 description: rssData.description + question.content,
                 link: rssData.link,
+                category: details.topicTags.map((item) => item.translatedName || item.name),
+                pubDate: question.date ? parseDate(`${question.date}T00:00:00Z`) : undefined,
             },
         ],
     };

@@ -10,7 +10,7 @@ export const route: Route = {
     parameters: { device: 'the device `codename` eg. `aries` for Mi 2S', type: 'type', region: 'Region, default to `cn`' },
     name: 'New firmware',
     maintainers: ['Indexyz'],
-    description: `  | stable  | development |
+    description: `| stable  | development |
 | ------- | ----------- |
 | release | dev         |
 
@@ -40,6 +40,9 @@ async function handler(ctx) {
     });
 
     const responseData = response.data;
+    if (!responseData?.LatestFullRom?.version) {
+        throw new Error(`No firmware information was returned for ${device} (${type}, ${region}). Check the device codename and whether this firmware channel is still supported.`);
+    }
 
     return {
         title: `MIUI 更新 - ${device} - ${type === 'release' ? '稳定版' : '开发版'}`,

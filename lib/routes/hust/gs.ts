@@ -1,16 +1,18 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
+import timezone from '@/utils/timezone';
 
 export const handler = async (ctx) => {
     const { category = 'xwdt' } = ctx.req.param();
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 16;
+    const limit = getRouteLimit(ctx, 16);
 
     const rootUrl = 'https://gs.hust.edu.cn';
-    const currentUrl = new URL(`${category}.htm`, rootUrl).href;
+    const currentUrl = `${rootUrl}/${category}.htm`;
 
     const { data: response } = await got(currentUrl);
 
@@ -19,22 +21,23 @@ export const handler = async (ctx) => {
     let items = $('div.btlist ul li')
         .slice(0, limit)
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem => {
+            const $item = $(item);
 
-            const a = item.find('a');
+            const a = $item.find('a');
             const link = a.prop('href');
+            const pubDate = parseDate($item.find('span.time').text().trim(), 'YYYY-MM-DD', true);
 
             return {
                 title: a.text(),
-                pubDate: parseDate(item.find('span.time').text()),
-                link: link.startsWith('http') ? link : new URL(link, rootUrl).href,
+                pubDate: Number.isFinite(pubDate.getTime()) ? timezone(pubDate, 8) : undefined,
+                link: link!.startsWith('http') ? link : new URL(link!, rootUrl).href,
             };
         });
 
     items = await Promise.all(
         items.map((item) =>
-            cache.tryGet(item.link, async () => {
+            cache.tryGet(`hust:gs:article:v2:${item.link}`, async () => {
                 try {
                     const { data: detailResponse } = await got(item.link);
 
@@ -42,7 +45,7 @@ export const handler = async (ctx) => {
 
                     const description = $$('div.v_news_content').html();
 
-                    item.title = $$('div.article_title h1, h5').text();
+                    item.title = $$('div.article_title h1, .show01 > h5').text() || item.title;
                     item.description = description;
                     item.content = {
                         html: description,
@@ -58,14 +61,13 @@ export const handler = async (ctx) => {
     );
 
     const title = $('meta[name="keywords"]').prop('content')?.replaceAll(',', ' - ') ?? $('title').text();
-    const image = new URL($('div.logo img').prop('src'), rootUrl).href;
+    const image = new URL($('div.logo img').prop('src')!, rootUrl).href;
 
     return {
         title,
         description: title.split(/-/).pop()?.trim(),
         link: currentUrl,
         item: items,
-        allowEmpty: true,
         image,
     };
 };
@@ -79,7 +81,7 @@ export const route: Route = {
     example: '/hust/gs/xwdt',
     parameters: { category: '分类，默认为新闻动态，即 `xwdt`，可在对应分类页 URL 中找到' },
     description: `::: tip
-  若订阅 [新闻动态](https://gs.hust.edu.cn/xwdt.htm)，网址为 \`https://gs.hust.edu.cn/xwdt.htm\`。截取 \`https://gs.hust.edu.cn/\` 到末尾 \`.htm\` 的部分 \`xwdt\` 作为参数填入，此时路由为 [\`/hust/gs/xwdt\`](https://rsshub.app/hust/gs/xwdt)。
+若订阅 [新闻动态](https://gs.hust.edu.cn/xwdt.htm)，网址为 \`https://gs.hust.edu.cn/xwdt.htm\`。截取 \`https://gs.hust.edu.cn/\` 到末尾 \`.htm\` 的部分 \`xwdt\` 作为参数填入，此时路由为 [\`/hust/gs/xwdt\`](https://rsshub.app/hust/gs/xwdt)。
 :::
 
 | [新闻动态](https://gs.hust.edu.cn/xwdt.htm) | [研究生服务专区](https://gs.hust.edu.cn/yjsfwzq.htm) | [综合管理](https://gs.hust.edu.cn/gzzd/zhgl.htm)  |
@@ -126,8 +128,7 @@ export const route: Route = {
 
 | [学位点建设](https://gs.hust.edu.cn/xwgz/xwdjs.htm) | [学位授予](https://gs.hust.edu.cn/xwgz/xwsy.htm)  | [导师队伍](https://gs.hust.edu.cn/xwgz/dsdw.htm)  |
 | --------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------- |
-| [xwgz/xwdjs](https://rsshub.app/hust/gs/xwgz/xwdjs) | [xwgz/xwsy](https://rsshub.app/hust/gs/xwgz/xwsy) | [xwgz/dsdw](https://rsshub.app/hust/gs/xwgz/dsdw) |
-  `,
+| [xwgz/xwdjs](https://rsshub.app/hust/gs/xwgz/xwdjs) | [xwgz/xwsy](https://rsshub.app/hust/gs/xwgz/xwsy) | [xwgz/dsdw](https://rsshub.app/hust/gs/xwgz/dsdw) |`,
     categories: ['university'],
 
     features: {
@@ -141,12 +142,8 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['gs.hust.edu.cn/:category'],
-            target: (params) => {
-                const category = params.category;
-
-                return `/hust/gs${category ? `/${category}` : ''}`;
-            },
+            source: ['gs.hust.edu.cn/'],
+            target: '/gs/xwdt',
         },
         {
             title: '新闻动态',

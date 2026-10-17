@@ -4,9 +4,11 @@ import type { Element } from 'domhandler';
 import type { Context } from 'hono';
 import { renderToString } from 'hono/jsx/dom/server';
 
-import type { Data, DataItem, Route } from '@/types';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import ofetch from '@/utils/ofetch';
+import { getRouteLimit } from '@/utils/route-limit';
 
 const renderDescription = ({ images, stargazersCount, language, description }) =>
     renderToString(
@@ -49,19 +51,23 @@ const renderDescription = ({ images, stargazersCount, language, description }) =
 
 export const handler = async (ctx: Context): Promise<Data> => {
     const { category = 'repositories' } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '100', 10);
+    if (!['repositories', 'users', 'organizations'].includes(category)) {
+        throw new InvalidParameterError('category must be repositories, users, or organizations.');
+    }
+
+    const limit = getRouteLimit(ctx, 100);
 
     const baseUrl = 'https://gitstar-ranking.com';
     const targetUrl: string = new URL(category, baseUrl).href;
 
     const response = await ofetch(targetUrl);
     const $: CheerioAPI = load(response);
-    const language = $('html').attr('lang') ?? 'en';
+    const language = ($('html').attr('lang') ?? 'en') as Language;
 
     const items: DataItem[] = $('a.list-group-item')
         .slice(0, limit)
         .toArray()
-        .map((el): Element => {
+        .map((el) => {
             const $el: Cheerio<Element> = $(el);
 
             const stargazersCount = Number($el.find('span.stargazers_count').text()?.trim());
@@ -94,11 +100,10 @@ export const handler = async (ctx: Context): Promise<Data> => {
                 id: guid,
                 content: {
                     html: description,
-                    text: description,
+                    text: $(description ?? '').text(),
                 },
                 image,
                 banner: image,
-                language,
             };
 
             return processedItem;
@@ -108,10 +113,9 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
     return {
         title,
-        description: title.split(/-/)[0],
+        description: title.split(/-/, 1)[0],
         link: targetUrl,
         item: items,
-        allowEmpty: true,
         author: title.split(/-/).pop()?.trim(),
         language,
         id: $('meta[property="og:url"]').attr('content'),
@@ -152,8 +156,7 @@ To subscribe to [Repositories](https://gitstar-ranking.com/repositories), where 
 | ---------------------------------------------------------- | ----------------------------------------------------------------- |
 | [Users](https://gitstar-ranking.com/users)                 | [users](https://rsshub.app/gitstar-ranking/users)                 |
 | [Organizations](https://gitstar-ranking.com/organizations) | [organizations](https://rsshub.app/gitstar-ranking/organizations) |
-| [Repositories](https://gitstar-ranking.com/repositories)   | [repositories](https://rsshub.app/gitstar-ranking/repositories)   |
-`,
+| [Repositories](https://gitstar-ranking.com/repositories)   | [repositories](https://rsshub.app/gitstar-ranking/repositories)   |`,
     categories: ['programming'],
     features: {
         requireConfig: false,
@@ -166,8 +169,8 @@ To subscribe to [Repositories](https://gitstar-ranking.com/repositories), where 
     },
     radar: [
         {
-            source: ['gitstar-ranking.com/:category'],
-            target: '/:category',
+            source: ['gitstar-ranking.com/'],
+            target: '/repositories',
         },
         {
             title: 'Users',

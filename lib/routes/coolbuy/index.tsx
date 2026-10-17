@@ -3,12 +3,12 @@ import { load } from 'cheerio';
 import type { Context } from 'hono';
 import { renderToString } from 'hono/jsx/dom/server';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import ofetch from '@/utils/ofetch';
 
 export const handler = async (ctx: Context): Promise<Data> => {
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '50', 10);
+    const limit = Number(ctx.req.query('limit') ?? '50');
 
     const baseUrl = 'https://coolbuy.com';
     const imageBaseUrl = 'https://mcache.ifanr.cn';
@@ -25,12 +25,12 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
     const targetResponse = await ofetch(baseUrl);
     const $: CheerioAPI = load(targetResponse);
-    const language = $('html').attr('lang') ?? 'zh';
+    const language = ($('html').attr('lang') ?? 'zh') as Language;
 
     const items: DataItem[] = response.objects.slice(0, limit).map((item): DataItem => {
         const title: string = item.title;
-        const image: string | undefined = item.cover_image?.split(/\?/)?.[0];
-        const banner: string | undefined = item.display_image?.split(/\?/)?.[0];
+        const image: string | undefined = item.cover_image?.split(/\?/, 1)?.[0];
+        const banner: string | undefined = item.display_image?.split(/\?/, 1)?.[0];
 
         const images = [banner, image].filter(Boolean).map((image) => ({
             src: image,
@@ -82,15 +82,15 @@ export const handler = async (ctx: Context): Promise<Data> => {
         const processedItem: DataItem = {
             title,
             description,
-            link: linkUrl ?? new URL(item.id, baseUrl).href,
+            link: linkUrl ?? new URL(`product/detail/${item.id}/`, baseUrl).href,
             guid,
             id: guid,
             content: {
                 html: description,
-                text: description,
+                text: $('<div>').html(description).text(),
             },
             image,
-            banner: image,
+            banner,
             language,
         };
 
@@ -102,7 +102,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
         description: $('meta[property="og:description"]').attr('content'),
         link: baseUrl,
         item: items,
-        allowEmpty: true,
         image: new URL('static/coolbuy/packages/dongguan/dist/images/97be46f6.png', imageBaseUrl).href,
         language,
         id: baseUrl,
@@ -113,7 +112,7 @@ export const route: Route = {
     path: '/',
     name: '产品',
     url: 'coolbuy.com',
-    maintainers: ['nczitzk'],
+    maintainers: ['xyqfer', 'nczitzk'],
     handler,
     example: '/coolbuy',
     parameters: undefined,

@@ -1,7 +1,7 @@
 import { load } from 'cheerio';
 
 import type { Route } from '@/types';
-import puppeteer from '@/utils/puppeteer';
+import { getPlaywrightPage } from '@/utils/playwright';
 
 export const route: Route = {
     path: '/vinyl/:cat?',
@@ -25,13 +25,14 @@ export const route: Route = {
             target: '/vinyl',
         },
     ],
-    name: 'HKU Shop 黑胶专区',
+    name: '黑胶专区',
     maintainers: ['gideonsenku'],
     handler,
     description: `常见分类:
+
 | 華語音樂 | 經典復刻 | 古典跨界 | 爵士音樂 | 國際音樂 | 電影原聲帶 | 黑膠日本音樂 |
-| ---- | ---- | ---- | ---- | ---- | ---- | ---- |
-| 37 | 38 | 40 | 41 | 39 | 170 | 224 |`,
+| -------- | -------- | -------- | -------- | -------- | ---------- | ------------ |
+| 37       | 38       | 40       | 41       | 39       | 170        | 224          |`,
     url: 'hkushop.com/vinyl-or-picture-lp.html',
 };
 
@@ -40,19 +41,25 @@ async function handler(ctx) {
     const cat = ctx.req.param('cat') ?? '';
     const url = cat ? `${baseUrl}/vinyl-or-picture-lp.html?cat=${cat}` : `${baseUrl}/vinyl-or-picture-lp.html`;
 
-    const browser = await puppeteer();
-    const page = await browser.newPage();
-    await page.setRequestInterception(true);
-    page.on('request', (request) => {
-        request.resourceType() === 'document' || request.resourceType() === 'script' ? request.continue() : request.abort();
+    const { page, destroy } = await getPlaywrightPage(url, {
+        noGoto: true,
+        closeTimeout: 0,
+        onBeforeLoad: async (page) => {
+            await page.route('**/*', (route) => (['document', 'script'].includes(route.request().resourceType()) ? route.continue() : route.abort()));
+        },
     });
-    await page.goto(url, {
-        waitUntil: 'domcontentloaded',
-    });
-
-    const response = await page.content();
-    await page.close();
-    await browser.close();
+    let response: string;
+    try {
+        const navigation = await page.goto(url, {
+            waitUntil: 'domcontentloaded',
+        });
+        if (navigation?.status() === 404) {
+            throw new Error(`HKU Shop vinyl category is unavailable (HTTP 404) at ${url}. The source category or its mapping must be updated.`);
+        }
+        response = await page.content();
+    } finally {
+        await destroy();
+    }
 
     const $ = load(response);
 
@@ -66,11 +73,11 @@ async function handler(ctx) {
             const $artist = $item.find('.artist a').text().trim();
 
             return {
-                title: $link.text().trim(),
+                title: $link.text(),
                 link: $link.attr('href'),
+                author: $artist || undefined,
                 description: `
                 <img src="${$image.attr('src')}" />
-                <p>作者: ${$artist}</p>
                 <p>价格: ${$price.text().trim()}</p>
             `,
                 guid: $link.attr('href'),

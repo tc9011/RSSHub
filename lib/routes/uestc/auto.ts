@@ -2,16 +2,15 @@ import { load } from 'cheerio';
 
 import type { Route } from '@/types';
 import { parseDate } from '@/utils/parse-date';
-import puppeteer from '@/utils/puppeteer';
+import { getPlaywrightPage } from '@/utils/playwright';
+import timezone from '@/utils/timezone';
 
-const baseIndexUrl = 'https://www.auto.uestc.edu.cn/index/tzgg1.htm';
-const host = 'https://www.auto.uestc.edu.cn/';
+const baseIndexUrl = 'https://www.auto.uestc.edu.cn/xwgg/tzgs.htm';
 
 export const route: Route = {
     path: '/auto',
     categories: ['university'],
     example: '/uestc/auto',
-    parameters: {},
     features: {
         requireConfig: false,
         requirePuppeteer: true,
@@ -32,34 +31,41 @@ export const route: Route = {
 };
 
 async function handler() {
-    const browser = await puppeteer();
-    const page = await browser.newPage();
-    await page.setRequestInterception(true);
-    page.on('request', (request) => {
-        request.resourceType() === 'document' || request.resourceType() === 'script' ? request.continue() : request.abort();
+    const { page, destroy } = await getPlaywrightPage(baseIndexUrl, {
+        closeTimeout: 0,
+        gotoConfig: { waitUntil: 'networkidle' },
+        onBeforeLoad: async (page) => {
+            await page.route('**/*', (route) => {
+                const request = route.request();
+                request.resourceType() === 'document' || request.resourceType() === 'script' ? route.continue() : route.abort();
+            });
+        },
     });
-    await page.goto(baseIndexUrl, {
-        waitUntil: 'networkidle2',
-    });
-    const content = await page.content();
-    await browser.close();
+    let content: string;
+    try {
+        content = await page.content();
+    } finally {
+        await destroy();
+    }
 
     const $ = load(content);
 
-    const items = $('dl.clearfix');
+    const items = $('a.flex.wl');
 
     const out = $(items)
         .toArray()
         .map((item) => {
-            item = $(item);
-            const newsTitle = item.find('a').text();
-            const newsLink = host + item.find('a[href]').attr('href').slice(3);
-            const newsPubDate = parseDate(item.find('span').text());
+            const $item = $(item);
+            const newsTitle = $item.attr('title') ?? $item.find('h3').text();
+            const newsLink = new URL($item.attr('href') ?? '', baseIndexUrl).href;
+            const newsPubDate = $item.find('.date').text().trim();
+            const pubDate = parseDate(`${newsPubDate.slice(0, 4)}-${newsPubDate.slice(4)}`, 'YYYY-MM-DD', true);
 
             return {
                 title: newsTitle,
+                description: $item.find('.p1').text().trim(),
                 link: newsLink,
-                pubDate: newsPubDate,
+                pubDate: Number.isNaN(pubDate.getTime()) ? undefined : timezone(pubDate, 8),
             };
         });
 

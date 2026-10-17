@@ -1,4 +1,5 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
 import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
@@ -21,12 +22,10 @@ export const route: Route = {
         supportPodcast: false,
         supportScihub: false,
     },
-    description: `
-| 类型中文 | 召回类型ID1 | 召回类型ID2 |
-| --- | --- | --- |
-| 消费品召回 | xfpzh | xfpgnzh |
-| 汽车召回 | qczh | gnzhqc |
-`,
+    description: `| 类型中文   | 召回类型 ID1 | 召回类型 ID2 |
+| ---------- | ------------ | ------------ |
+| 消费品召回 | xfpzh        | xfpgnzh      |
+| 汽车召回   | qczh         | gnzhqc       |`,
     name: '召回信息',
     maintainers: ['a180285'],
     radar: [
@@ -47,19 +46,21 @@ export const route: Route = {
         const typeName = $('div.box_main > div.boxl.fl > div.boxl_tit > div > span.fl').text();
 
         const listSelector = $('div.main > div.box1 > div.box_main > div.boxl.fl > div.boxl_ul > ul > li');
-        const items: DataItem[] = await Promise.all(
-            listSelector.toArray().map((el) => {
+        const items: DataItem[] = await pMap(
+            listSelector.toArray(),
+            (el) => {
                 const item = $(el);
 
                 const title = item.find('a').text();
                 const link = url + '/' + item.find('a').attr('href');
-                const pubDate = parseDate(item.find('span').text().trim());
+                const date = item.find('span').text().trim();
+                const pubDate = date ? parseDate(`${date}T00:00:00Z`) : undefined;
 
                 return cache.tryGet(link, async () => {
                     const detail = await got(link);
                     const $ = load(detail.body);
 
-                    const articleHTML = $('div.main > div.box1 > div.box_main > div.boxl.fl > div.show_txt > div.TRS_Editor > div').html() || '';
+                    const articleHTML = $('div.show_txt > div.TRS_Editor').html();
 
                     return {
                         title,
@@ -68,13 +69,14 @@ export const route: Route = {
                         description: articleHTML,
                     };
                 });
-            })
+            },
+            { concurrency: 3 }
         );
 
         return {
             title: `${typeName} - 国家市场监督管理总局`,
             link: url,
-            item: items as DataItem[],
+            item: items,
         };
     },
 };

@@ -13,6 +13,7 @@
 // nmat:             Nature Materials
 // natmachintell:    Nature Machine Intelligence
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
 import type { Route } from '@/types';
 import got from '@/utils/got';
@@ -34,8 +35,8 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['nature.com/:journal/research-articles', 'nature.com/:journal', 'nature.com/'],
-            target: '/research/:journal',
+            source: ['nature.com/:journal/research-articles', 'nature.com/'],
+            target: '/research/:journal?',
         },
     ],
     name: 'Latest Research',
@@ -53,10 +54,10 @@ export const route: Route = {
 |      nmat     |       Nature Materials      | [/nature/research/nmat](https://rsshub.app/nature/research/nmat)                   |
 | natmachintell | Nature Machine Intelligence | [/nature/research/natmachintell](https://rsshub.app/nature/research/natmachintell) |
 
-  -   Using router (\`/nature/research/\` + "short name for a journal") to query latest research paper for a certain journal of Nature Publishing Group.
-      If the \`:journal\` parameter is blank, then latest research of Nature will return.
-  -   The journals from NPG are run by different group of people, and the website of may not be consitent for all the journals
-  -   Only abstract is rendered in some researches`,
+- Using router (\`/nature/research/\` + "short name for a journal") to query latest research paper for a certain journal of Nature Publishing Group.
+  If the \`:journal\` parameter is blank, then latest research of Nature will return.
+- The journals from NPG are run by different group of people, and the website of may not be consitent for all the journals
+- Only abstract is rendered in some researches`,
 };
 
 async function handler(ctx) {
@@ -70,11 +71,11 @@ async function handler(ctx) {
 
     let items = getArticleList(pageCapture);
 
-    items = await Promise.all(items.map((item) => getArticle(item)));
+    items = await pMap(items, getArticle, { concurrency: 3 });
 
     return {
         title: `Nature (${pageTitle}) | Latest Research`,
-        description: pageCapture('meta[name="description"]').attr('content') || `Nature, a nature research journal`,
+        description: pageCapture('meta[name="description"]').attr('content') || 'Nature, a nature research journal',
         link: pageURL,
         item: items,
     };

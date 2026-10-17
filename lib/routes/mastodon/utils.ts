@@ -1,3 +1,5 @@
+import { escapeUTF8 } from 'entities/escape';
+
 import { config } from '@/config';
 import ConfigNotFoundError from '@/errors/types/config-not-found';
 import cache from '@/utils/cache';
@@ -15,8 +17,8 @@ const apiHeaders = (site) => {
 const mediaParse = (media_attachments) =>
     media_attachments
         .map((item) => {
-            const selectedUrl = item.remote_url ?? item.url;
-            const description = item.description ?? '';
+            const selectedUrl = escapeUTF8(item.remote_url ?? item.url ?? '');
+            const description = escapeUTF8(item.description ?? '');
             switch (item.type) {
                 case 'gifv':
                     return `<br><video src="${selectedUrl}" autoplay loop>gif ${description}</video>`;
@@ -40,21 +42,21 @@ const parseStatuses = (data) =>
         const accountRepostedBy = item.reblog ? item.account : null;
         item = item.reblog ?? item;
 
-        const content = item.content ? item.content.replaceAll(/<span.*?>|<\/span.*?>/gm, '') : '';
-        const contentRemovedHtml = content.replaceAll(/<(?:.|\n)*?>/gm, '\n');
+        const content = item.content ? item.content.replaceAll(/<span.*?>|<\/span.*?>/g, '') : '';
+        const contentRemovedHtml = content.replaceAll(/<(?:.|\n)*?>/g, '\n');
 
         const author = `${item.account.display_name} (@${item.account.acct})`;
         const link = item.url;
         const media = mediaParse(item.media_attachments);
 
         const titleAuthor = accountRepostedBy ? `Re @${accountRepostedBy.username}` : `@${item.account.username}`;
-        const titleText = item.sensitive === true ? `(CW) ${item.spoiler_text}` : contentRemovedHtml;
+        const titleText = item.spoiler_text ? `(CW) ${item.spoiler_text}` : contentRemovedHtml;
         const title = `${titleAuthor}: "${titleText}"`;
 
         return {
             title,
             author,
-            description: item.spoiler_text + '<hr />' + content + media,
+            description: escapeUTF8(item.spoiler_text ?? '') + '<hr />' + content + media,
             pubDate: parseDate(item.created_at),
             link,
             guid: item.uri,
@@ -103,37 +105,32 @@ async function getAccountIdByAcct(acct) {
     const search_url = `https://${site}/api/v2/search`;
     const cacheUid = `mastodon_acct_id/${site}/${acct}`;
 
-    const account_id = await cache.tryGet(
-        cacheUid,
-        async () => {
-            const search_response = await got({
-                method: 'get',
-                url: search_url,
-                headers: apiHeaders(site),
-                searchParams: {
-                    q: acct,
-                    type: 'accounts',
-                },
-            });
-            const [acctUser, acctHost] = acct.split('@').filter(Boolean);
-            let acctOnServer;
+    const account_id = await cache.tryGet(cacheUid, async () => {
+        const search_response = await got({
+            method: 'get',
+            url: search_url,
+            headers: apiHeaders(site),
+            searchParams: {
+                q: acct,
+                type: 'accounts',
+            },
+        });
+        const [acctUser, acctHost] = acct.split('@').filter(Boolean);
+        let acctOnServer;
 
-            if (acctHost) {
-                acctOnServer = acctHost === acctDomain ? acctUser : acctUser + '@' + acctHost;
-            } else {
-                acctOnServer = acctUser;
-            }
+        if (acctHost) {
+            acctOnServer = acctHost === acctDomain ? acctUser : acctUser + '@' + acctHost;
+        } else {
+            acctOnServer = acctUser;
+        }
 
-            const accountData = search_response.data.accounts.filter((item) => item.acct === acctOnServer);
+        const accountData = search_response.data.accounts.filter((item) => item.acct === acctOnServer);
 
-            if (accountData.length === 0) {
-                throw new Error(`acct ${acct} not found`);
-            }
-            return accountData[0].id;
-        },
-        config.cache.contentExpire,
-        false
-    );
+        if (accountData.length === 0) {
+            throw new Error(`acct ${acct} not found`);
+        }
+        return accountData[0].id;
+    });
     return { site, account_id };
 }
 

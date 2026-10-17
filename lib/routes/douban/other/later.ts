@@ -32,9 +32,9 @@ async function handler() {
         .toArray()
         .map((ele) => {
             const description = $(ele).html();
-            const name = $('h3', ele).text().trim();
-            const date = $('ul li', ele).eq(0).text().trim();
-            const type = $('ul li', ele).eq(1).text().trim();
+            const name = $('h3', ele).text();
+            const date = $('ul li', ele).eq(0).text();
+            const type = $('ul li', ele).eq(1).text();
             const link = $('a.thumb', ele).attr('href');
 
             return {

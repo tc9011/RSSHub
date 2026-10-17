@@ -1,12 +1,12 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
 
 const baseUrl = 'https://jwc.xidian.edu.cn';
-
 export const route: Route = {
     path: '/jwc/:category?',
     categories: ['university'],
@@ -28,47 +28,46 @@ export const route: Route = {
 | :------: | :------: | :------: | :------: | :------: |
 |   jxxx   |   jxyj   |   sjjx   |   zljk   |   tzgg   |`,
 };
-
 async function handler(ctx) {
     const { category = 'tzgg' } = ctx.req.param();
     const url = `${baseUrl}/${category}.htm`;
-    const response = await got(url, {
-        headers: {
-            referer: baseUrl,
-        },
-    });
+    const response = await got(url);
     const $ = load(response.data);
-
     let items = $('.list ul li')
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem => {
+            const $item = $(item);
             return {
-                title: item.find('a').attr('title'),
-                link: new URL(item.find('a').attr('href'), baseUrl).href,
-                pubDate: parseDate(item.find('.con span').text()),
+                title: $item.find('a').attr('title')!,
+                link: new URL($item.find('a').attr('href')!, baseUrl).href,
+                pubDate: parseDate($item.find('.con span').text()),
             };
         });
-
-    items = await Promise.all(
-        items.map((item) =>
-            cache.tryGet(item.link, async () => {
-                const detailResponse = await got(item.link, {
-                    headers: {
-                        referer: url,
-                    },
-                });
-                const content = load(detailResponse.data);
-                content('.tit, .zd, #div_vote_id').remove();
-                item.description = content('.con').html();
-                return item;
-            })
-        )
+    items = await pMap(
+        items,
+        (item) =>
+            mapResolvedValue(
+                cache.tryGet(`xidian:jwc:content:v1:${item.link}`, async () => {
+                    const detailResponse = await got(item.link, {
+                        headers: {
+                            referer: url,
+                        },
+                    });
+                    const content = load(detailResponse.data);
+                    content('.tit, .zd, #div_vote_id').remove();
+                    return { description: content('.con').html() };
+                }),
+                (detail) => ({ ...item, ...detail })
+            ),
+        { concurrency: 3, stopOnError: false }
     );
-
     return {
         title: $('title').text(),
         link: url,
         item: items,
     };
+}
+async function mapResolvedValue<T, U>(promise: Promise<T>, mapper: (value: T) => U | Promise<U>): Promise<U> {
+    const value = await promise;
+    return mapper(value);
 }

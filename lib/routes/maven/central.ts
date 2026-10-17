@@ -2,11 +2,12 @@ import { load } from 'cheerio';
 
 import type { Route } from '@/types';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { parseDateInTimezone } from '@/utils/parse-date-in-timezone';
+import { getRouteLimit } from '@/utils/route-limit';
 
 export const route: Route = {
     path: '/central/:group/:artifact',
-    name: 'Maven Central Feed',
+    name: 'Central Feed',
     maintainers: ['chrisis58'],
     description: 'Get the latest versions of a Maven artifact from Maven Central Repository.',
     url: 'central.sonatype.com/',
@@ -23,7 +24,7 @@ export const route: Route = {
     radar: [
         {
             source: ['central.sonatype.com/artifact/:group/:artifact/:suffix', 'central.sonatype.com/artifact/:group/:artifact'],
-            target: '/maven/central/:group/:artifact',
+            target: '/central/:group/:artifact',
         },
     ],
     features: {
@@ -45,7 +46,7 @@ export const route: Route = {
  * Handles cases without delimiters: 5.0.0beta2, 7.0.0canary
  * Handles secondary versions: 1.0.0-M6.1
  */
-const UNSTABLE_VERSION_REGEX = /[-_.]?(rc|m|snapshot|alpha|beta|preview|canary)[.\d]*$/i;
+const UNSTABLE_VERSION_REGEX = /[-_.]?(?:rc|m|snapshot|alpha|beta|preview|canary)[.\d]*$/i;
 
 /**
  * Regex to extract date in the format YYYY-MM-DD HH:mm (e.g., 2024-09-22 04:19)
@@ -55,16 +56,16 @@ const DATE_REGEX = /(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/;
 async function handler(ctx) {
     const group = ctx.req.param('group');
     const artifact = ctx.req.param('artifact');
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 15;
+    const limit = getRouteLimit(ctx, 15);
 
     // (org.springframework, spring-core) -> org/springframework/spring-core
     const identifier = `${group.replaceAll('.', '/')}/${artifact}`;
 
     try {
         const metadataUrl = `https://repo1.maven.org/maven2/${identifier}/maven-metadata.xml`;
-        const metaDataResponse = await ofetch(metadataUrl);
+        const metadataResponse = await ofetch(metadataUrl);
 
-        const $meta = load(metaDataResponse, { xmlMode: true });
+        const $meta = load(metadataResponse, { xmlMode: true });
         const latestVersion = $meta('metadata > versioning > latest').text();
 
         if (!latestVersion) {
@@ -72,7 +73,7 @@ async function handler(ctx) {
         }
     } catch (error: any) {
         if (error?.response?.status === 404) {
-            throw new Error(`Could not find component for ${group}:${artifact}: metadata not found`);
+            throw new Error(`Could not find component for ${group}:${artifact}: metadata not found`, { cause: error });
         }
         throw error;
     }
@@ -91,13 +92,14 @@ async function handler(ctx) {
             const version = href.replace('/', '');
             const versionUrl = `https://central.sonatype.com/artifact/${group}/${artifact}/${version}`;
 
-            const rawText = element.nextSibling ? (element.nextSibling as any).nodeValue : '';
+            const sibling = element.nextSibling;
+            const rawText = sibling?.type === 'text' ? sibling.data : '';
 
             // Date format: 2024-09-22 04:19
             const match = rawText.match(DATE_REGEX);
             let pubDate: Date | undefined;
             if (match) {
-                pubDate = parseDate(match[1], 'YYYY-MM-DD HH:mm');
+                pubDate = parseDateInTimezone(match[1], 0);
             }
 
             const category = UNSTABLE_VERSION_REGEX.test(version) ? 'Unstable' : 'Stable';

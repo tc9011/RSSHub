@@ -1,10 +1,10 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { Data, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
 
 export const route: Route = {
     path: '/ilbolive/news',
@@ -33,7 +33,7 @@ export const route: Route = {
     handler,
 };
 
-async function handler() {
+async function handler(): Promise<Data> {
     const baseUrl = 'https://ilbolive.unipd.it';
     const homeUrl = `${baseUrl}/it/news`;
 
@@ -44,7 +44,7 @@ async function handler() {
         .toArray()
         .map((el) => {
             const item = $(el);
-            const title = item.find('.title a').text().trim();
+            const title = item.find('.title a').text();
             const href = item.find('.title a').attr('href');
             const link = baseUrl + href;
             const category = item.find('.category').text().trim();
@@ -60,9 +60,10 @@ async function handler() {
             };
         });
 
-    const finalItems = await Promise.all(
-        items.map((item) =>
-            cache.tryGet(item.link, async () => {
+    const finalItems = await pMap(
+        items,
+        async (item) => {
+            const detail = await cache.tryGet(`unipd:article:v4:${item.link}`, async () => {
                 const detailResponse = await got(item.link);
                 const $ = load(detailResponse.data);
 
@@ -71,29 +72,27 @@ async function handler() {
                 // Picture
                 article.find('img').each((_, el) => {
                     const img = $(el);
-                    const src = img.attr('src');
-                    if (src && src.startsWith('/')) {
-                        img.attr('src', baseUrl + src);
-                    }
                     img.attr('style', 'max-width: 100%; height: auto;');
                 });
 
                 const datetime = article.find('time.date').attr('datetime');
-                const pubDate = datetime ? timezone(parseDate(datetime), 0) : undefined;
+                const pubDate = datetime ? parseDate(datetime) : undefined;
 
-                const author = article.find('.author a').text().trim();
+                const author = article.find('.author a').text();
 
                 // Delete header
                 article.find('.header').remove();
 
                 return {
-                    ...item,
-                    description: article.html() ?? '',
-                    pubDate,
+                    description: article.html(),
+                    pubDate: pubDate && !Number.isNaN(pubDate.getTime()) ? pubDate : undefined,
                     author,
                 };
-            })
-        )
+            });
+
+            return { ...item, ...detail };
+        },
+        { concurrency: 3 }
     );
 
     return {

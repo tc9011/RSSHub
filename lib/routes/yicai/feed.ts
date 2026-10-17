@@ -1,10 +1,10 @@
 import { load } from 'cheerio';
 
 import type { Route } from '@/types';
-import cache from '@/utils/cache';
 import got from '@/utils/got';
+import { getRouteLimit } from '@/utils/route-limit';
 
-import { ProcessItems, rootUrl } from './utils';
+import { processItems, rootUrl } from './utils';
 
 export const route: Route = {
     path: '/feed/:id?',
@@ -22,14 +22,14 @@ export const route: Route = {
     radar: [
         {
             source: ['yicai.com/feed/:id', 'yicai.com/feed'],
-            target: '/feed/:id',
+            target: '/feed/:id?',
         },
     ],
     name: '关注',
     maintainers: ['nczitzk'],
     handler,
     description: `::: tip
-  全部主题词见 [此处](https://www.yicai.com/feed/alltheme)
+全部主题词见 [此处](https://www.yicai.com/feed/alltheme)
 :::`,
 };
 
@@ -37,7 +37,7 @@ async function handler(ctx) {
     const id = ctx.req.param('id') ?? '669';
 
     const currentUrl = `${rootUrl}/feed/${id}`;
-    const apiUrl = `${rootUrl}/api/ajax/getlistbytid?id=${id}&page=0&pagesize=${ctx.req.query('limit') ?? 30}`;
+    const apiUrl = `${rootUrl}/api/ajax/getlistbytid?id=${id}&page=0&pagesize=${getRouteLimit(ctx, 30)}`;
 
     const response = await got({
         method: 'get',
@@ -46,7 +46,7 @@ async function handler(ctx) {
 
     const $ = load(response.data);
 
-    const items = await ProcessItems(apiUrl, cache.tryGet);
+    const items = await processItems(apiUrl);
 
     return {
         title: `第一财经主题 - ${$('title').text()}`,

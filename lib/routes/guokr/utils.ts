@@ -1,4 +1,4 @@
-import * as cheerio from 'cheerio';
+import { load } from 'cheerio';
 
 import cache from '@/utils/cache';
 import got from '@/utils/got';
@@ -16,10 +16,10 @@ export const parseList = (result) =>
         channels: item.channels,
     }));
 
-export const parseItem = (item) =>
-    cache.tryGet(item.link, async () => {
-        const { data: res } = await got(`https://apis.guokr.com/minisite/article/${item.id}.json`);
-        const $ = cheerio.load(res.result.content);
+export const parseItem = async ({ id, channels: _channels, ...item }) => {
+    const description = await cache.tryGet(`guokr:article:${id}`, async () => {
+        const { data: res } = await got(`https://apis.guokr.com/minisite/article/${id}.json`);
+        const $ = load(res.result.content);
 
         $('#meta_content').remove();
         $('div').each((_, elem) => {
@@ -32,7 +32,8 @@ export const parseItem = (item) =>
                 $elem.attr('src', $elem.attr('data-src'));
             }
         });
-        item.description = $.html();
-
-        return item;
+        return $.html();
     });
+
+    return { ...item, description };
+};

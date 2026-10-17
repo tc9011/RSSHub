@@ -1,15 +1,23 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
+import type { DataItem, Language, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
+import { isValidHost } from '@/utils/valid-host';
 
 import { renderDescription } from './templates/description';
 
 export const handler = async (ctx) => {
     const { category = '' } = ctx.req.param();
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 12;
+    if (category && !isValidHost(category)) {
+        throw new InvalidParameterError('Invalid category');
+    }
+
+    const limit = getRouteLimit(ctx, 12);
 
     const rootUrl = 'https://lrepacks.net';
     const currentUrl = new URL(category, rootUrl).href;
@@ -18,24 +26,24 @@ export const handler = async (ctx) => {
 
     const $ = load(response);
 
-    const language = $('html').prop('lang');
+    const language = $('html').prop('lang') as Language;
 
     let items = $('#main article')
         .slice(0, limit)
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem => {
+            const $item = $(item);
 
-            const title = item.find('h3.entry-title').text();
+            const title = $item.find('h3.entry-title').text();
             const description = renderDescription({
-                intro: item.find('div.entry-content').text(),
+                intro: $item.find('div.entry-content').text(),
             });
 
             return {
                 title,
                 description,
-                link: item.find('h3.entry-title a').prop('href'),
-                category: item
+                link: $item.find('h3.entry-title a').prop('href'),
+                category: $item
                     .find('span.cat-links')
                     .toArray()
                     .map((c) => $(c).text()),
@@ -43,24 +51,25 @@ export const handler = async (ctx) => {
             };
         });
 
-    items = await Promise.all(
-        items.map((item) =>
-            cache.tryGet(item.link, async () => {
+    items = await pMap(
+        items,
+        async (item) => {
+            const detail = await cache.tryGet('lrepacks:article:' + item.link, async () => {
                 const { data: detailResponse } = await got(item.link);
 
                 const $$ = load(detailResponse);
 
-                const data = JSON.parse($$('script[type="application/ld+json"]').first().text())['@graph']?.[0] ?? undefined;
+                const data = JSON.parse($$('script[type="application/ld+json"]').text())['@graph']?.[0];
 
                 $$('div.entry-content a.highslide[href]').each((_, el) => {
-                    el = $$(el);
+                    const $el = $$(el);
 
-                    el.parent().replaceWith(
+                    $el.parent().replaceWith(
                         renderDescription({
                             images: [
                                 {
-                                    src: el.prop('href'),
-                                    alt: el.prop('title'),
+                                    src: $el.prop('href'),
+                                    alt: $el.prop('title'),
                                 },
                             ],
                         })
@@ -68,39 +77,43 @@ export const handler = async (ctx) => {
                 });
 
                 const title = $$('h2.entry-title').text();
-                const description =
-                    item.description +
-                    renderDescription({
-                        description: $$('div.entry-content').html() ?? undefined,
-                    });
+                const description = renderDescription({
+                    description: $$('div.entry-content').html() ?? undefined,
+                });
                 const image = $$('meta[property="og:image"]').prop('content');
 
-                item.title = title;
-                item.description = description;
-                item.pubDate = data ? parseDate(data.datePublished) : undefined;
-                item.author = data?.author?.name ?? undefined;
-                item.content = {
-                    html: description,
-                    text: $$('div.entry-content').text(),
+                return {
+                    title,
+                    description,
+                    pubDate: data?.datePublished ? parseDate(data.datePublished) : undefined,
+                    author: data?.author?.name,
+                    content: { text: $$('div.entry-content').text() },
+                    image,
+                    updated: data?.dateModified ? parseDate(data.dateModified) : undefined,
                 };
-                item.image = image;
-                item.banner = image;
-                item.updated = data ? parseDate(data.dateModified) : undefined;
-                item.language = language;
-
-                return item;
-            })
-        )
+            });
+            const description = item.description + detail.description;
+            return {
+                ...item,
+                ...detail,
+                description,
+                content: {
+                    html: description,
+                    text: detail.content.text,
+                },
+                banner: detail.image,
+            };
+        },
+        { concurrency: 3 }
     );
 
-    const image = new URL($('div.logo img').prop('src'), rootUrl).href;
+    const image = new URL($('div.logo img').prop('src')!, rootUrl).href;
 
     return {
         title: $('title').text(),
         description: $('meta[name="description"]').prop('content'),
         link: currentUrl,
         item: items,
-        allowEmpty: true,
         image,
         author: $('meta[property="og:site_name"]').prop('content'),
         language,
@@ -116,7 +129,7 @@ export const route: Route = {
     example: '/lrepacks',
     parameters: { category: 'Category, Homepage by default' },
     description: `::: tip
-  If you subscribe to [Системные программы](https://lrepacks.net/repaki-sistemnyh-programm/)，where the URL is \`https://lrepacks.net/repaki-sistemnyh-programm/\`, extract the part \`https://lrepacks.net/\` to the end, which is \`repaki-sistemnyh-programm\`, and use it as the parameter to fill in. Therefore, the route will be [\`/lrepacks/repaki-sistemnyh-programm\`](https://rsshub.app/lrepacks/repaki-sistemnyh-programm).
+If you subscribe to [Системные программы](https://lrepacks.net/repaki-sistemnyh-programm/)，where the URL is \`https://lrepacks.net/repaki-sistemnyh-programm/\`, extract the part \`https://lrepacks.net/\` to the end, which is \`repaki-sistemnyh-programm\`, and use it as the parameter to fill in. Therefore, the route will be [\`/lrepacks/repaki-sistemnyh-programm\`](https://rsshub.app/lrepacks/repaki-sistemnyh-programm).
 
 | Category                                                                        | ID                                                                                           |
 | ------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -129,6 +142,7 @@ export const route: Route = {
 | [Разные программы](https://lrepacks.net/repaki-raznyh-programm/)                | [repaki-raznyh-programm](https://rsshub.app/lrepacks/repaki-raznyh-programm)                 |
 | [Системные библиотеки](https://lrepacks.net/sistemnye-biblioteki/)              | [sistemnye-biblioteki](https://rsshub.app/lrepacks/sistemnye-biblioteki)                     |
 | [Важная информация](https://lrepacks.net/informaciya/)                          | [informaciya](https://rsshub.app/lrepacks/informaciya)                                       |
+
 :::`,
     categories: ['program-update'],
 
@@ -143,12 +157,8 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['lrepacks.net/:category'],
-            target: (params) => {
-                const category = params.category;
-
-                return `/lrepacks${category ? `/${category}` : ''}`;
-            },
+            source: ['lrepacks.net/:category?'],
+            target: '/:category?',
         },
         {
             title: 'Новые репаки на сегодня',

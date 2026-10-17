@@ -1,9 +1,10 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDateInTimezone } from '@/utils/parse-date-in-timezone';
 
 export const route: Route = {
     path: '/yjsy/zhaosheng/:id?',
@@ -47,19 +48,21 @@ async function handler(ctx) {
 
     let items = $('.pageUl ul li a')
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem => {
+            const $item = $(item);
 
             return {
-                title: item.attr('title'),
-                link: new URL(item.attr('href'), currentUrl).href,
-                pubDate: parseDate(item.find('span').text()),
+                title: $item.attr('title')!,
+                link: new URL($item.attr('href')!, currentUrl).href,
+                pubDate: parseDateInTimezone($item.find('span').text(), 8),
             };
         });
 
-    items = await Promise.all(
-        items.map((item) =>
-            cache.tryGet(item.link, async () => {
+    items = await pMap(
+        items,
+        async (item) => ({
+            ...item,
+            ...(await cache.tryGet(`sdust:article-v2:${item.link}`, async () => {
                 const detailResponse = await got({
                     method: 'get',
                     url: item.link,
@@ -69,9 +72,10 @@ async function handler(ctx) {
 
                 item.description = content('.txt, .v_news_content').html();
 
-                return item;
-            })
-        )
+                return { description: item.description };
+            })),
+        }),
+        { concurrency: 3 }
     );
 
     return {

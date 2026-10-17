@@ -1,10 +1,11 @@
 /* eslint-disable no-await-in-loop */
 import type { Context } from 'hono';
-import { Api } from 'telegram';
+import { Api } from 'teleproto';
 
 import NotFoundError from '@/errors/types/not-found';
 import { configureMiddlewares, handleMedia } from '@/routes/telegram/channel-media';
 import type { Data, DataItem, Route } from '@/types';
+import { parseDate } from '@/utils/parse-date';
 
 import { getGeoLink, getMediaLink } from './tglib/channel';
 import { getClient, getStory, unwrapMedia } from './tglib/client';
@@ -62,12 +63,13 @@ export const route: Route = {
     name: 'Stories',
     maintainers: ['synchrone'],
     handler,
-    description: ``,
+    description: '',
 };
 
 function getMediaAreas(mediaAreas?: Api.TypeMediaArea[]) {
     let description = '';
-    for (const area of mediaAreas ?? []) {
+    const areas = mediaAreas ?? [];
+    for (const area of areas) {
         if (area instanceof Api.MediaAreaChannelPost) {
             // TODO: fetch area.msgId and display inline
         } else if ((area instanceof Api.MediaAreaGeoPoint || area instanceof Api.MediaAreaVenue) && area.geo instanceof Api.GeoPoint) {
@@ -83,7 +85,7 @@ function getMediaAreas(mediaAreas?: Api.TypeMediaArea[]) {
     return description;
 }
 
-export default async function handler(ctx: Context) {
+async function handler(ctx: Context): Promise<Data | Response> {
     const c = await getClient();
     const { username, story } = ctx.req.param();
     if (!username) {
@@ -105,7 +107,7 @@ export default async function handler(ctx: Context) {
             continue;
         }
         const src = `${new URL(ctx.req.url).origin}/telegram/stories/${username}/${story.id}`;
-        const pubDate = new Date(story.date * 1000).toUTCString();
+        const pubDate = story.date === undefined ? undefined : parseDate(story.date * 1000);
         const media = await unwrapMedia(story.media);
         if (!media) {
             // cannot load the story
@@ -114,7 +116,7 @@ export default async function handler(ctx: Context) {
 
         const description = getMediaLink(src, media) + getMediaAreas(story.mediaAreas);
         item.push({
-            title: story.caption ?? pubDate,
+            title: story.caption ?? pubDate?.toUTCString() ?? '',
             description,
             pubDate,
             link: `https://t.me/${username}/s/${story.id}`,
@@ -128,5 +130,5 @@ export default async function handler(ctx: Context) {
         item,
         allowEmpty: ctx.req.param('id') === 'allow_empty',
         description: `Stories of @${username} on Telegram`,
-    } as Data;
+    };
 }

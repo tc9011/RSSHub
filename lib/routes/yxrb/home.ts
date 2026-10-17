@@ -1,6 +1,6 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
@@ -43,23 +43,23 @@ async function handler(ctx) {
 
     const list = $('.channel-news .item')
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem => {
+            const $item = $(item);
             return {
-                title: item.find('.title a').attr('title'),
-                link: `${baseUrl}${item.find('.title a').attr('href')}`,
-                author: item.find('.author a').text().split('作者 : ')[1],
+                title: $item.find('.title a').attr('title')!,
+                link: `${baseUrl}${$item.find('.title a').attr('href')}`,
+                author: $item.find('.author a').text().split('作者 : ', 2)[1],
             };
         });
 
     const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
+        list.map(async (item) => {
+            const article = await cache.tryGet(`yxrb:article:details:${item.link}`, async () => {
                 const response = await got(item.link);
                 const $ = load(response.data);
 
-                item.author = item.author ?? $('.author-info .name a').text().split('作者 : ')[1];
-                item.pubDate = timezone(
+                const author = $('.author-info .name a').text().split('作者 : ', 2)[1];
+                const pubDate = timezone(
                     parseDate(
                         $('.publish-time')
                             .first()
@@ -71,14 +71,15 @@ async function handler(ctx) {
                     ),
                     8
                 );
-                item.description = $('article').html();
-                item.category = $('.tags a')
+                const description = $('article').html();
+                const category = $('.tags a')
                     .toArray()
                     .map((item) => $(item).text());
 
-                return item;
-            })
-        )
+                return { author, pubDate, description, category };
+            });
+            return { ...item, ...article, author: item.author ?? article.author };
+        })
     );
 
     return {

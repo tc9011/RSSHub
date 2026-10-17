@@ -6,6 +6,9 @@ import { parseDate } from '@/utils/parse-date';
 
 import { processImage } from './utils';
 
+interface ContentBlock {
+    content?: string;
+}
 export const route: Route = {
     path: '/timeline',
     categories: ['social-media'],
@@ -28,28 +31,29 @@ export const route: Route = {
     maintainers: ['SeanChao'],
     handler,
     description: `::: warning
-  用户关注动态需要登录后的 Cookie 值，所以只能自建，详情见部署页面的配置模块。
+用户关注动态需要登录后的 Cookie 值，所以只能自建，详情见部署页面的配置模块。
 :::`,
 };
-
 async function handler(ctx) {
     const cookie = config.zhihu.cookies;
     if (cookie === undefined) {
         throw new ConfigNotFoundError('缺少知乎用户登录后的 Cookie 值');
     }
+    const limitValue = ctx.req.query('limit');
+    const requestedLimit = limitValue && /^\d+$/.test(limitValue) ? Number(limitValue) : NaN;
+    const limit = Number.isSafeInteger(requestedLimit) && requestedLimit > 0 ? requestedLimit : 15;
     const response = await got({
         method: 'get',
-        url: `https://www.zhihu.com/api/v3/moments`,
+        url: 'https://www.zhihu.com/api/v3/moments',
         headers: {
             Cookie: cookie,
         },
         searchParams: {
             desktop: true,
-            limit: ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit')) : 15,
+            limit,
         },
     });
     const feeds = response.data.data;
-
     const urlBase = 'https://zhihu.com';
     const buildLink = (e) => {
         if (!e || !e.target || !e.target.type) {
@@ -70,7 +74,6 @@ async function handler(ctx) {
                 return;
         }
     };
-
     /**
      * Returns one non-undefined/null element from a list of items
      * make sure there exists at least one element that is non-undefined
@@ -78,7 +81,6 @@ async function handler(ctx) {
      * @param {Array} list a list of items to be filtered
      */
     const getOne = (list) => list.find((e) => e !== undefined && e !== null);
-
     const buildActors = (e) => {
         const actors = e.actors;
         if (!actors) {
@@ -86,29 +88,26 @@ async function handler(ctx) {
         }
         return actors.map((e) => e.name).join(', ');
     };
-
-    const getContent = (content) => {
+    const getContent = (content: string | ContentBlock[] | undefined) => {
         if (!content || !Array.isArray(content)) {
             return content;
         }
-        // content can be a string or an array of objects
         return (
             content
                 .map((e) => e.content)
-                .filter((e) => !!e && typeof e === 'string')
+                .filter((e) => !!e)
                 // some content may not be wrapped in tag, it will cause error when parsing
                 .map((e) => `<div>${e}</div>`)
                 .join('')
         );
     };
-
     const buildItem = (e) => {
         if (!e || !e.target) {
             return {};
         }
         const link = buildLink(e);
         return {
-            title: `${e.action_text_tpl.replace('{}', buildActors(e))}: ${getOne([e.target.title, e.target.question ? e.target.question.title : ''])}`,
+            title: `${e.action_text_tpl.replace('{}', () => buildActors(e))}: ${getOne([e.target.title, e.target.question ? e.target.question.title : ''])}`,
             description: processImage(`<div>${getOne([e.target.content_html, getContent(e.target.content), e.target.detail, e.target.excerpt, ''])}</div>`),
             pubDate: parseDate(e.updated_time * 1000),
             link,
@@ -117,13 +116,12 @@ async function handler(ctx) {
             category: [e.verb],
         };
     };
-
     const out = feeds
         .filter((e) => e.verb)
         .map((e) => {
             if (e && e.type && e.type === 'feed_group') {
                 // A feed group contains a list of feeds whose structure is the same as a single feed
-                const title = e.group_text.replace('{LIST_COUNT}', e.list.length);
+                const title = e.group_text.replace('{LIST_COUNT}', () => e.list.length);
                 const description =
                     e.list && Array.isArray(e.list)
                         ? e.list
@@ -131,7 +129,8 @@ async function handler(ctx) {
                               .map((e) => `<a href="${e.link}"><b>${e.title}</b></a><br><p>${e.description}</p><br>`)
                               .join('')
                         : '';
-                const pubDate = e.list && Array.isArray(e.list) && e.list.length > 0 ? parseDate(e.list[0].updated_time * 1000) : new Date();
+                const updatedTime = Array.isArray(e.list) ? e.list[0]?.updated_time : undefined;
+                const pubDate = isNullish(updatedTime) || updatedTime === '' ? undefined : parseDate(updatedTime * 1000);
                 const guid = e.link;
                 return {
                     title,
@@ -143,10 +142,17 @@ async function handler(ctx) {
             }
             return buildItem(e);
         });
-
     return {
-        title: `知乎关注动态`,
-        link: `https://www.zhihu.com/follow`,
+        title: '知乎关注动态',
+        link: 'https://www.zhihu.com/follow',
         item: out,
     };
+}
+function isNullish(value: unknown): value is null | undefined {
+    return isOneOf(value, [null, undefined]);
+}
+
+function isOneOf<const T>(value: unknown, values: readonly T[]): value is T {
+    const candidates: readonly unknown[] = values;
+    return candidates.includes(value);
 }

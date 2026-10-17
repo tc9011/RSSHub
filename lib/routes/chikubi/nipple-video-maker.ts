@@ -39,12 +39,13 @@ async function handler(ctx): Promise<Data> {
     const list = feed.items.map((item) => ({
         title: item.title,
         link: item.link,
+        pubDate: item.pubDate,
     }));
 
     const items = await processItems(list);
 
     return {
-        title: `AVメーカー: ${feed.title?.split('-')[0]} - chikubi.jp`,
+        title: `AVメーカー: ${feed.title?.split('-', 1)[0]} - chikubi.jp`,
         link: `${baseUrl}${url}`,
         item: items,
     };

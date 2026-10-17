@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Language, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
@@ -32,6 +33,8 @@ export const route: Route = {
     url: 'www.techpowerup.com/review/',
 };
 
+const language: Language = 'en';
+
 async function handler(ctx) {
     const keyword = ctx.req.param('keyword');
 
@@ -52,46 +55,44 @@ async function handler(ctx) {
         .map((item) => {
             const $item = $(item);
             const a = $item.find('.title a');
+            const date = $item.find('.date time').attr('datetime');
             return {
                 title: a.text(),
                 link: baseUrl + a.attr('href'),
-                pubDate: parseDate($item.find('.date time').attr('datetime')), // 2023-05-21T16:05:14+00:00
+                pubDate: date ? parseDate(date) : undefined, // 2023-05-21T16:05:14+00:00
                 author: $item
                     .find('.author')
                     .contents()
                     .filter((_, c) => c.type === 'text')
-                    .text()
-                    .trim(),
+                    .text(),
                 category: $item
                     .find('.category')
                     .contents()
                     .filter((_, c) => c.type === 'text')
-                    .text()
-                    .trim(),
+                    .text(),
             };
         });
 
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
-                const response = await ofetch(item.link, {
-                    headers,
-                });
+    const items = await pMap(
+        list,
+        async (item) => {
+            const detail = await cache.tryGet(`techpowerup:detail-fields:v1:${item.link}`, async (): Promise<Partial<DataItem>> => {
+                const response = await ofetch(item.link, { headers });
                 const $ = load(response);
-
                 fixImages($);
-
-                await parseReviews($, item);
-
-                return item;
-            })
-        )
+                const detail: Partial<DataItem> = {};
+                await parseReviews($, detail);
+                return detail;
+            });
+            return { ...item, ...detail, pubDate: detail.pubDate ?? item.pubDate };
+        },
+        { concurrency: 3 }
     );
 
     return {
         title: 'Reviews | TechPowerUp',
         link: url.href,
-        language: 'en',
+        language,
         image: 'https://tpucdn.com/apple-touch-icon-v1684568903519.png',
         item: items,
     };

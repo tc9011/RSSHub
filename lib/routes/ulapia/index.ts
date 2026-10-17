@@ -1,8 +1,10 @@
 import { load } from 'cheerio';
 
+import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Route } from '@/types';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import timezone from '@/utils/timezone';
 
 const rootUrl = 'http://www.ulapia.com';
 
@@ -42,11 +44,14 @@ export const route: Route = {
     handler,
     description: `|     个股研报    |      行业研报      |      策略研报      |     宏观研报    |    新股研报   | 券商晨报（今日晨报） |
 | :-------------: | :----------------: | :----------------: | :-------------: | :-----------: | :------------------: |
-| stock_research | industry_research | strategy_research | macro_research | ipo_research |    brokerage_news   |`,
+| stock\\_research | industry\\_research | strategy\\_research | macro\\_research | ipo\\_research |    brokerage\\_news   |`,
 };
 
 async function handler(ctx) {
     const category = ctx.req.param('category') ?? 'brokerage_news';
+    if (!Object.hasOwn(selectorMap, category)) {
+        throw new InvalidParameterError('Unsupported report category. Use brokerage_news, stock_research, industry_research, strategy_research, macro_research, or ipo_research.');
+    }
     const url = `${rootUrl}/reports/${category}`;
 
     const response = await got.get(url);
@@ -54,13 +59,17 @@ async function handler(ctx) {
     const items = $(String(selectorMap[category]))
         .toArray()
         .filter((item) => $(item).find('img').attr('src'))
-        .map((item) => ({
-            title: `${$(item).find('strong').text()}  ${$(item).find('h5.mb-1').text()}`,
-            author: $(item).find('div.col.p-8.d-flex.px-3.py-3.flex-column.position-static > div:nth-child(4) > span:nth-child(2)').text(),
-            link: $(item).find('h5.mb-1 > a').attr('href'),
-            description: `<img src="${$(item).find('img').attr('src').split('!')[0]}">`,
-            pubDate: parseDate($(item).find('div.mb-0.text-muted').last().text().split(':')[1], 'YYYY-MM-DD'),
-        }));
+        .map((item) => {
+            const date = $(item).find('div.mb-0.text-muted').last().text().split(':', 2)[1]?.trim() ?? '';
+            const pubDate = parseDate(date, 'YYYY-MM-DD', true);
+            return {
+                title: `${$(item).find('strong').text()}  ${$(item).find('h5.mb-1').text()}`,
+                author: $(item).find('div.col.p-8.d-flex.px-3.py-3.flex-column.position-static > div:nth-child(4) > span:nth-child(2)').text(),
+                link: $(item).find('h5.mb-1 > a').attr('href'),
+                description: `<img src="${$(item).find('img').attr('src')!.split('!', 1)[0]}">`,
+                pubDate: Number.isNaN(pubDate.getTime()) ? undefined : timezone(pubDate, 8),
+            };
+        });
 
     return {
         title: ` ulapia - ${titleMap[category]}`,

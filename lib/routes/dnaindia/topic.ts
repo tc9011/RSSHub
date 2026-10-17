@@ -5,10 +5,10 @@ import { handler } from './common';
 export const route: Route = {
     name: 'Topic',
     maintainers: ['Rjnishant530'],
-    path: ['/topic/:topic'],
+    path: '/topic/:topic',
     example: '/dnaindia/topic/dna-verified',
     parameters: {
-        category: 'Find it in the URL',
+        topic: 'Find it in the URL',
     },
     radar: [
         {

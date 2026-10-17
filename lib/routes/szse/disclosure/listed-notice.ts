@@ -2,39 +2,40 @@ import type { CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
 import type { Context } from 'hono';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
 function isValidDate(dateString: string): boolean {
-    // 正则表达式检查格式：YYYY-MM-DD
-    const regex = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/;
+    // Validate the YYYY-MM-DD format.
+    const regex = /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/;
     if (!regex.test(dateString)) {
         return false;
     }
 
-    // 解析日期并验证有效性（避免像 2025-02-30 这样的无效日期）
+    // Reject impossible calendar dates, such as 2025-02-30.
     const [year, month, day] = dateString.split('-').map(Number);
-    const date = new Date(year, month - 1, day); // 月份从 0 开始
+    const date = new Date(year, month - 1, day); // Months are zero-indexed.
 
-    // 检查解析后的日期是否与输入一致
+    // Ensure that the parsed date matches the input.
     return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
 }
 
 export const handler = async (ctx: Context): Promise<Data> => {
     const { category = '' } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '50', 10);
+    const limit = getRouteLimit(ctx, 50);
     const query: string = ctx.req.param('query') ?? '';
-    const queries: Record<string, string> = {
+    const queries = {
         stock: '',
         beginDate: '',
         endDate: '',
     };
     if (query) {
         for (const pair of query.split('&')) {
-            const [key, value] = pair.split('=');
+            const [key, value] = pair.split('=', 2);
             if (key) {
                 queries[key] = value;
             }
@@ -48,7 +49,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
             throw new Error('Invalid endDate format. Expected YYYY-MM-DD');
         }
     } else if (queries.beginDate) {
-        // 如果只提供了开始日期，则将结束日期设置为开始日期
+        // Use the start date as the end date when only the start is specified.
         queries.endDate = queries.beginDate;
     }
     const baseUrl = 'https://www.szse.cn';
@@ -58,7 +59,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
     const targetResponse = await ofetch(targetUrl);
     const $: CheerioAPI = load(targetResponse);
-    const language = $('html').attr('lang') ?? 'zh-CN';
+    const language = ($('html').attr('lang') ?? 'zh-CN') as Language;
     const response = await ofetch(apiUrl, {
         method: 'POST',
         body: {
@@ -82,16 +83,16 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
             let processedItem: DataItem = {
                 title,
-                pubDate: pubDate ? timezone(parseDate(pubDate), +8) : undefined,
+                pubDate: pubDate ? timezone(parseDate(pubDate), 8) : undefined,
                 link: new URL(linkUrl, baseUrl).href,
                 category: categories,
                 guid,
                 id: guid,
-                updated: updated ? timezone(parseDate(updated), +8) : undefined,
+                updated: updated ? timezone(parseDate(updated), 8) : undefined,
                 language,
             };
 
-            const enclosureUrl: string | undefined = new URL(`download${item.attachPath}`, staticBaseUrl).href;
+            const enclosureUrl: string | undefined = item.attachPath ? new URL(`download${item.attachPath}`, staticBaseUrl).href : undefined;
 
             if (enclosureUrl) {
                 const enclosureType = `application/${item.attachFormat}`;
@@ -114,7 +115,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
         description: $('meta[name="description"]').attr('content'),
         link: targetUrl,
         item: items,
-        allowEmpty: true,
         image: $('a.navbar-brand img').attr('src'),
         author: $('meta[name="author"]').attr('content'),
         language,

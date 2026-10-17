@@ -2,14 +2,17 @@ import type { CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
 import type { Context } from 'hono';
 
-import type { Data, DataItem, Route } from '@/types';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 export const handler = async (ctx: Context): Promise<Data> => {
     const { category } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '100', 10);
+    const requestedLimit = getRouteLimit(ctx, 100);
+    const limit = Math.min(Math.max(requestedLimit, 1), 100);
 
     const apiSlug = 'wp-json/wp/v2';
     const baseUrl = 'https://60s.aa1.cn';
@@ -24,6 +27,9 @@ export const handler = async (ctx: Context): Promise<Data> => {
     });
 
     const categoryObj = searchResponse.find((c) => c.slug === category || c.name === category);
+    if (category && !categoryObj) {
+        throw new InvalidParameterError(`Category "${category}" was not found.`);
+    }
     const categoryId: number | undefined = categoryObj?.id ?? undefined;
     const categorySlug: string | undefined = categoryObj?.slug ?? undefined;
 
@@ -39,11 +45,9 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
     const targetResponse = await ofetch(targetUrl);
     const $: CheerioAPI = load(targetResponse);
-    const language = $('html').attr('lang') ?? 'zh';
+    const language = ($('html').attr('lang') ?? 'zh') as Language;
 
-    let items: DataItem[] = [];
-
-    items = response.slice(0, limit).map((item): DataItem => {
+    const items: DataItem[] = response.slice(0, limit).map((item): DataItem => {
         const title: string = item.title?.rendered ?? item.title;
         const description: string | undefined = item.content.rendered;
         const pubDate: number | string = item.date_gmt;
@@ -65,7 +69,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
         const processedItem: DataItem = {
             title,
             description,
-            pubDate: pubDate ? parseDate(pubDate) : undefined,
+            pubDate: pubDate ? parseDate(`${pubDate}Z`) : undefined,
             link: linkUrl ?? guid,
             category: categories,
             author: authors,
@@ -77,7 +81,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
             },
             image,
             banner: image,
-            updated: updated ? parseDate(updated) : undefined,
+            updated: updated ? parseDate(`${updated}Z`) : undefined,
             language,
         };
 
@@ -134,7 +138,7 @@ export const route: Route = {
         },
     },
     description: `::: tip
-订阅 [每天60秒读懂世界](https://60s.aa1.cn/category/news)，其源网址为 \`https://60s.aa1.cn/category/news\`，请参考该 URL 指定部分构成参数，此时路由为 [\`/aa1/60s/news\`](https://rsshub.app/aa1/60s/news) 或 [\`/aa1/60s/每天60秒读懂世界\`](https://rsshub.app/aa1/60s/每天60秒读懂世界)。
+订阅 [每天 60 秒读懂世界](https://60s.aa1.cn/category/news)，其源网址为 \`https://60s.aa1.cn/category/news\`，请参考该 URL 指定部分构成参数，此时路由为 [\`/aa1/60s/news\`](https://rsshub.app/aa1/60s/news) 或 [\`/aa1/60s/每天60秒读懂世界\`](https://rsshub.app/aa1/60s/每天60秒读懂世界)。
 :::
 
 | 分类                                                       | ID                                                      |
@@ -143,8 +147,7 @@ export const route: Route = {
 | [新闻词文章数据](https://60s.aa1.cn/category/freenewsdata) | [freenewsdata](https://rsshub.app/aa1/60s/freenewsdata) |
 | [最新](https://60s.aa1.cn/category/new)                    | [new](https://rsshub.app/aa1/60s/new)                   |
 | [本平台同款自动发文章插件](https://60s.aa1.cn/category/1)  | [1](https://rsshub.app/aa1/60s/1)                       |
-| [每天 60 秒读懂世界](https://60s.aa1.cn/category/news)     | [news](https://rsshub.app/aa1/60s/news)                 |
-`,
+| [每天 60 秒读懂世界](https://60s.aa1.cn/category/news)     | [news](https://rsshub.app/aa1/60s/news)                 |`,
     categories: ['new-media'],
     features: {
         requireConfig: false,

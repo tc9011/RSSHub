@@ -1,7 +1,7 @@
 import { load } from 'cheerio';
 import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
@@ -29,7 +29,7 @@ async function handler() {
 
     const list = $('a[class^="note"]')
         .toArray()
-        .map((element) => {
+        .map((element): DataItem => {
             const $e = $(element);
             return {
                 title: $e.find('h2, h3').text().trim(),
@@ -40,14 +40,20 @@ async function handler() {
     const items = await pMap(
         list,
         (item) =>
-            cache.tryGet(item.link, async () => {
-                const response = await ofetch(item.link);
+            cache.tryGet(item.link!, async () => {
+                const response = await ofetch(item.link!);
                 const $ = load(response);
 
-                item.pubDate = parseDate($('d-article p').first().text().trim());
+                const publishedTime = $('meta[property="article:published_time"]').attr('content');
+                const legacyDate = $('d-article p').first();
+                const date = publishedTime || legacyDate.text().trim();
+                item.pubDate = date ? parseDate(date) : undefined;
                 $('h3:contains("Subscribe")').remove();
-                $('d-article p').first().remove();
-                const content = $('d-article');
+                legacyDate.remove();
+                const content = $('d-article').length ? $('d-article') : $('#main-content > article');
+                content
+                    .find('[class$="__header"], [class$="__sidebar-container"], [class$="__controls"], [class$="__socialShare"], [class^="LandingPageSection-module-scss-module__"], [class^="SubjectNewsletter-module-scss-module__"]')
+                    .remove();
                 content.find('img').each((_, e) => {
                     const $e = $(e);
                     $e.removeAttr('style srcset');

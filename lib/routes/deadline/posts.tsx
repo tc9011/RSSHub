@@ -2,9 +2,10 @@ import { load } from 'cheerio';
 import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
 
-import type { Route } from '@/types';
+import type { Data, Route } from '@/types';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 const renderDescription = (embedded, desc) =>
     renderToString(
@@ -26,23 +27,26 @@ const renderDescription = (embedded, desc) =>
 
 export const route: Route = {
     path: '/',
+    categories: ['new-media'],
+    example: '/deadline',
     radar: [
         {
             source: ['deadline.com/'],
             target: '',
         },
     ],
-    name: 'Unknown',
+    name: 'Latest Article',
     maintainers: ['TonyRL'],
     handler,
     url: 'deadline.com/',
 };
 
-async function handler(ctx) {
+async function handler(ctx): Promise<Data> {
     const baseUrl = 'https://deadline.com';
+    const limit = getRouteLimit(ctx, 30);
     const response = await got(`${baseUrl}/wp-json/wp/v2/posts`, {
         searchParams: {
-            per_page: ctx.req.query('limit') ?? 30,
+            per_page: Math.min(limit, 100),
             _embed: true,
         },
     });
@@ -52,12 +56,14 @@ async function handler(ctx) {
         const $ = load(item.content.rendered, null, false);
 
         $('.c-lazy-image__img').each((_, img) => {
-            img = $(img);
-            if (img.attr('data-lazy-src')) {
-                img.attr('src', img.attr('data-lazy-src').split('?')[0]);
-                img.removeAttr('data-lazy-src');
-                img.removeAttr('data-lazy-srcset');
+            const $img = $(img);
+            if (!$img.attr('data-lazy-src')) {
+                return;
             }
+
+            $img.attr('src', $img.attr('data-lazy-src')!.split('?', 1)[0]);
+            $img.removeAttr('data-lazy-src');
+            $img.removeAttr('data-lazy-srcset');
         });
         $('[class^="lrv-a-crop-"]').contents().unwrap();
 
@@ -67,7 +73,7 @@ async function handler(ctx) {
             link: item.link,
             guid: item.guid.rendered,
             description,
-            pubDate: parseDate(item.date_gmt),
+            pubDate: parseDate(`${item.date_gmt}Z`),
             author: embedded.author[0].name,
             category: [...new Set([...embedded['wp:term'][0].map((i) => i.name), ...embedded['wp:term'][1].map((i) => i.name)])],
         };
@@ -77,7 +83,7 @@ async function handler(ctx) {
         title: 'Deadline – Hollywood Entertainment Breaking News',
         description: 'Deadline.com is always the first to break up-to-the-minute entertainment, Hollywood and media news, with an unfiltered, no-holds-barred analysis of events.',
         link: baseUrl,
-        language: 'en-US',
+        language: 'en-us',
         image: `${baseUrl}/wp-content/themes/pmc-deadline-2019/assets/app/icons/apple-touch-icon.png`,
         item: items,
     };

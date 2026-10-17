@@ -3,14 +3,15 @@ import { load } from 'cheerio';
 import type { Context } from 'hono';
 import { renderToString } from 'hono/jsx/dom/server';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
 
 export const handler = async (ctx: Context): Promise<Data> => {
     const { state = 'all' } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '50', 10);
+    const requestedLimit = Number(ctx.req.query('limit'));
+    const limit = Number.isSafeInteger(requestedLimit) && requestedLimit > 0 ? requestedLimit : 50;
 
     const rootUrl = 'https://petition.parliament.uk';
     const targetUrl: string = new URL(`petitions?state=${state}`, rootUrl).href;
@@ -18,7 +19,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
     const response = await ofetch(targetUrl);
     const $: CheerioAPI = load(response);
-    const language: string = $('html').prop('lang') ?? 'en';
+    const language = ($('html').prop('lang') ?? 'en') as Language;
 
     const jsonResponse = await ofetch(jsonUrl, {
         query: {
@@ -39,7 +40,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
         );
         const guid = `parliament.uk-petition-${item.id}`;
 
-        const author: DataItem['author'] = attributes.creator_name;
+        const author: DataItem['author'] = attributes.creator_name || undefined;
 
         const extraLinks = attributes.departments?.map((link) => ({
             url: link.url,
@@ -58,7 +59,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
             id: guid,
             content: {
                 html: description,
-                text: attributes.background,
+                text: [attributes.background, attributes.additional_details].filter(Boolean).join('\n\n'),
             },
             updated: parseDate(attributes.updated_at),
             language,
@@ -75,7 +76,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
         description: $('meta[property="twitter:description"]').prop('content'),
         link: targetUrl,
         item: items,
-        allowEmpty: true,
         image: feedImage,
         author: $('meta[name="msapplication-tooltip"]').prop('content'),
         language,
@@ -100,21 +100,20 @@ If you subscribe to [Recent petitions](https://petition.parliament.uk/petitions?
 <details>
 <summary>More states</summary>
 
-| Name                            | ID                |
-| ------------------------------- | ----------------- |
-| All petitions                   | all               |
-| Open petitions                  | open              |
-| Recent petitions                | recent            |
-| Closed petitions                | closed            |
-| Rejected petitions              | rejected          |
-| Awaiting government response    | awaiting_response |
-| Government responses            | with_response     |
-| Awaiting a debate in Parliament | awaiting_debate   |
-| Debated in Parliament           | debated           |
-| Not debated in Parliament       | not_debated       |
+| Name                            | ID                 |
+| ------------------------------- | ------------------ |
+| All petitions                   | all                |
+| Open petitions                  | open               |
+| Recent petitions                | recent             |
+| Closed petitions                | closed             |
+| Rejected petitions              | rejected           |
+| Awaiting government response    | awaiting\\_response |
+| Government responses            | with\\_response     |
+| Awaiting a debate in Parliament | awaiting\\_debate   |
+| Debated in Parliament           | debated            |
+| Not debated in Parliament       | not\\_debated       |
 
-</details>
-    `,
+</details>`,
     categories: ['government'],
     features: {
         requireConfig: false,
@@ -128,12 +127,7 @@ If you subscribe to [Recent petitions](https://petition.parliament.uk/petitions?
     radar: [
         {
             source: ['petition.parliament.uk/petitions'],
-            target: (_, url) => {
-                const urlObj = new URL(url);
-                const state = urlObj.searchParams.get('state');
-
-                return `/parliament.uk/petitions${state ? `/${state}` : ''}`;
-            },
+            target: '/petitions',
         },
         {
             title: 'All petitions',

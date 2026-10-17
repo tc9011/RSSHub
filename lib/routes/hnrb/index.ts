@@ -1,4 +1,5 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
@@ -22,7 +23,7 @@ export const route: Route = {
     radar: [
         {
             source: ['voc.com.cn/'],
-            target: '/:id',
+            target: '/',
         },
     ],
     name: '电子刊物',
@@ -56,7 +57,7 @@ async function handler(ctx) {
 
     response = await got({
         method: 'get',
-        url: `${currentUrl}/${id ? response.data.match(/URL=(.*)"/)[1].replace(/node_\d+\.htm$/, `node_20${id}.htm`) : response.data.match(/URL=(.*)"/)[1]}`,
+        url: `${currentUrl}/${id ? response.data.match(/URL=(.*)"/)[1].replace(/node_\d+\.htm$/, () => `node_20${id}.htm`) : response.data.match(/URL=(.*)"/)[1]}`,
     });
 
     const $ = load(response.data);
@@ -64,41 +65,42 @@ async function handler(ctx) {
     const matches = response.data.match(/images\/(\d{4}-\d{2}\/\d{2})\/\d{2}\/\d+_brief/);
     const link = `${rootUrl}/hnrb_epaper/html/${matches[1]}`;
 
-    let items = $('tbody')
+    const urls = $('tbody')
         .eq(1)
         .find('a')
         .toArray()
-        .map((a) => `${link}/${$(a).attr('href').replace(/\.\//, '')}`)
+        .map((a) => `${link}/${$(a).attr('href')!.replace(/\.\//, '')}`)
         .filter((a) => a.endsWith('div=-1'));
 
     if (!id) {
-        await Promise.all(
+        const boardArticles = await pMap(
             $('#pageLink')
                 .slice(1)
                 .toArray()
-                .map((p) => `${link}/${$(p).attr('href').replace(/\.\//, '')}`)
-                .map(async (p) => {
-                    const pageResponse = await got({
-                        method: 'get',
-                        url: p,
-                    });
+                .map((p) => `${link}/${$(p).attr('href')!.replace(/\.\//, '')}`),
+            async (p) => {
+                const pageResponse = await got({
+                    method: 'get',
+                    url: p,
+                });
 
-                    const page = load(pageResponse.data);
+                const page = load(pageResponse.data);
 
-                    items.push(
-                        ...page('tbody')
-                            .eq(1)
-                            .find('a')
-                            .toArray()
-                            .map((a) => `${link}/${page(a).attr('href').replace(/\.\//, '')}`)
-                            .filter((a) => a.endsWith('div=-1'))
-                    );
-                })
+                return page('tbody')
+                    .eq(1)
+                    .find('a')
+                    .toArray()
+                    .map((a) => `${link}/${page(a).attr('href')!.replace(/\.\//, '')}`)
+                    .filter((a) => a.endsWith('div=-1'));
+            },
+            { concurrency: 3 }
         );
+        urls.push(...boardArticles.flat());
     }
 
-    items = await Promise.all(
-        items.map((item) =>
+    const items = await pMap(
+        urls,
+        (item) =>
             cache.tryGet(item, async () => {
                 const detailResponse = await got({
                     method: 'get',
@@ -111,10 +113,10 @@ async function handler(ctx) {
                     link: item,
                     title: content('.font01').text(),
                     description: content('#ozoom').html(),
-                    pubDate: timezone(parseDate(matches[1], 'YYYY-MM/DD'), +8),
+                    pubDate: timezone(parseDate(matches[1], 'YYYY-MM/DD'), 8),
                 };
-            })
-        )
+            }),
+        { concurrency: 3 }
     );
 
     return {

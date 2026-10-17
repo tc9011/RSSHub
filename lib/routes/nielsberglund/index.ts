@@ -1,4 +1,5 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
 import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
@@ -30,11 +31,11 @@ async function handler() {
 
     let items = $('.post-preview')
         .toArray()
-        .map((item) => {
+        .map((item): DataItem | null => {
             const $item = $(item);
             const $link = $item.find('a').first();
             const href = $link.attr('href');
-            const title = $item.find('.post-title').first().text().trim();
+            const title = $item.find('.post-title').text();
             const dateStr = $item.find('.post-meta').text().trim();
 
             if (!href || !title) {
@@ -48,28 +49,22 @@ async function handler() {
                 title,
                 link,
                 pubDate,
-            } as DataItem;
+            };
         })
         .filter((item): item is DataItem => item !== null);
 
-    items = (
-        await Promise.all(
-            items.map((item) =>
-                cache.tryGet(item.link as string, async () => {
-                    try {
-                        const detailResponse = await got(item.link);
-                        const $detail = load(detailResponse.data);
-
-                        item.description = $detail('.post-container').html() || '';
-
-                        return item;
-                    } catch {
-                        return item;
-                    }
-                })
-            )
-        )
-    ).filter((item): item is DataItem => item !== null);
+    items = await pMap(
+        items,
+        async (item) => ({
+            ...item,
+            ...(await cache.tryGet(`nielsberglund:details:v3:${item.link}`, async () => {
+                const detailResponse = await got(item.link);
+                const $detail = load(detailResponse.data);
+                return { description: $detail('.post-container').html() };
+            })),
+        }),
+        { concurrency: 3 }
+    );
 
     return {
         title: 'Niels Berglund Blog',

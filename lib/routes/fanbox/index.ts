@@ -1,8 +1,11 @@
 import type { Context } from 'hono';
+import pMap from 'p-map';
 
 import InvalidParameterError from '@/errors/types/invalid-parameter';
-import type { Data, Route } from '@/types';
+import type { Data, DataItem, Route } from '@/types';
 import ofetch from '@/utils/ofetch';
+import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import { isValidHost } from '@/utils/valid-host';
 
 import type { PostListResponse, UserInfoResponse } from './types';
@@ -13,7 +16,7 @@ export const route: Route = {
     categories: ['social-media'],
     example: '/fanbox/official',
     parameters: { creator: 'fanbox user name' },
-    maintainers: ['KarasuShin'],
+    maintainers: ['KarasuShin', 'pseudoyu'],
     name: 'Creator',
     handler,
     features: {
@@ -24,6 +27,7 @@ export const route: Route = {
                 optional: true,
             },
         ],
+        requirePuppeteer: false,
         nsfw: true,
     },
 };
@@ -42,9 +46,9 @@ async function handler(ctx: Context): Promise<Data> {
 
     try {
         const userApi = `https://api.fanbox.cc/creator.get?creatorId=${creator}`;
-        const userInfoResponse = (await ofetch(userApi, {
+        const userInfoResponse = await ofetch<UserInfoResponse>(userApi, {
             headers: getHeaders(),
-        })) as UserInfoResponse;
+        });
         title = `Fanbox - ${userInfoResponse.body.user.name}`;
         description = userInfoResponse.body.description;
         image = userInfoResponse.body.user.iconUrl;
@@ -52,8 +56,18 @@ async function handler(ctx: Context): Promise<Data> {
         // ignore
     }
 
-    const postListResponse = (await ofetch(`https://api.fanbox.cc/post.listCreator?creatorId=${creator}&limit=20`, { headers: getHeaders() })) as PostListResponse;
-    const items = await Promise.all(postListResponse.body.map((i) => parseItem(i)));
+    const postListResponse = await ofetch<PostListResponse>(`https://api.fanbox.cc/post.listCreator?creatorId=${creator}&limit=20&withPinned=true`, { headers: getHeaders() });
+    let posts = postListResponse.body.posts.map((post) => ({ ...post, publishedTime: post.publishedDatetime ? parseDate(post.publishedDatetime).getTime() : NaN }));
+    const hasDates = posts.every((post) => Number.isFinite(post.publishedTime));
+    const sorted = ctx.req.query('sorted') !== 'false';
+    if (sorted && hasDates) {
+        posts = posts.toSorted((a, b) => b.publishedTime - a.publishedTime);
+    }
+    const detailLimit = getRouteLimit(ctx);
+    if (detailLimit !== undefined && (!sorted || hasDates)) {
+        posts = posts.slice(0, detailLimit);
+    }
+    const items: DataItem[] = await pMap(posts, (post) => parseItem(post), { concurrency: 3 });
 
     return {
         title,

@@ -1,3 +1,4 @@
+import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Route } from '@/types';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
@@ -16,14 +17,18 @@ export const route: Route = {
     ],
     name: '全部',
     maintainers: ['fashioncj'],
-    description: `| 简体中文    | 繁体中文     |
-| ------- | -------- |
-| zh-hans | zh-hant | `,
+    description: `| 简体中文 | 繁体中文 |
+| -------- | -------- |
+| zh-hans  | zh-hant  |`,
     handler,
 };
 
 async function handler(ctx) {
-    const { language } = ctx.req.param();
+    const { language = 'zh-hans' } = ctx.req.param();
+
+    if (!['zh-hans', 'zh-hant'].includes(language)) {
+        throw new InvalidParameterError(`Unknown kaopu language: ${language}. Use a documented language code.`);
+    }
 
     const rootUrl = 'https://kaopu.news';
     const currentUrl = `${rootUrl}/${language === 'zh-hant' ? 'zh-hant' : 'index'}.html`;
@@ -39,7 +44,7 @@ async function handler(ctx) {
         link: item.link,
         title: item.title,
         author: item.publisher,
-        pubDate: parseDate(item.pubDate),
+        pubDate: item.pubDate ? parseDate(item.pubDate) : undefined,
         description: `<p>${item.description}</p>`,
     }));
 

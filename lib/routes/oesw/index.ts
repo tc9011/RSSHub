@@ -1,7 +1,7 @@
 import { load } from 'cheerio';
+import { convert } from 'html-to-text';
 
 import type { Data, DataItem, Route } from '@/types';
-import { getSubPath } from '@/utils/common-utils';
 import ofetch from '@/utils/ofetch';
 
 const FEED_LANGUAGE = 'de' as const;
@@ -12,17 +12,18 @@ const BASE_URL = `${SITE_URL}/immobilienangebot/` as const;
 export const route: Route = {
     name: 'Immobilienangebot',
     example: '/oesw/sofort-verfuegbar/objectType=1&financingType=2&region=1020',
-    path: '*',
+    path: '/:path{.+}?',
+    parameters: { path: 'Listing page (`immobiliensuche` by default), optionally followed by the query parameters, see the description below' },
     maintainers: ['sk22'],
     categories: ['other'],
     description: `Get your parameters on ${SITE_URL} under "Immobilienangebot".
 Make sure to remove the \`?\` at the beginning from the query parameters!`,
 
     async handler(ctx) {
-        // ['', 'sofort-verfuegbar', 'objectType=1&region=1010']
-        const parts = getSubPath(ctx).split('/');
-        const listingPage = parts[1] || 'immobiliensuche';
-        let params = parts[2] || '';
+        // ['sofort-verfuegbar', 'objectType=1&region=1010']
+        const parts = (ctx.req.param('path') ?? '').split('/');
+        const listingPage = parts[0] || 'immobiliensuche';
+        let params = parts[1] || '';
         if (params.startsWith('&')) {
             params = params.slice(1);
         }
@@ -41,7 +42,7 @@ Make sure to remove the \`?\` at the beginning from the query parameters!`,
                     .toArray()
                     .map((l) => $(l).text().trim())
                     .filter((l) => l.length);
-                const titles = [el.attribs['data-title2'].trim(), el.attribs['data-title'].trim()].filter((t) => t.length);
+                const titles = [el.attribs['data-title2'], el.attribs['data-title']].filter((title): title is string => Boolean(title));
                 const imageSrc = el.attribs['data-largesrc'];
                 const image = imageSrc.startsWith('/') ? SITE_URL + imageSrc : imageSrc;
 
@@ -51,10 +52,10 @@ Make sure to remove the \`?\` at the beginning from the query parameters!`,
                     guid: el.attribs.href + (count ? `#count-${count}` : ''),
                     title: (count ? `(${count}) ` : '') + titles.join(', '),
                     link: el.attribs.href,
-                    description: el.attribs['data-description'],
+                    description: el.attribs['data-description-long'] || el.attribs['data-description'],
                     category,
                     image,
-                    content: { html: el.attribs['data-description-long'], text: el.attribs['data-description-long'] },
+                    content: { text: convert(el.attribs['data-description-long'] || el.attribs['data-description'] || '') },
                     // no pubDate :(
                 } satisfies DataItem;
             });

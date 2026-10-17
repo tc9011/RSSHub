@@ -2,10 +2,10 @@ import { load } from 'cheerio';
 import { renderToString } from 'hono/jsx/dom/server';
 
 import { config } from '@/config';
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import { parseDate } from '@/utils/parse-date';
-import puppeteer from '@/utils/puppeteer';
+import { getPlaywrightPage } from '@/utils/playwright';
 
 const baseUrl = 'http://www.chinadegrees.com.cn';
 
@@ -82,30 +82,35 @@ async function handler(ctx) {
     const data = await cache.tryGet(
         url,
         async () => {
-            const browser = await puppeteer();
-            const page = await browser.newPage();
-            await page.setRequestInterception(true);
-            page.on('request', (request) => {
-                request.resourceType() === 'document' || request.resourceType() === 'script' ? request.continue() : request.abort();
+            const { page, destroy } = await getPlaywrightPage(url, {
+                closeTimeout: 0,
+                gotoConfig: { waitUntil: 'domcontentloaded', timeout: 20000 },
+                onBeforeLoad: async (page) => {
+                    await page.route('**/*', (route) => {
+                        const request = route.request();
+                        request.resourceType() === 'document' || request.resourceType() === 'script' ? route.continue() : route.abort();
+                    });
+                },
             });
-            await page.goto(url, {
-                waitUntil: 'domcontentloaded',
-            });
-            await page.waitForSelector('.datalist');
+            let html: string;
+            try {
+                await page.waitForSelector('.datalist', { timeout: 20000 });
 
-            const html = await page.evaluate(() => document.documentElement.innerHTML);
-            await browser.close();
+                html = await page.evaluate(() => document.documentElement.getHTML());
+            } finally {
+                await destroy();
+            }
 
             const $ = load(html);
             return {
                 title: $('caption').text().trim(),
                 items: $('.datalist tr')
-                    .toArray()
                     .slice(1)
-                    .map((item) => {
-                        item = $(item);
-                        const title = item.find('td').eq(1).text();
-                        const pubDate = item.find('td').eq(2).text();
+                    .toArray()
+                    .map((item): DataItem => {
+                        const $item = $(item);
+                        const title = $item.find('td').eq(1).text();
+                        const pubDate = $item.find('td').eq(2).text();
                         return {
                             title,
                             pubDate,
@@ -121,7 +126,7 @@ async function handler(ctx) {
 
     const items = data.items.map((item) => {
         item.description = renderDescription(item.title, item.pubDate);
-        item.pubDate = parseDate(item.pubDate, 'YYYY-MM-DD');
+        item.pubDate = parseDate(item.pubDate!, 'YYYY-MM-DD');
         return item;
     });
 

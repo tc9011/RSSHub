@@ -8,13 +8,61 @@ import { parseDate } from '@/utils/parse-date';
 
 import { renderComic } from './template/comic';
 
+interface Chapter {
+    chapter_id: number;
+    chapter_title: string;
+    updatetime: number;
+}
+
+interface ComicDetailResponse {
+    data: {
+        comicInfo: {
+            title: string;
+            comicPy: string;
+            statusTagList?: Array<{
+                tagName: string;
+            }>;
+            authorsTagList?: Array<{
+                tagName: string;
+            }>;
+            cateTagList?: Array<{
+                tagName: string;
+            }>;
+            zoneTagList?: Array<{
+                tagName: string;
+            }>;
+            themeTagList?: Array<{
+                tagName: string;
+            }>;
+            chapterList: Array<{
+                title: string;
+                data: Chapter[];
+            }>;
+        };
+    };
+}
+
+interface ChapterDetailResponse {
+    data: {
+        chapterInfo: {
+            page_url?: string[];
+        };
+    };
+}
+
 export const route: Route = {
     path: '/comic/:id',
     categories: ['anime'],
     parameters: { id: '漫画ID' },
-    example: '/zaimanhua/comic/14488',
+    example: '/zaimanhua/comic/57069',
     features: {
-        requireConfig: false,
+        requireConfig: [
+            {
+                name: 'ZAIMANHUA_TOKEN',
+                optional: true,
+                description: '用户登录后，可以从浏览器开发者工具 Network 面板中的请求信息中获取 token，使用请求中的 `Authorization` 的值，完整设置为 `Bearer <token>`，或直接设置 token 并由路由自动补齐 `Bearer ` 前缀。',
+            },
+        ],
         requirePuppeteer: false,
         antiCrawler: false,
         supportBT: false,
@@ -24,12 +72,16 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['manhua.zaimanhua.com/details', 'manhua.zaimanhua.com/details/:id'],
+            source: ['manhua.zaimanhua.com/details/:id'],
             target: '/comic/:id',
         },
     ],
     name: '漫画更新',
     maintainers: ['kjasn'],
+    description: `::: Warning
+未登录用户无法获取到所有漫画，需要设置\`ZAIMANHUA_TOKEN\`环境变量以使用 API 授权访问。
+且由于源网站本身的限制，建议尽量在部署于中国大陆网络内的 RSSHub 节点中使用本路由。若在海外网络环境中使用，即使设置了\`ZAIMANHUA_TOKEN\`环境变量，也可能无法获取全部漫画。
+:::`,
     handler,
 };
 
@@ -38,15 +90,19 @@ async function handler(ctx) {
     const id = ctx.req.param('id');
     const currentComicUrl = `${baseUrl}/api/v1/comic2/comic/detail?id=${id}`;
 
-    const response = await ofetch(currentComicUrl, {
-        headers: {
-            'user-agent': config.trueUA,
-            referer: baseUrl,
-        },
-    });
+    const headers: HeadersInit = {
+        'user-agent': config.trueUA,
+    };
+
+    const token = config.zaimanhua.token;
+    if (token) {
+        headers.Authorization = token.startsWith('Bearer ') ? token : `Bearer ${token}`;
+    }
+
+    const response = await ofetch<ComicDetailResponse>(currentComicUrl, { headers });
 
     const comicInfo = response.data.comicInfo;
-    const status = comicInfo.chapterList[0].title; // 更新状态
+    const status = comicInfo.statusTagList?.[0]?.tagName;
     const data = comicInfo.chapterList[0].data;
     const comicPy = comicInfo.comicPy;
     const comicTitle = comicInfo.title;
@@ -56,27 +112,25 @@ async function handler(ctx) {
             // 当前漫画章节内容的 API
             const chapterUrl = `${baseUrl}/api/v1/comic2/chapter/detail?comic_id=${id}&chapter_id=${item.chapter_id}`;
 
-            return await cache.tryGet(chapterUrl, async () => {
-                // 获取章节内容
-                const chapterResponse = await ofetch(chapterUrl, {
-                    headers: {
-                        'user-agent': config.trueUA,
-                        referer: baseUrl,
-                    },
-                });
-
-                const chapterData = chapterResponse.data;
-                const description = renderComic(chapterData.chapterInfo.page_url || []);
-
-                return {
-                    title: `[${status}] | ${comicTitle} - ${item.chapter_title}`,
-                    category: [status],
-                    image: chapterData.chapterInfo.page_url?.[0] || '',
-                    link: `${baseUrl}/view/${comicPy}/${id}/${item.chapter_id}`,
-                    pubDate: parseDate(item.updatetime * 1000),
-                    description,
-                };
+            const pageUrls = await cache.tryGet(`${chapterUrl}:pages`, async () => {
+                const chapterResponse = await ofetch<ChapterDetailResponse>(chapterUrl, { headers });
+                return chapterResponse.data.chapterInfo.page_url || [];
             });
+
+            return {
+                title: `${status ? `[${status}] | ` : ''}${comicTitle} - ${item.chapter_title}`,
+                category: [
+                    ...(status ? [status] : []),
+                    ...(comicInfo.cateTagList ?? []).map((tag) => tag.tagName),
+                    ...(comicInfo.zoneTagList ?? []).map((tag) => tag.tagName),
+                    ...(comicInfo.themeTagList ?? []).map((tag) => tag.tagName),
+                ],
+                author: comicInfo.authorsTagList?.map((tag) => tag.tagName).join(', '),
+                image: pageUrls[0] || '',
+                link: `${baseUrl}/view/${comicPy}/${id}/${item.chapter_id}`,
+                pubDate: parseDate(item.updatetime * 1000),
+                description: renderComic(pageUrls),
+            };
         },
         { concurrency: 3 }
     );

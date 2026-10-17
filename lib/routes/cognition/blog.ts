@@ -1,6 +1,6 @@
 import { load } from 'cheerio';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Route } from '@/types';
 import { ViewType } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
@@ -8,8 +8,8 @@ import { parseDate } from '@/utils/parse-date';
 export const route: Route = {
     path: '/blog',
     name: 'Blog',
-    url: 'cognition.ai/blog',
-    maintainers: ['Loongphy'],
+    url: 'cognition.com/blog',
+    maintainers: ['Loongphy', 'ttttmr'],
     example: '/cognition/blog',
     categories: ['programming'],
     features: {
@@ -23,93 +23,46 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['cognition.ai/blog/1'],
-            target: '/blog',
+            source: ['cognition.com/blog'],
         },
     ],
     view: ViewType.Articles,
     handler,
 };
 
-const splitAuthors = (text: string | undefined): DataItem['author'] => {
-    if (!text) {
-        return undefined;
-    }
-
-    const names = text
-        .split(',')
-        .map((name) => name.trim())
-        .filter(Boolean);
-
-    if (names.length === 0) {
-        return undefined;
-    }
-
-    return names.map((name) => ({
-        name,
-    }));
-};
-
-export async function handler(): Promise<Data> {
-    const baseUrl = 'https://cognition.ai';
-    const listPath = '/blog/1';
-    const targetUrl = new URL(listPath, baseUrl).href;
+async function handler() {
+    const baseUrl = 'https://cognition.com';
+    const targetUrl = `${baseUrl}/blog`;
     const html = await ofetch(targetUrl);
     const $ = load(html);
 
-    const items = $('#blog-post-list__list li.blog-post-list__list-item')
+    const posts = $('script[type="application/ld+json"]')
         .toArray()
-        .map((el) => {
-            const element = $(el);
-            const linkElement = element.find('a.o-blog-preview').first();
+        .map((script) => JSON.parse($(script).text()))
+        .find((data) => data['@type'] === 'Blog')?.blogPost;
+    const publishedDates = new Map<string, string>(posts?.map((post) => [post.url, post.datePublished]));
 
-            const href = linkElement.attr('href');
-            const link = href ? new URL(href, baseUrl).href : undefined;
+    const items = $('section li a')
+        .toArray()
+        .map((item) => {
+            const $item = $(item);
 
-            if (!link) {
-                return;
-            }
+            const link = new URL($item.attr('href')!, baseUrl).href;
+            const publishedDate = publishedDates.get(link);
 
-            const title = linkElement.find('h3.o-blog-preview__title').text().trim();
-            if (!title) {
-                return;
-            }
-
-            const summary = linkElement.find('p.o-blog-preview__intro').text().trim();
-
-            const dateNode = linkElement.find('.o-blog-preview__meta-date').clone();
-            dateNode.find('.o-blog-preview__meta').remove();
-            const dateText = dateNode.text().trim();
-            const authorText = linkElement.find('.o-blog-preview__meta-author').text().trim();
-
-            const dataItem: DataItem = {
-                title,
+            return {
+                title: $item.find('h2').text(),
                 link,
-                pubDate: parseDate(dateText),
+                description: $item.find('p').text(),
+                pubDate: publishedDate ? parseDate(publishedDate) : parseDate($item.find('span').text(), 'MM.DD.YY'),
             };
-
-            if (summary) {
-                dataItem.description = summary;
-            }
-
-            const authors = splitAuthors(authorText);
-            if (authors) {
-                dataItem.author = authors;
-            }
-
-            return dataItem;
-        })
-        .filter((item): item is DataItem => item !== undefined);
-
-    const imageAttr = $('meta[property="og:image"]').attr('content');
-    const image = imageAttr ? new URL(imageAttr, baseUrl).href : undefined;
+        });
 
     return {
         title: $('title').text(),
         description: $('meta[name="description"]').attr('content'),
         link: targetUrl,
-        allowEmpty: true,
         item: items,
-        image,
+        image: $('meta[property="og:image"]').attr('content'),
     };
 }

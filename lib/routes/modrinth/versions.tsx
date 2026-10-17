@@ -24,9 +24,6 @@ const renderVersion = (version: Version & { changelog?: string }) =>
     renderToString(
         <>
             <p>
-                {version.name} - {version.version_number}
-            </p>
-            <p>
                 <b>Loaders: </b>
                 {version.loaders?.map((loader) => `${loader} `)}
             </p>
@@ -84,16 +81,14 @@ export const route: Route = {
     handler,
     description: `| Name           | Example                                      |
 | -------------- | -------------------------------------------- |
-| loaders        | loaders=fabric&loaders=quilt&loaders=forge |
-| game_versions | game_versions=1.20.1&game_versions=1.20.2 |
+| loaders        | loaders=fabric\\&loaders=quilt\\&loaders=forge |
+| game\\_versions | game\\_versions=1.20.1\\&game\\_versions=1.20.2 |
 | featured       | featured=true                                |`,
 };
 
 async function handler(ctx: Context) {
-    const { id, routeParams } = ctx.req.param() as {
-        id: string;
-        routeParams?: string;
-    };
+    const id = ctx.req.param('id');
+    const routeParams = ctx.req.param('routeParams');
 
     /**
      * /@type {{
@@ -110,11 +105,13 @@ async function handler(ctx: Context) {
             query: {
                 loaders: parsedQuery.has('loaders') ? JSON.stringify(parsedQuery.getAll('loaders')) : '',
                 game_versions: parsedQuery.has('game_versions') ? JSON.stringify(parsedQuery.getAll('game_versions')) : '',
+                featured: parsedQuery.get('featured') ?? undefined,
             },
         });
-        const authors = await ofetch<Author[]>(`https://api.modrinth.com/v2/users`, {
+        const authorIds = [...new Set(versions.map((it) => it.author_id))];
+        const authors = await ofetch<Author[]>('https://api.modrinth.com/v2/users', {
             query: {
-                ids: JSON.stringify([...new Set(versions.map((it) => it.author_id))]),
+                ids: JSON.stringify(authorIds),
             },
         });
         const groupedAuthors: Record<string, Author> = {};
@@ -139,8 +136,8 @@ async function handler(ctx: Context) {
             })),
         };
     } catch (error: any) {
-        if (error?.response?.statusCode === 404) {
-            throw new Error(`${error.message}: Project ${id} not found`);
+        if (error?.response?.status === 404) {
+            throw new Error(`${error.message}: Project ${id} not found`, { cause: error });
         }
         throw error;
     }
