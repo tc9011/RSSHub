@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
@@ -32,14 +33,18 @@ export const route: Route = {
 
 async function handler(ctx) {
     const { type = 'jiaowu' } = ctx.req.param();
-    const response = await got.get(nwafuMap.get(type)[0]);
+    const selected = nwafuMap.get(type);
+    if (!selected || type === 'forbiddenList') {
+        throw new InvalidParameterError(`Unknown NWAFU category: ${type}. Choose one of the documented categories.`);
+    }
+    const response = await got.get(selected[0]);
     const $ = load(response.data);
-    const list = $(nwafuMap.get(type)[1])
+    const list = $(selected[1])
         .toArray()
-        .map((ele) => {
-            const itemTitle = $(ele).find(nwafuMap.get(type)[2]).text();
+        .map((ele): DataItem => {
+            const itemTitle = $(ele).find(selected[2]).text();
             const itemPubDate = parseDate($(ele).find('span').text(), 'YYYY/MM/DD');
-            const itemLink = new URL($(ele).find(nwafuMap.get(type)[2]).attr('href'), nwafuMap.get(type)[0]).toString();
+            const itemLink = new URL($(ele).find(selected[2]).attr('href')!, selected[0]).href;
             return {
                 title: itemTitle,
                 pubDate: itemPubDate,
@@ -49,22 +54,22 @@ async function handler(ctx) {
 
     const out = await Promise.all(
         list.map((item) =>
-            cache.tryGet(item.link, async () => {
-                if (nwafuMap.get('forbiddenList').includes(new URL(item.link).hostname)) {
+            cache.tryGet(item.link!, async () => {
+                if (nwafuMap.get('forbiddenList')!.includes(new URL(item.link!).hostname)) {
                     return item;
                 }
                 const detailResponse = await got.get(item.link);
                 const $ = load(detailResponse.data);
-                item.description = $(nwafuMap.get(type)[3]).html();
+                item.description = $(selected[3]).html();
                 return item;
             })
         )
     );
 
     return {
-        title: nwafuMap.get(type)[4],
-        link: nwafuMap.get(type)[0],
-        description: nwafuMap.get(type)[4],
+        title: selected[4],
+        link: selected[0],
+        description: selected[4],
         item: out,
     };
 }

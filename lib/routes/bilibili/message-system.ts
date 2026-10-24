@@ -31,8 +31,8 @@ export const route: Route = {
     name: '系统通知',
     maintainers: ['pilgrimlyieu'],
     handler,
-    description: `:::warning
-  用户消息需要 b 站登录后的 Cookie 值，所以只能自建，详情见部署页面的配置模块。
+    description: `::: warning
+用户消息需要 b 站登录后的 Cookie 值，所以只能自建，详情见部署页面的配置模块。
 :::`,
 };
 
@@ -86,12 +86,13 @@ function parseMessageContent(content: string): string {
 
 async function handler(ctx) {
     const uid = ctx.req.param('uid');
-    const name = await cache.getUsernameFromUID(uid);
 
     const cookie = config.bilibili.cookies[uid];
     if (cookie === undefined) {
         throw new ConfigNotFoundError('缺少对应 uid 的 Bilibili 用户登录后的 Cookie 值');
     }
+
+    const name = await cache.getUsernameFromUID(uid);
 
     const response = await ofetch<SystemResponse>('https://message.bilibili.com/x/sys-msg/query_user_notify', {
         query: {

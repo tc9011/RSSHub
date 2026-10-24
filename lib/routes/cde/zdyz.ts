@@ -1,9 +1,12 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import NotFoundError from '@/errors/types/not-found';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
+import timezone from '@/utils/timezone';
 
 import utils from './utils';
 
@@ -63,18 +66,29 @@ export const route: Route = {
 
 async function handler(ctx) {
     const category = ctx.req.param('category');
+    if (!Object.hasOwn(zdyzMap.zdyz, category)) {
+        throw new NotFoundError('Invalid CDE guideline category. Use domesticGuide or opinionList.');
+    }
+    const limit = getRouteLimit(ctx, 10);
 
     const { data } = await got.post(`${baseUrl}${zdyzMap.zdyz[category].endPoint}`, {
         form: zdyzMap.zdyz[category].form,
         headers: {
             referer: zdyzMap.zdyz[category].url,
-            cookie: await utils.getCookie(ctx),
+            cookie: await utils.getCookie(),
         },
     });
 
-    const list = data.data.records.map((item) => ({
+    const records = [...data.data.records];
+    const sorted = ctx.req.query('sorted') !== 'false';
+    const hasDates = records.every((item) => item.issueDate);
+    if (sorted && hasDates) {
+        records.sort((a, b) => b.issueDate.localeCompare(a.issueDate));
+    }
+    const selected = !sorted || hasDates ? records.slice(0, limit) : records;
+    const list = selected.map((item): DataItem & { link: string } => ({
         title: item.title,
-        pubDate: parseDate(item.issueDate),
+        pubDate: item.issueDate ? timezone(parseDate(item.issueDate), 8) : undefined,
         link: item.externalLinks,
     }));
 
@@ -84,11 +98,11 @@ async function handler(ctx) {
                 const response = await got(item.link, {
                     headers: {
                         referer: zdyzMap.zdyz[category].url,
-                        cookie: await utils.getCookie(ctx),
+                        cookie: await utils.getCookie(),
                     },
                 });
                 const $ = load(response.data);
-                item.description = $('.new_detail_content').html() + $('.relatedNews').html();
+                item.description = $('.new_detail_content').html()! + $('.relatedNews').html()!;
                 return item;
             })
         )

@@ -2,25 +2,23 @@ import { load } from 'cheerio';
 import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
 
+import type { Language } from '@/types';
 import got from '@/utils/got';
+import { parseDate } from '@/utils/parse-date';
 
 import utils from './utils';
 
-let baseTitle = '日本郵便';
 const baseUrl = 'https://trackings.post.japanpost.jp/services/srv/search/direct?';
 
 export async function track(ctx) {
     const reqCode = ctx.req.param('reqCode');
-    const reqReqCode = 'reqCodeNo1=' + reqCode;
 
-    let locale = 'ja';
-    if (ctx.req.param('locale') === 'en') {
-        locale = 'en';
-        baseTitle = 'Japanpost';
-    }
-    const reqLocale = '&locale=' + locale;
-
-    const link = baseUrl + reqReqCode + reqLocale;
+    const locale: Language = ctx.req.param('locale') === 'en' ? 'en' : 'ja';
+    const baseTitle = locale === 'en' ? 'Japanpost' : '日本郵便';
+    const url = new URL(baseUrl);
+    url.searchParams.set('reqCodeNo1', reqCode);
+    url.searchParams.set('locale', locale);
+    const link = url.href;
 
     const response = await got({
         method: 'get',
@@ -28,8 +26,6 @@ export async function track(ctx) {
     });
 
     const $ = load(response.data);
-    utils.expandEven($);
-    utils.expandOdd($);
 
     const list = $('.tableType01').eq(1).find('tr').slice(2);
     const officeList = $('.tableType03').eq(0).find('tr').slice(1);
@@ -40,8 +36,8 @@ export async function track(ctx) {
             const eTd = $(e).find('td');
             return {
                 officeType: eTd.eq(0).text().trim(),
-                officeName: eTd.eq(1).html().trim(),
-                officeTel: eTd.eq(2).html().trim(),
+                officeName: eTd.eq(1).html()!.trim(),
+                officeTel: eTd.eq(2).html()!.trim(),
             };
         });
     }
@@ -51,14 +47,13 @@ export async function track(ctx) {
         throw new Error(resErrorText);
     }
 
-    const listEven = list.even();
-    const listOdd = list.odd();
+    const listEven = utils.even(list);
+    const listOdd = utils.odd(list);
 
     const packageType = $('.tableType01').eq(0).find('tr').eq(1).find('td').eq(1).text().trim();
     const packageService = $('.tableType01').eq(0).find('tr').eq(1).find('td').eq(2).text().trim();
     const serviceText = locale === 'ja' ? '付加サービス：' : 'Additional services: ';
 
-    let lastItemTimeStamp;
     let tz;
 
     return {
@@ -117,17 +112,12 @@ export async function track(ctx) {
             const itemPubDateText = itemTd.eq(0).text().trim();
             const itemGuid = utils.generateGuid(reqCode + itemTitle + itemDescription + itemPubDateText);
 
-            let thisItemTimeStamp;
-            [thisItemTimeStamp, tz] = utils.parseDatetime(itemPubDateText, packageOffice, packageRegion, tz, locale);
-            if (lastItemTimeStamp && thisItemTimeStamp <= lastItemTimeStamp) {
-                thisItemTimeStamp = lastItemTimeStamp + 1000;
-            }
-            lastItemTimeStamp = thisItemTimeStamp;
-
+            let thisItemTimestamp;
+            [thisItemTimestamp, tz] = utils.parseDatetime(itemPubDateText, packageOffice, packageRegion, tz, locale);
             return {
                 title: itemTitle,
                 description: itemDescription,
-                pubDate: new Date(thisItemTimeStamp),
+                pubDate: Number.isFinite(thisItemTimestamp) ? parseDate(thisItemTimestamp) : undefined,
                 link,
                 guid: itemGuid.slice(0, 32),
             };

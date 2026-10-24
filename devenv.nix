@@ -10,6 +10,7 @@
   # https://devenv.sh/packages/
   packages = with pkgs; [
     git
+    prek
 
     # Optional: Uncomment if you need browser automation
     # chromium
@@ -21,7 +22,7 @@
     package = pkgs.nodejs_24;
     pnpm = {
       enable = true;
-      package = pkgs.pnpm_10;
+      package = pkgs.pnpm_12;
     };
   };
 
@@ -55,15 +56,6 @@
 
     # Example: Auto-start with Redis
     # rsshub.exec = "pnpm run dev";
-  };
-
-  # https://devenv.sh/pre-commit-hooks/
-  pre-commit.hooks = {
-    # Lint staged files
-    eslint = {
-      enable = true;
-      entry = lib.mkForce "pnpm run format:staged";
-    };
   };
 
   enterShell = ''

@@ -1,38 +1,47 @@
 import { load } from 'cheerio';
 
 import type { Data, DataItem, Route } from '@/types';
-import { getSubPath } from '@/utils/common-utils';
 import ofetch from '@/utils/ofetch';
 
 const FEED_TITLE = 'Wohnungen - Gesiba' as const;
 const FEED_LANGUAGE = 'de' as const;
 const FEED_LOGO = 'https://www.gesiba.at/assets/img/gesiba-logo.png';
 const BASE_URL = 'https://www.gesiba.at' as const;
-const MAGIC_QUERY_PARAMS =
-    `p=actions/sprig-core/components/render&sprig%3AsiteId=0347ff5aeebc536543e7e865c4ed9dd97a9eb81ef054d47105ba6c4ca1da10801&sprig%3Aid=37ff8c3b5f5f7ad3bca87140e3fb8094cc656fcdc5d705c964065a830717c906component-vvyfgj&sprig%3Acomponent=e0737af02d4f2e1586c10610b098b6f75b51b994ddbd89cafd13ef07dc6da9ca&sprig%3Atemplate=3b669582a22c2742c4b713143ea4663ddba00812852f876074de96ad2fc04c24_components%2F_objectList&sprig%3Avariables%5BbaseUrl%5D=0c66aec55b6b038f0c9eb2ddea75d44d0c52b6fbc93960847d53f9d0af3f6162%2Fimmobilien%2Fwohnungen` as const;
-
-// https://www.gesiba.at/index.php?p=actions/sprig-core/components/render&verfuegbar=alle&size-from=&size-to=&rooms-from=&rooms-to=&betreuung=&sprig%3AsiteId=0347ff5aeebc536543e7e865c4ed9dd97a9eb81ef054d47105ba6c4ca1da10801&sprig%3Aid=37ff8c3b5f5f7ad3bca87140e3fb8094cc656fcdc5d705c964065a830717c906component-vvyfgj&sprig%3Acomponent=e0737af02d4f2e1586c10610b098b6f75b51b994ddbd89cafd13ef07dc6da9ca&sprig%3Atemplate=3b669582a22c2742c4b713143ea4663ddba00812852f876074de96ad2fc04c24_components%2F_objectList&sprig%3Avariables%5BbaseUrl%5D=0c66aec55b6b038f0c9eb2ddea75d44d0c52b6fbc93960847d53f9d0af3f6162%2Fimmobilien%2Fwohnungen
-
 export const route: Route = {
     name: 'Angebote',
     example: '/gesiba/verfuegbar=alle&plz[]=1100&plz[]=1120&size-from=45&size-to=80&rooms-from=2&rooms-to=3&betreuung=0',
-    path: '*',
+    path: '/:path{.+}?',
+    parameters: { path: 'Search filter parameters, see the description below' },
     maintainers: ['sk22'],
     categories: ['other'],
-    description: `
-Note that, on https://www.gesiba.at/immobilien/wohnungen, filters are added to
+    description: `Note that, on <https://www.gesiba.at/immobilien/wohnungen>, filters are added to
 the URL like \`&filter[plz]=1100,1120\`, but the endpoint used here expects it
-like \`&plz[]=1100&plz[]=1120\`, if multiple values are passed to one parameter
-`,
+like \`&plz[]=1100&plz[]=1120\`, if multiple values are passed to one parameter`,
 
     async handler(ctx) {
-        let params = getSubPath(ctx).slice(1);
+        let params = ctx.req.param('path') ?? '';
         if (params.startsWith('&')) {
             params = params.slice(1);
         }
 
-        const link = `${BASE_URL}/index.php?${MAGIC_QUERY_PARAMS}&${params}`;
-        const response = await ofetch(link);
+        const searchPage = await ofetch<string>(`${BASE_URL}/immobilien/wohnungen`);
+        const $searchPage = load(searchPage);
+        const component = $searchPage('.sprig-component[data-hx-vals]').first();
+        const endpoint = component.attr('data-hx-get');
+        const values = component.attr('data-hx-vals');
+        if (!endpoint || !values) {
+            throw new Error('GESIBA did not provide the apartment search component configuration.');
+        }
+        const link = new URL(endpoint, BASE_URL);
+        const query = new URLSearchParams(params);
+        for (const [key, value] of query) {
+            link.searchParams.append(key, value);
+        }
+        const configuration = JSON.parse(values) as Record<string, string>;
+        for (const [key, value] of Object.entries(configuration)) {
+            link.searchParams.set(key, value);
+        }
+        const response = await ofetch<string>(link.href);
         const $ = load(response);
 
         const items = $('#object-result a.card')
@@ -78,9 +87,8 @@ like \`&plz[]=1100&plz[]=1120\`, if multiple values are passed to one parameter
             title: FEED_TITLE,
             language: FEED_LANGUAGE,
             logo: FEED_LOGO,
-            allowEmpty: true,
             item: items,
-            link,
+            link: `${BASE_URL}/immobilien/wohnungen`,
         } satisfies Data;
     },
 };

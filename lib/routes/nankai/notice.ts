@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
@@ -34,46 +35,42 @@ export const route: Route = {
 
         const list = $('ul.newslist li')
             .toArray()
-            .map((item) => {
+            .map((item): DataItem => {
                 const $item = $(item);
                 const $time = $item.find('.time');
                 const day = $time.find('.time-d').text().trim();
                 const monthYear = $time.contents().last().text().trim();
-                const pubDate = timezone(parseDate(`${monthYear}-${day}`, 'YYYY-MM-DD'), +8);
+                const pubDate = day && monthYear ? timezone(parseDate(`${monthYear}-${day}`, 'YYYY-MM-DD'), 8) : undefined;
 
                 const $link = $item.find('.tit a');
                 let href = $link.attr('href') || '';
                 href = href.startsWith('http') ? href : new URL(href, baseUrl).href;
 
                 return {
-                    title: $link.text().trim(),
+                    title: $link.text(),
                     link: href,
                     pubDate,
                 };
             });
 
-        const items = await Promise.all(
-            list.map((item) =>
-                cache.tryGet(item.link, async () => {
-                    try {
-                        // 判断link如果是https://xb.nankai.edu.cn/的则为校内访问的
-                        if (item.link.includes('xb.nankai.edu.cn')) {
-                            item.description = '该通知可能需要校内访问权限';
-                        } else {
-                            const { data: detailResponse } = await got(item.link);
-                            const $detail = load(detailResponse);
-
-                            // 提取正文内容
-                            const content = $detail('.wp_articlecontent').html() || '';
-                            item.description = content;
-                        }
-                    } catch {
-                        // 如果提取正文内容失败，则返回默认内容
-                        item.description = '正文内容获取失败';
+        const items = await pMap(
+            list,
+            async (item) => {
+                const detail = await cache.tryGet(`nankai:notice:article:v2:${item.link}`, async () => {
+                    // Campus notice links may require access from the university network.
+                    if (item.link!.includes('xb.nankai.edu.cn')) {
+                        return { description: '该通知可能需要校内访问权限' };
                     }
-                    return item;
-                })
-            )
+                    const { data: detailResponse } = await got(item.link);
+                    const $detail = load(detailResponse);
+
+                    // Extract the article body.
+                    const content = $detail('.wp_articlecontent').html();
+                    return { description: content };
+                });
+                return { ...item, ...detail };
+            },
+            { concurrency: 3 }
         );
 
         return {

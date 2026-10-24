@@ -3,29 +3,35 @@ import { load } from 'cheerio';
 import type { Element } from 'domhandler';
 import type { Context } from 'hono';
 
-import type { Data, DataItem, Route } from '@/types';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
+import timezone from '@/utils/timezone';
+import { isValidHost } from '@/utils/valid-host';
 
 export const handler = async (ctx: Context): Promise<Data> => {
     const { category = 'news', id = '10' } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '20', 10);
+    if (!isValidHost(category)) {
+        throw new InvalidParameterError('Invalid category');
+    }
+
+    const limit = getRouteLimit(ctx, 20);
 
     const baseUrl = 'https://www.cnljxh.org.cn';
     const targetUrl: string = new URL(`${category}/?classid=${id}`, baseUrl).href;
 
     const response = await ofetch(targetUrl);
     const $: CheerioAPI = load(response);
-    const language = $('html').attr('lang') ?? 'zh';
+    const language = ($('html').attr('lang') ?? 'zh') as Language;
 
-    let items: DataItem[] = [];
-
-    items = $('div.main_left ul li')
+    let items: DataItem[] = $('div.main_left ul li')
         .slice(0, limit)
         .toArray()
-        .map((el): Element => {
+        .map((el) => {
             const $el: Cheerio<Element> = $(el);
             const $aEl: Cheerio<Element> = $el.find('a');
 
@@ -36,9 +42,9 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
             const processedItem: DataItem = {
                 title,
-                pubDate: pubDateStr ? parseDate(pubDateStr) : undefined,
+                pubDate: pubDateStr ? timezone(parseDate(pubDateStr, 'YYYY-MM-DD'), 8) : undefined,
                 link: linkUrl ? new URL(linkUrl, baseUrl).href : undefined,
-                updated: upDatedStr ? parseDate(upDatedStr) : undefined,
+                updated: upDatedStr ? timezone(parseDate(upDatedStr, 'YYYY-MM-DD'), 8) : undefined,
                 language,
             };
 
@@ -52,12 +58,12 @@ export const handler = async (ctx: Context): Promise<Data> => {
             }
 
             return cache.tryGet(item.link, async (): Promise<DataItem> => {
-                const detailResponse = await ofetch(item.link);
+                const detailResponse = await ofetch(item.link!);
                 const $$: CheerioAPI = load(detailResponse);
 
                 const title: string = $$('div.content_title h2').text();
-                const description: string | undefined = $$('div.content_div').html() ?? '';
-                const authors: DataItem['author'] = $$('div.content_title p').text().split(/\s/)[0]?.split(/：/).pop();
+                const description = $$('div.content_div').html();
+                const authors: DataItem['author'] = $$('div.content_title p').text().split(/\s/, 1)[0]?.split(/：/).pop();
 
                 let processedItem: DataItem = {
                     title,
@@ -70,7 +76,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
                     language,
                 };
 
-                const $enclosureEl: Cheerio<Element> = $$('div.content_div embed').first();
+                const $enclosureEl: Cheerio<Element> = $$('div.content_div embed');
                 const enclosureUrl: string | undefined = $enclosureEl.attr('src');
 
                 if (enclosureUrl) {
@@ -90,13 +96,14 @@ export const handler = async (ctx: Context): Promise<Data> => {
         })
     );
 
+    const imageUrl: string | undefined = $('div.logo a img').attr('src');
+
     return {
         title: `${$('title').text()}${$('div.mianbao').contents().last().text()}`,
         description: $('meta[name="description"]').attr('content'),
         link: targetUrl,
         item: items,
-        allowEmpty: true,
-        image: $('div.logo a img').attr('src') ? new URL($('div.logo a img').attr('src') as string, targetUrl).href : undefined,
+        image: imageUrl ? new URL(imageUrl, targetUrl).href : undefined,
         author: $('meta[name="keywords"]').attr('content'),
         language,
         id: targetUrl,
@@ -270,7 +277,7 @@ export const route: Route = {
             ],
         },
     },
-    description: `:::tip
+    description: `::: tip
 订阅 [协会公告](https://www.cnljxh.org.cn/news/?classid=10)，其源网址为 \`https://www.cnljxh.org.cn/news/?classid=10\`，请参考该 URL 指定部分构成参数，此时路由为 [\`/cnljxh/news/10\`](https://rsshub.app/cnljxh/news/10)。
 
 订阅 [价格行情](https://www.cnljxh.org.cn/price/?classid=299)，其源网址为 \`https://www.cnljxh.org.cn/price/?classid=299\`，请参考该 URL 指定部分构成参数，此时路由为 [\`/cnljxh/price/299\`](https://rsshub.app/cnljxh/price/299)。
@@ -333,9 +340,9 @@ export const route: Route = {
 
 #### 价格指数
 
-| [焦炭指数(MyCpic)](https://www.cnljxh.org.cn/date/?classid=5575) | [炼焦煤指数(MyCpic)](https://www.cnljxh.org.cn/date/?classid=5907) | [山西焦炭价格指数（SCSPI）](https://www.cnljxh.org.cn/news/index.php?classid=34) | [中价·新华焦煤价格指数（CCP）](https://www.cnljxh.org.cn/news/index.php?classid=35) |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| [5575](https://rsshub.app/cnljxh/date/5575)                      | [5907](https://rsshub.app/cnljxh/date/5907)                        | [34](https://rsshub.app/cnljxh/news/34)                                          | [35](https://rsshub.app/cnljxh/news/35)                                             |
+| [焦炭指数 (MyCpic)](https://www.cnljxh.org.cn/date/?classid=5575) | [炼焦煤指数 (MyCpic)](https://www.cnljxh.org.cn/date/?classid=5907) | [山西焦炭价格指数（SCSPI）](https://www.cnljxh.org.cn/news/index.php?classid=34) | [中价・新华焦煤价格指数（CCP）](https://www.cnljxh.org.cn/news/index.php?classid=35) |
+| ----------------------------------------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| [5575](https://rsshub.app/cnljxh/date/5575)                       | [5907](https://rsshub.app/cnljxh/date/5907)                         | [34](https://rsshub.app/cnljxh/news/34)                                          | [35](https://rsshub.app/cnljxh/news/35)                                              |
 
 #### 市场信息
 
@@ -343,8 +350,7 @@ export const route: Route = {
 | -------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------- |
 | [19](https://rsshub.app/cnljxh/news/19)            | [20](https://rsshub.app/cnljxh/news/20)              | [21](https://rsshub.app/cnljxh/news/21)            | [22](https://rsshub.app/cnljxh/news/22)                    | [31](https://rsshub.app/cnljxh/news/31)                    |
 
-</details>
-`,
+</details>`,
     categories: ['new-media'],
     features: {
         requireConfig: false,
@@ -357,14 +363,8 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['www.cnljxh.org.cn/:category'],
-            target: (params, url) => {
-                const urlObj: URL = new URL(url);
-                const category: string = params.category;
-                const id: string | undefined = urlObj.searchParams.get('classid') ?? undefined;
-
-                return `/cnljxh${category ? `/${category}${id ? `/${id}` : ''}` : ''}`;
-            },
+            source: ['www.cnljxh.org.cn/'],
+            target: '/news/10',
         },
         {
             title: '协会专区 - 协会简介',

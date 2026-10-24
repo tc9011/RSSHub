@@ -1,10 +1,26 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+
+const categoriesConf = {
+    hot: {
+        articleSelector: '.carousel__list .carousel__item',
+        titleExtractor: (e) => e.attr('title'),
+    },
+    editor: {
+        articleSelector: '.list-container--featured .list-vertical__item',
+        titleExtractor: (e) => e.find('.list-vertical__title').text(),
+    },
+    default: {
+        articleSelector: '.list-container--index .list-vertical__item',
+        titleExtractor: (e) => e.find('.list-vertical__title').text(),
+    },
+};
 
 export const route: Route = {
     path: '/global/:category?',
@@ -25,7 +41,7 @@ export const route: Route = {
         },
     ],
     name: '轉角國際 - 首頁',
-    maintainers: ['nczitzk'],
+    maintainers: ['nczitzk', 'pseudoyu'],
     handler,
     description: `| 首頁 | 編輯精選 | 熱門文章 |
 | ---- | -------- | -------- |
@@ -34,6 +50,9 @@ export const route: Route = {
 
 async function handler(ctx) {
     const category = ctx.req.param('category');
+    if (category && !Object.hasOwn(categoriesConf, category)) {
+        throw new InvalidParameterError('Unsupported category. Use editor or hot, or omit the category for the overview.');
+    }
 
     const rootUrl = 'https://global.udn.com';
     const currentUrl = `${rootUrl}/global_vision/index`;
@@ -45,33 +64,19 @@ async function handler(ctx) {
 
     const $ = load(response.data);
 
-    const categoriesConf = {
-        hot: {
-            articleSelector: '.carousel__list .carousel__item',
-            titleExtractor: (e) => e.attr('title').trim(),
-        },
-        editor: {
-            articleSelector: '.list-container--featured .list-vertical__item',
-            titleExtractor: (e) => e.find('.list-vertical__title').text().trim(),
-        },
-        default: {
-            articleSelector: '.list-container--index .list-vertical__item',
-            titleExtractor: (e) => e.find('.list-vertical__title').text().trim(),
-        },
-    };
     const getItems = (config) =>
         $(config.articleSelector)
             .toArray()
             .map((item) => {
                 const a = $(item);
-                const rawLink = a.attr('href').split('?')[0];
+                const rawLink = a.attr('href')!.split('?', 1)[0];
                 return {
                     title: config.titleExtractor(a),
                     link: rawLink.startsWith('http') ? rawLink : `${rootUrl}${rawLink}`,
                 };
             });
 
-    let items;
+    let items: Array<DataItem & { link: string }>;
     if (category) {
         const conf = categoriesConf[category];
         items = getItems(conf);
@@ -80,12 +85,13 @@ async function handler(ctx) {
         const hotItems = getItems(categoriesConf.hot);
 
         const combinedItems = [...hotItems, ...defaultItems];
-        items = [...new Map(combinedItems.map((item) => [item.link, item])).values()];
+        items = new Map(combinedItems.map((item) => [item.link, item])).values().toArray();
     }
 
-    items = await Promise.all(
-        items.map((item) =>
-            cache.tryGet(item.link, async () => {
+    items = await pMap(
+        items,
+        async (item) => {
+            const detail = await cache.tryGet(`udn:global:v3:${item.link}`, async () => {
                 const detailResponse = await got({
                     method: 'get',
                     url: item.link,
@@ -93,8 +99,9 @@ async function handler(ctx) {
 
                 const content = load(detailResponse.data);
 
-                item.author = content('.article-content__authors-name').first().text().trim();
-                item.pubDate = timezone(parseDate(content('meta[property="article:published_time"]').attr('content')), +8);
+                const author = content('.article-content__authors .article-content__authors-name').text();
+                const publishedTime = content('meta[property="article:published_time"]').attr('content');
+                const pubDate = publishedTime ? parseDate(publishedTime) : undefined;
 
                 const mainImage = content('.article-content__focus').html();
                 const articleBodyHtml = content('.article-content__editor')
@@ -103,12 +110,16 @@ async function handler(ctx) {
                     .map((e) => content.html(e))
                     .join('');
 
-                item.description = mainImage + articleBodyHtml;
-                item.category = content('meta[name="news_keywords"]').attr('content').split(',');
-
-                return item;
-            })
-        )
+                return {
+                    author,
+                    pubDate: pubDate && !Number.isNaN(pubDate.getTime()) ? pubDate : undefined,
+                    description: mainImage + articleBodyHtml,
+                    category: content('meta[name="news_keywords"]').attr('content')!.split(','),
+                };
+            });
+            return { ...item, ...detail };
+        },
+        { concurrency: 3 }
     );
 
     return {

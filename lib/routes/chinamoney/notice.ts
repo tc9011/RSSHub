@@ -4,6 +4,7 @@ import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
 import { channels } from './channels';
@@ -27,33 +28,35 @@ export const route: Route = {
     description: `<details>
 <summary>市场公告</summary>
 
-    外汇市场公告
+外汇市场公告
 
 | 最新 | 市场公告通知 | 中心会员公告 | 会员信息公告 |
 | ---- | ------------ | ------------ | ------------ |
 | 2834 | 2835         | 2836         | 2837         |
 
-    本币市场公告
+本币市场公告
 
 | 最新           | 市场公告通知 | 中心会员公告 | 会员信息公告 |
 | -------------- | ------------ | ------------ | ------------ |
 | 2839,2840,2841 | 2839         | 2840         | 2841         |
 
-    央行业务公告
+央行业务公告
 
 | 最新      | 公开市场操作 | 中央国库现金管理 |
 | --------- | ------------ | ---------------- |
 | 2845,2846 | 2845         | 2846             |
+
 </details>
 
 <details>
 <summary>本币市场</summary>
 
-    贷款市场报价利率
+贷款市场报价利率
 
 | LPR 市场公告 |
 | ------------ |
 | 3686         |
+
 </details>`,
 };
 
@@ -69,12 +72,19 @@ async function handler(ctx) {
         },
     });
 
-    const list = contents.records.map((item) => ({
+    let list = contents.records.map((item) => ({
         title: item.title,
         link: `${baseUrl}${item.draftPath}`,
-        pubDate: timezone(parseDate(item.releaseDate, 'YYYY-MM-DD'), +8),
+        pubDate: timezone(parseDate(item.releaseDate, 'YYYY-MM-DD'), 8),
         contentId: item.contentId,
     }));
+    const limit = getRouteLimit(ctx);
+    if (limit !== undefined) {
+        if (ctx.req.query('sorted') !== 'false') {
+            list.sort((a, b) => b.pubDate.getTime() - a.pubDate.getTime());
+        }
+        list = list.slice(0, limit);
+    }
 
     const items = await Promise.all(
         list.map((item) =>
@@ -85,21 +95,23 @@ async function handler(ctx) {
                 const article = $('.article-a-body');
                 article.find('*').removeAttr('style');
                 article.find('font').each((_, ele) => {
-                    $(ele).replaceWith($(ele).html());
+                    $(ele).replaceWith($(ele).html() ?? '');
                 });
                 article.find('span').each((_, ele) => {
-                    $(ele).replaceWith($(ele).html());
+                    $(ele).replaceWith($(ele).html() ?? '');
                 });
                 article.find('.article-a-attach-body a').each((i, ele) => {
-                    ele = $(ele);
-                    if (ele.attr('onclick')?.startsWith("location.href=encodeURI($('#fileDownUrl').val()+'fileDownLoad.do")) {
-                        ele.attr('href', `${baseUrl}/dqs/cm-s-notice-query/fileDownLoad.do?mode=open&contentId=${item.contentId}&priority=${i}`);
-                        ele.removeAttr('onclick');
+                    const $ele = $(ele);
+                    if (!$ele.attr('onclick')?.startsWith("location.href=encodeURI($('#fileDownUrl').val()+'fileDownLoad.do")) {
+                        return;
                     }
+
+                    $ele.attr('href', `${baseUrl}/dqs/cm-s-notice-query/fileDownLoad.do?mode=open&contentId=${item.contentId}&priority=${i}`);
+                    $ele.removeAttr('onclick');
                 });
 
                 item.description = article.html();
-                item.pubDate = timezone(parseDate($('.AC-l span').text().trim(), 'YYYY-MM-DD HH:mm'), +8);
+                item.pubDate = timezone(parseDate($('.AC-l span').text(), 'YYYY-MM-DD HH:mm'), 8);
 
                 return item;
             })
@@ -107,7 +119,7 @@ async function handler(ctx) {
     );
 
     return {
-        title: `${channels[channelId] ? channels[channelId].title + ' - ' : ''}中国货币网`,
+        title: `${Object.hasOwn(channels, channelId) ? channels[channelId].title + ' - ' : ''}中国货币网`,
         link: `${baseUrl}${channels[channelId]?.urlPath ?? ''}`,
         item: items,
     };

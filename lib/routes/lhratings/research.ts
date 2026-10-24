@@ -1,51 +1,51 @@
 import type { Cheerio, CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
-import type { Element } from 'domhandler';
+import type { AnyNode, Element } from 'domhandler';
 import type { Context } from 'hono';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 export const handler = async (ctx: Context): Promise<Data> => {
-    const { type = '1' } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '20', 10);
+    const { type = '92' } = ctx.req.param();
+    const limit = getRouteLimit(ctx, 20);
 
     const baseUrl = 'https://www.lhratings.com';
-    const targetUrl: string = new URL(`research.html?type=${type}`, baseUrl).href;
+    const targetUrl: string = new URL(`lists/${type}.html`, baseUrl).href;
 
     const response = await ofetch(targetUrl);
     const $: CheerioAPI = load(response);
-    const language = $('html').attr('lang') ?? 'zh-CN';
+    const language = ($('html').attr('lang') ?? 'zh-CN') as Language;
 
-    const items: DataItem[] = $('table.list-table tbody tr')
+    const items: DataItem[] = $('div.xlistNr ul li a, div.hgjjNr ul li a')
         .slice(0, limit)
         .toArray()
-        .map((el): Element => {
+        .map((el) => {
             const $el: Cheerio<Element> = $(el);
-            const $aEl: Cheerio<Element> = $el.find('a').first();
 
-            const title: string = $aEl.text();
-            const pubDateStr: string | undefined = $aEl.parent().next().next().text();
-            const linkUrl: string | undefined = $aEl.attr('href');
-            const categoryEls: Element[] = [$aEl.parent().next()].filter(Boolean);
+            const title: string = $el.find('h2').text();
+            const pubDateStr: string | undefined = $el.find('p').text().split('：', 2)[1];
+            const href: string | undefined = $el.attr('href');
+            const linkUrl: string | undefined = href ? new URL(href, baseUrl).href : undefined;
+            const categoryEls: Array<Cheerio<AnyNode>> = [$el.find('h3').contents()].filter(Boolean);
             const categories: string[] = [...new Set(categoryEls.map((el) => $(el).text()).filter(Boolean))];
-            const image: string | undefined = $el.find('img').attr('src');
-            const upDatedStr: string | undefined = pubDateStr;
+            const imageSrc: string | undefined = $el.find('div.xylist_img img').attr('src');
+            const image: string | undefined = imageSrc ? new URL(imageSrc, baseUrl).href : undefined;
 
             let processedItem: DataItem = {
                 title,
-                pubDate: pubDateStr ? parseDate(pubDateStr) : undefined,
+                pubDate: pubDateStr ? parseDate(`${pubDateStr}T00:00:00Z`) : undefined,
                 link: linkUrl,
                 category: categories,
                 image,
                 banner: image,
-                updated: upDatedStr ? parseDate(upDatedStr) : undefined,
                 language,
             };
 
-            const enclosureUrl: string | undefined = linkUrl;
+            const enclosureUrl: string | undefined = linkUrl?.endsWith('.pdf') ? linkUrl : undefined;
 
             if (enclosureUrl) {
                 processedItem = {
@@ -59,15 +59,15 @@ export const handler = async (ctx: Context): Promise<Data> => {
             return processedItem;
         });
 
-    const author: string = $('title').text();
+    const author = '联合资信评估股份有限公司';
+    const logoSrc: string | undefined = $('h1.logo a img').attr('src');
 
     return {
-        title: `${author} - ${$('li.active').text()}`,
+        title: `${author} - ${$('title').text()}`,
         description: $('li.active').text(),
         link: targetUrl,
         item: items,
-        allowEmpty: true,
-        image: $('a#logo img').attr('src'),
+        image: logoSrc ? new URL(logoSrc, baseUrl).href : undefined,
         author,
         language,
         id: targetUrl,
@@ -80,18 +80,17 @@ export const route: Route = {
     url: 'www.lhratings.com',
     maintainers: ['nczitzk'],
     handler,
-    example: '/lhratings/research/1',
+    example: '/lhratings/research/92',
     parameters: {
-        type: '分类，默认为 `1`，即宏观经济，可在对应分类页 URL 中找到',
+        type: '分类，默认为 `92`，即宏观经济，可在对应分类页 URL 中找到',
     },
     description: `::: tip
-若订阅 [宏观经济](https://www.lhratings.com/research.html?type=1)，网址为 \`https://www.lhratings.com/research.html?type=1\`，请截取 \`https://www.lhratings.com/research.html?type=\` 到末尾的部分 \`1\` 作为 \`type\` 参数填入，此时目标路由为 [\`/lhratings/research/1\`](https://rsshub.app/lhratings/research/1)。
+若订阅 [宏观经济](https://www.lhratings.com/lists/92.html)，网址为 \`https://www.lhratings.com/lists/92.html\`，使用分类编号 \`92\` 作为 \`type\` 参数填入，此时目标路由为 [\`/lhratings/research/92\`](https://rsshub.app/lhratings/research/92)。
 :::
 
-| 宏观经济 | 债券市场 | 行业研究 | 评级理论与方法 | 国际债券市场与评级 | 评级表现 |
-| -------- | -------- | -------- | -------------- | ------------------ | -------- |
-| 1        | 2        | 3        | 4              | 5                  | 6        |
-`,
+| 宏观经济 | 债券市场 | 行业研究 | 每日资讯 | 其他 |
+| -------- | -------- | -------- | -------- | ---- |
+| 92       | 93       | 94       | 95       | 96   |`,
     categories: ['finance'],
     features: {
         requireConfig: false,
@@ -104,43 +103,29 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['www.lhratings.com/research.html'],
-            target: (_, url) => {
-                const urlObj: URL = new URL(url);
-                const type: string | undefined = urlObj.searchParams.get('type') ?? undefined;
-
-                return `/lhratings/research/${type ? `/${type}` : ''}`;
-            },
-        },
-        {
             title: '宏观经济',
-            source: ['www.lhratings.com/research.html?type=1'],
-            target: '/research/1',
+            source: ['www.lhratings.com/lists/92.html'],
+            target: '/research/92',
         },
         {
             title: '债券市场',
-            source: ['www.lhratings.com/research.html?type=2'],
-            target: '/research/2',
+            source: ['www.lhratings.com/lists/93.html'],
+            target: '/research/93',
         },
         {
             title: '行业研究',
-            source: ['www.lhratings.com/research.html?type=3'],
-            target: '/research/3',
+            source: ['www.lhratings.com/lists/94.html'],
+            target: '/research/94',
         },
         {
-            title: '评级理论与方法',
-            source: ['www.lhratings.com/research.html?type=4'],
-            target: '/research/4',
+            title: '每日资讯',
+            source: ['www.lhratings.com/lists/95.html'],
+            target: '/research/95',
         },
         {
-            title: '国际债券市场与评级',
-            source: ['www.lhratings.com/research.html?type=5'],
-            target: '/research/5',
-        },
-        {
-            title: '评级表现',
-            source: ['www.lhratings.com/research.html?type=6'],
-            target: '/research/6',
+            title: '其他',
+            source: ['www.lhratings.com/lists/96.html'],
+            target: '/research/96',
         },
     ],
     view: ViewType.Articles,

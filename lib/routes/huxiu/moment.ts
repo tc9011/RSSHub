@@ -1,8 +1,8 @@
 import type { Route } from '@/types';
-import cache from '@/utils/cache';
 import got from '@/utils/got';
+import { getRouteLimit } from '@/utils/route-limit';
 
-import { apiMomentRootUrl, fetchData, processItems, rootUrl } from './util';
+import { apiMomentRootUrl, buildFeedMetadata, buildHuxiuRouteTitlePrefix, processItems, rootUrl } from './util';
 
 export const route: Route = {
     path: '/moment',
@@ -29,7 +29,7 @@ export const route: Route = {
 };
 
 async function handler(ctx) {
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 20;
+    const limit = getRouteLimit(ctx, 20);
 
     const apiUrl = new URL('web-v3/moment/feed', apiMomentRootUrl).href;
     const currentUrl = new URL('moment', rootUrl).href;
@@ -40,9 +40,15 @@ async function handler(ctx) {
         },
     });
 
-    const items = await processItems(response.data.moment_list.datalist, limit, cache.tryGet);
+    const items = await processItems(response.data.moment_list.datalist, limit);
 
-    const data = await fetchData(currentUrl);
+    const data = buildFeedMetadata({
+        title: '24 小时',
+        link: currentUrl,
+        description: '虎嗅 24 小时',
+        subtitle: '24 小时',
+        titlePrefix: buildHuxiuRouteTitlePrefix(route.name),
+    });
 
     return {
         item: items,

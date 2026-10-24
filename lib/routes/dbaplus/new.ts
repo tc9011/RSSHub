@@ -2,33 +2,33 @@ import type { Cheerio, CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
 import type { Element } from 'domhandler';
 import type { Context } from 'hono';
+import pMap from 'p-map';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
 import { renderDescription } from './templates/description';
 
 export const handler = async (ctx: Context): Promise<Data> => {
     const { id = '9' } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '30', 10);
+    const limit = getRouteLimit(ctx, 30);
 
     const baseUrl = 'https://dbaplus.cn';
     const targetUrl: string = new URL(`news-${id}-1.html`, baseUrl).href;
 
     const response = await ofetch(targetUrl);
     const $: CheerioAPI = load(response);
-    const language = $('html').attr('lang') ?? 'zh';
+    const language = ($('html').attr('lang') ?? 'zh') as Language;
 
-    let items: DataItem[] = [];
-
-    items = $('ul.media-list li.media')
+    let items: DataItem[] = $('.categeay .media-list > li.media')
         .slice(0, limit)
         .toArray()
-        .map((el): Element => {
+        .map((el) => {
             const $el: Cheerio<Element> = $(el);
             const $aEl: Cheerio<Element> = $el.find('h3.media-heading a');
 
@@ -43,7 +43,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
                           },
                       ]
                     : undefined,
-                intro: $el.find('div.mt10').html(),
+                intro: $el.find('div.mt10').html() ?? undefined,
             });
             const pubDateStr: string | undefined = $el
                 .find('span.time')
@@ -52,77 +52,52 @@ export const handler = async (ctx: Context): Promise<Data> => {
                 .replace('日', '');
             const linkUrl: string | undefined = $aEl.attr('href');
             const authorEls: Element[] = $el.find('span.user').toArray();
-            const authors: DataItem['author'] = authorEls.map((authorEl) => {
-                const $authorEl: Cheerio<Element> = $(authorEl);
-
-                return {
-                    name: $authorEl.text(),
-                    url: undefined,
-                    avatar: undefined,
-                };
-            });
-            const upDatedStr: string | undefined = pubDateStr;
-
+            const authors: DataItem['author'] = authorEls.map((authorEl) => ({ name: $(authorEl).text().trim() })).filter((author) => author.name);
             const processedItem: DataItem = {
                 title,
                 description,
-                pubDate: pubDateStr ? parseDate(pubDateStr) : undefined,
+                pubDate: pubDateStr ? timezone(parseDate(pubDateStr), 8) : undefined,
                 link: linkUrl,
-                author: authors,
+                author: authors.length ? authors : undefined,
                 content: {
                     html: description,
-                    text: description,
+                    text: $el.find('div.mt10').text(),
                 },
                 image,
                 banner: image,
-                updated: upDatedStr ? parseDate(upDatedStr) : undefined,
                 language,
             };
 
             return processedItem;
         });
 
-    items = await Promise.all(
-        items.map((item) => {
+    items = await pMap(
+        items,
+        (item) => {
             if (!item.link) {
                 return item;
             }
 
             return cache.tryGet(item.link, async (): Promise<DataItem> => {
-                const detailResponse = await ofetch(item.link);
+                const detailResponse = await ofetch(item.link!);
                 const $$: CheerioAPI = load(detailResponse);
 
                 const title: string = $$('h2.title').text();
-                const description: string | undefined =
-                    item.description +
-                    renderDescription({
-                        description: $$('div.new-detailed').html(),
-                    });
+                const article = $$('div.new-detailed').first();
+                article.find('script, style').remove();
+                const description = article.html() ?? item.description;
                 const pubDateStr: string | undefined = $$('span.time').first().text();
-                const categories: string[] = $$('meta[name="keywords"]').attr('content')?.split(',') ?? [];
                 const authorEls: Element[] = $$('span.user').toArray();
-                const authors: DataItem['author'] = authorEls.map((authorEl) => {
-                    const $$authorEl: Cheerio<Element> = $$(authorEl);
-
-                    return {
-                        name: $$authorEl.text(),
-                        url: undefined,
-                        avatar: undefined,
-                    };
-                });
-                const upDatedStr: string | undefined = pubDateStr;
-
+                const authors: DataItem['author'] = authorEls.map((authorEl) => ({ name: $$(authorEl).text().trim() })).filter((author) => author.name);
                 const processedItem: DataItem = {
                     title,
                     description,
-                    pubDate: pubDateStr ? timezone(parseDate(pubDateStr), +8) : item.pubDate,
-                    category: categories,
-                    author: authors,
+                    pubDate: pubDateStr ? timezone(parseDate(pubDateStr), 8) : item.pubDate,
+                    author: authors.length ? authors : undefined,
                     content: {
                         html: description,
-                        text: description,
+                        text: article.length ? article.text() : undefined,
                     },
-                    updated: upDatedStr ? timezone(parseDate(upDatedStr), +8) : item.updated,
                     language,
                 };
 
@@ -131,19 +106,19 @@ export const handler = async (ctx: Context): Promise<Data> => {
                     ...processedItem,
                 };
             });
-        })
+        },
+        { concurrency: 3 }
     );
 
     const description: string = $('meta[name="description"]').attr('content') ?? '';
 
     return {
-        title: $('title').text().split(/：/)[0],
+        title: $('title').text().split(/：/, 1)[0],
         description,
         link: targetUrl,
         item: items,
-        allowEmpty: true,
         image: $('div.navbar-header img').attr('src'),
-        author: description.split(/：/)[0],
+        author: description.split(/：/, 1)[0],
         language,
         id: targetUrl,
     };
@@ -157,7 +132,7 @@ export const route: Route = {
     handler,
     example: '/dbaplus/news/9',
     parameters: {
-        category: {
+        id: {
             description: '分类，默认为 `9`，即全部，可在对应分类页 URL 中找到',
             options: [
                 {
@@ -246,32 +221,31 @@ export const route: Route = {
 <details>
   <summary>更多分类</summary>
 
-  | [全部](https://dbaplus.cn/news-9-1.html) | [数据库](https://dbaplus.cn/news-153-1.html) | [运维](https://dbaplus.cn/news-134-1.html) | [大数据](https://dbaplus.cn/news-73-1.html) | [架构](https://dbaplus.cn/news-141-1.html) |
-  | ---------------------------------------- | -------------------------------------------- | ------------------------------------------ | ------------------------------------------- | ------------------------------------------ |
-  | [9](https://rsshub.app/dbaplus/news/9)   | [153](https://rsshub.app/dbaplus/news/153)   | [134](https://rsshub.app/dbaplus/news/134) | [73](https://rsshub.app/dbaplus/news/73)    | [141](https://rsshub.app/dbaplus/news/141) |
+| [全部](https://dbaplus.cn/news-9-1.html) | [数据库](https://dbaplus.cn/news-153-1.html) | [运维](https://dbaplus.cn/news-134-1.html) | [大数据](https://dbaplus.cn/news-73-1.html) | [架构](https://dbaplus.cn/news-141-1.html) |
+| ---------------------------------------- | -------------------------------------------- | ------------------------------------------ | ------------------------------------------- | ------------------------------------------ |
+| [9](https://rsshub.app/dbaplus/news/9)   | [153](https://rsshub.app/dbaplus/news/153)   | [134](https://rsshub.app/dbaplus/news/134) | [73](https://rsshub.app/dbaplus/news/73)    | [141](https://rsshub.app/dbaplus/news/141) |
 
-  | [PaaS云](https://dbaplus.cn/news-72-1.html) | [职场生涯](https://dbaplus.cn/news-149-1.html) | [标准评估](https://dbaplus.cn/news-248-1.html) | [这里有毒](https://dbaplus.cn/news-21-1.html) |
-  | ------------------------------------------- | ---------------------------------------------- | ---------------------------------------------- | --------------------------------------------- |
-  | [72](https://rsshub.app/dbaplus/news/72)    | [149](https://rsshub.app/dbaplus/news/149)     | [248](https://rsshub.app/dbaplus/news/248)     | [21](https://rsshub.app/dbaplus/news/21)      |
+| [PaaS 云](https://dbaplus.cn/news-72-1.html) | [职场生涯](https://dbaplus.cn/news-149-1.html) | [标准评估](https://dbaplus.cn/news-248-1.html) | [这里有毒](https://dbaplus.cn/news-21-1.html) |
+| -------------------------------------------- | ---------------------------------------------- | ---------------------------------------------- | --------------------------------------------- |
+| [72](https://rsshub.app/dbaplus/news/72)     | [149](https://rsshub.app/dbaplus/news/149)     | [248](https://rsshub.app/dbaplus/news/248)     | [21](https://rsshub.app/dbaplus/news/21)      |
 
-  #### [数据库](https://dbaplus.cn/news-153-1.html)
+#### [数据库](https://dbaplus.cn/news-153-1.html)
 
-  | [国产数据库](https://dbaplus.cn/news-217-1.html) | [ORACLE](https://dbaplus.cn/news-10-1.html) | [MySQL](https://dbaplus.cn/news-11-1.html) | [SQL优化](https://dbaplus.cn/news-155-1.html) | [Newsletter](https://dbaplus.cn/news-156-1.html) |
-  | ------------------------------------------------ | ------------------------------------------- | ------------------------------------------ | --------------------------------------------- | ------------------------------------------------ |
-  | [217](https://rsshub.app/dbaplus/news/217)       | [10](https://rsshub.app/dbaplus/news/10)    | [11](https://rsshub.app/dbaplus/news/11)   | [155](https://rsshub.app/dbaplus/news/155)    | [156](https://rsshub.app/dbaplus/news/156)       |
+| [国产数据库](https://dbaplus.cn/news-217-1.html) | [ORACLE](https://dbaplus.cn/news-10-1.html) | [MySQL](https://dbaplus.cn/news-11-1.html) | [SQL 优化](https://dbaplus.cn/news-155-1.html) | [Newsletter](https://dbaplus.cn/news-156-1.html) |
+| ------------------------------------------------ | ------------------------------------------- | ------------------------------------------ | ---------------------------------------------- | ------------------------------------------------ |
+| [217](https://rsshub.app/dbaplus/news/217)       | [10](https://rsshub.app/dbaplus/news/10)    | [11](https://rsshub.app/dbaplus/news/11)   | [155](https://rsshub.app/dbaplus/news/155)     | [156](https://rsshub.app/dbaplus/news/156)       |
 
-  | [其它](https://dbaplus.cn/news-154-1.html) |
-  | ------------------------------------------ |
-  | [154](https://rsshub.app/dbaplus/news/154) |
+| [其它](https://dbaplus.cn/news-154-1.html) |
+| ------------------------------------------ |
+| [154](https://rsshub.app/dbaplus/news/154) |
 
-  #### [这里有毒](https://dbaplus.cn/news-21-1.html)
+#### [这里有毒](https://dbaplus.cn/news-21-1.html)
 
-  | [最新活动](https://dbaplus.cn/news-152-1.html) | [往期干货](https://dbaplus.cn/news-148-1.html) | [特别策划](https://dbaplus.cn/news-150-1.html) | [荐书](https://dbaplus.cn/news-151-1.html) |
-  | ---------------------------------------------- | ---------------------------------------------- | ---------------------------------------------- | ------------------------------------------ |
-  | [152](https://rsshub.app/dbaplus/news/152)     | [148](https://rsshub.app/dbaplus/news/148)     | [150](https://rsshub.app/dbaplus/news/150)     | [151](https://rsshub.app/dbaplus/news/151) |
+| [最新活动](https://dbaplus.cn/news-152-1.html) | [往期干货](https://dbaplus.cn/news-148-1.html) | [特别策划](https://dbaplus.cn/news-150-1.html) | [荐书](https://dbaplus.cn/news-151-1.html) |
+| ---------------------------------------------- | ---------------------------------------------- | ---------------------------------------------- | ------------------------------------------ |
+| [152](https://rsshub.app/dbaplus/news/152)     | [148](https://rsshub.app/dbaplus/news/148)     | [150](https://rsshub.app/dbaplus/news/150)     | [151](https://rsshub.app/dbaplus/news/151) |
 
-</details>
-`,
+</details>`,
     categories: ['programming'],
     features: {
         requireConfig: false,
@@ -284,14 +258,8 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['dbaplus.cn/news*'],
-            target: (_, url) => {
-                const urlObj: URL = new URL(url);
-                const href: string = urlObj.href;
-                const id: string | undefined = href.match(/-(\d+)-\.html/)?.[1];
-
-                return `/dbaplus/news${id ? `/${id}` : ''}`;
-            },
+            source: ['dbaplus.cn/news-160-1.html'],
+            target: '/news/160',
         },
         {
             title: '全部',

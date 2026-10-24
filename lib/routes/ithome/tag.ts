@@ -1,10 +1,12 @@
 import { load } from 'cheerio';
+import { FetchError } from 'ofetch';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+
+import { parseSourceDate } from './utils';
 
 const rootUrl = 'https://www.ithome.com/';
 
@@ -39,22 +41,25 @@ async function handler(ctx) {
     const $ = load(response.data);
     const list = $('ul.bl > li')
         .toArray()
-        .map((item) => ({
+        .map((item): DataItem => ({
             title: $(item).find('h2 > a').text(),
             link: $(item).find('h2 > a').attr('href'),
-            pubDate: timezone(parseDate($(item).find('div.c').attr('data-ot')), +8),
+            pubDate: parseSourceDate($(item).find('div.c').attr('data-ot')),
         }));
 
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
+    const items = await pMap(
+        list,
+        async (item) => {
+            const details = await cache.tryGet(`ithome:tag-details:${item.link}`, async () => {
                 let detailResponse;
 
                 // handle 404 errors for some article URLs
                 try {
                     detailResponse = await got(item.link);
-                } catch {
-                    // empty
+                } catch (error) {
+                    if (!(error instanceof FetchError) || error.response?.status !== 404) {
+                        throw error;
+                    }
                 }
                 if (!detailResponse) {
                     return;
@@ -64,22 +69,21 @@ async function handler(ctx) {
 
                 const article = content('div.post_content');
                 article.find('img[data-original]').each((_, ele) => {
-                    ele = $(ele);
-                    ele.attr('src', ele.attr('data-original'));
-                    ele.removeAttr('class');
-                    ele.removeAttr('data-original');
+                    const $ele = $(ele);
+                    $ele.attr('src', $ele.attr('data-original'));
+                    $ele.removeAttr('class');
+                    $ele.removeAttr('data-original');
                 });
-                item.description = article.html();
-                item.author = content('span.author_baidu > strong').text();
-
-                return item;
-            })
-        )
+                return { description: article.html(), author: content('span.author_baidu > strong').text() };
+            });
+            return details ? { ...item, ...details } : undefined;
+        },
+        { concurrency: 3 }
     );
 
     return {
         title: `IT之家 - ${name}标签`,
         link: url,
-        item: items.filter(Boolean),
+        item: items.filter((item): item is NonNullable<typeof item> => item !== undefined),
     };
 }

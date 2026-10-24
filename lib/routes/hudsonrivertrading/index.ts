@@ -2,6 +2,7 @@ import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Data, Route } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { parseDateInTimezone } from '@/utils/parse-date-in-timezone';
 
 type WordpressPost = {
     id: number;
@@ -19,7 +20,7 @@ type WordpressPost = {
 
 const ROOT_URL = 'https://www.hudsonrivertrading.com';
 
-const SECTION_LABELS: Record<string, string> = {
+const SECTION_LABELS = {
     algo: 'Algorithm',
     engineers: 'Engineering',
     interns: 'Intern Spotlight',
@@ -27,7 +28,7 @@ const SECTION_LABELS: Record<string, string> = {
 };
 
 // Find the category IDs at https://www.hudsonrivertrading.com/wp-json/wp/v2/categories
-const SECTION_CATEGORY_IDS: Record<string, number> = {
+const SECTION_CATEGORY_IDS = {
     algo: 7,
     engineers: 11,
     interns: 16,
@@ -97,21 +98,24 @@ async function handler(ctx): Promise<Data> {
     const apiUrl = `${apiBase}/posts?${searchParams.join('&')}`;
     const data = await ofetch<WordpressPost[]>(apiUrl);
 
-    const items = data.map((post) => ({
-        title: post.title?.rendered,
-        description: post.content?.rendered ?? post.excerpt?.rendered ?? '',
-        link: post.link,
-        pubDate: parseDate(post.date_gmt ?? post.date),
-        author: post._embedded?.author?.[0]?.name,
-        category: Array.isArray(post._embedded?.['wp:term'])
-            ? post._embedded['wp:term']
-                  .flat()
-                  .map((term: any) => term?.name)
-                  .filter(Boolean)
-            : undefined,
-    }));
+    const items = data.map((post) => {
+        const pubDate = post.date_gmt ? parseDateInTimezone(post.date_gmt, 0) : post.date ? parseDate(post.date) : undefined;
+        return {
+            title: post.title?.rendered,
+            description: post.content?.rendered ?? post.excerpt?.rendered ?? '',
+            link: post.link,
+            pubDate: pubDate && !Number.isNaN(pubDate.getTime()) ? pubDate : undefined,
+            author: post._embedded?.author?.[0]?.name,
+            category: Array.isArray(post._embedded?.['wp:term'])
+                ? post._embedded['wp:term']
+                      .flat()
+                      .map((term: any) => term?.name)
+                      .filter(Boolean)
+                : undefined,
+        };
+    });
 
-    const sectionLabel = sectionParam && SECTION_LABELS[sectionParam] ? ` - ${SECTION_LABELS[sectionParam]}` : '';
+    const sectionLabel = sectionParam && Object.hasOwn(SECTION_LABELS, sectionParam) ? ` - ${SECTION_LABELS[sectionParam]}` : '';
 
     return {
         title: `Hudson River Trading${sectionLabel}`,

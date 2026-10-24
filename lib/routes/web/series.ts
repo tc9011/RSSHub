@@ -17,7 +17,7 @@ export const route: Route = {
     maintainers: ['KarasuShin'],
     handler,
     description: `::: tip
-    The \`seriesName\` can be extracted from the Series page URL: \`https://web.dev/series/:seriesName\`
+The \`seriesName\` can be extracted from the Series page URL: \`https://web.dev/series/:seriesName\`
 :::`,
 };
 
@@ -29,5 +29,6 @@ async function handler(ctx): Promise<Data> {
         link: `https://web.dev/series/${seriesName}`,
         image: 'https://web.dev/_pwa/web/icons/icon-144x144.png',
         item: await fetchItems(`category:${hyphen2Pascal(seriesName)}`),
+        language: 'en',
     };
 }

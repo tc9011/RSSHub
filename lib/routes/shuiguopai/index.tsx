@@ -10,13 +10,15 @@ import timezone from '@/utils/timezone';
 
 export const route: Route = {
     path: '/',
+    categories: ['new-media'],
+    example: '/shuiguopai',
     radar: [
         {
             source: ['shuiguopai.com/'],
             target: '',
         },
     ],
-    name: 'Unknown',
+    name: '首页',
     maintainers: ['nczitzk'],
     handler,
     url: 'shuiguopai.com/',
@@ -31,7 +33,8 @@ async function handler(ctx) {
     const listUrl = `${apiRootUrl}/v1_2/homePage`;
     const filmUrl = `${apiRootUrl}/v1_2/filmInfo`;
 
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit')) : 50;
+    const requestedLimit = Number(ctx.req.query('limit'));
+    const limit = Number.isFinite(requestedLimit) && requestedLimit >= 1 ? Math.floor(requestedLimit) : 50;
 
     const response = await got({
         method: 'post',
@@ -51,7 +54,7 @@ async function handler(ctx) {
         title: item.title,
         guid: item.library_id,
         link: `${rootUrl}/play-details/${item.library_id}`,
-        pubDate: timezone(parseDate(item.show_time_origin, 'YYYY-MM-DD HH:mm:ss'), +8),
+        pubDate: timezone(parseDate(item.show_time_origin, 'YYYY-MM-DD HH:mm:ss'), 8),
         category: item.tags.map((t) => t.tag_title),
     }));
 

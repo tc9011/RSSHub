@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
@@ -16,10 +17,14 @@ export const route: Route = {
     parameters: { lang: 'the language of the site. Can be either `en` or `zh-cn`. Default: `en`' },
     radar: [
         {
-            source: ['mashiro.best/', 'mashiro.best/:lang/'],
+            source: ['mashiro.best/:lang/'],
+        },
+        {
+            source: ['mashiro.best/'],
+            target: '/en',
         },
     ],
-    name: `Blog`,
+    name: 'Blog',
     maintainers: ['MuenYu'],
     handler: async (ctx) => {
         const { lang = 'en' } = ctx.req.param();
@@ -27,15 +32,15 @@ export const route: Route = {
         const response = await ofetch(targetLink);
         const $ = load(response);
         const links = $('.archives-group article')
-            .toArray()
             .slice(0, 10)
-            .map((item) => {
-                item = $(item);
-                const a = item.find('a').first();
+            .toArray()
+            .map((item): DataItem => {
+                const $item = $(item);
+                const a = $item.find('a');
 
                 const title = a.find('.article-title').text();
                 const link = `${baseUrl}${a.attr('href')}`;
-                const pubDate = parseDate(a.find('time').attr('datetime'));
+                const pubDate = parseDate(a.find('time').attr('datetime')!);
 
                 return {
                     title,
@@ -44,15 +49,17 @@ export const route: Route = {
                 };
             });
 
-        const items = await Promise.all(
-            links.map((item) =>
-                cache.tryGet(item.link, async () => {
-                    const response = await ofetch(item.link);
+        const items = await pMap(
+            links,
+            async (item) => {
+                const description = await cache.tryGet(`mashiro:article:${item.link}`, async () => {
+                    const response = await ofetch(item.link!);
                     const $ = load(response);
-                    item.description = $('.article-content').first().html();
-                    return item;
-                })
-            )
+                    return $('.article-content').html();
+                });
+                return { ...item, description };
+            },
+            { concurrency: 3 }
         );
 
         return {

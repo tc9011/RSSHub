@@ -34,14 +34,14 @@ async function handler(ctx) {
     const items = $('div.cheapitem.rightborder')
         .toArray()
         .map((item) => ({
-            title: $(item).find('div.cheaptitle').text().trim() + $(item).find('a.cheappriceword').text(),
+            title: $(item).find('div.cheaptitle').text() + $(item).find('a.cheappriceword').text(),
             link: $(item).find('a.cheappriceword').attr('href'),
             description: $(item).find('div.cheapimga').html(),
             pubDate: parseRelativeDate($(item).find('span.cheapaddtimeword').text()),
         }));
 
     return {
-        title: `逛丢 - 九块九`,
+        title: '逛丢 - 九块九',
         link: url,
         item: items,
     };

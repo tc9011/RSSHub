@@ -1,39 +1,14 @@
 import { config } from '@/config';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
 
-const rootUrl = 'https://www.iwara.tv';
-const apiRootUrl = 'https://api.iwara.tv';
-const imageRootUrl = 'https://i.iwara.tv';
-
-const typeMap = {
-    video: 'Videos',
-    image: 'Images',
-};
+import { apiRootUrl, parseCreatedAt, parseThumbnail, rootUrl, typeMap } from './utils';
 
 const apiUrlMap = {
     video: `${apiRootUrl}/videos`,
     image: `${apiRootUrl}/images`,
-};
-
-const parseThumbnail = (type, item) => {
-    if (type === 'image') {
-        return `<img src="${imageRootUrl}/image/original/${item.thumbnail.id}/${item.thumbnail.name}">`;
-    }
-
-    if (item.embedUrl === null) {
-        return `<img src="${imageRootUrl}/image/original/${item.file.id}/thumbnail-${String(item.thumbnail).padStart(2, '0')}.jpg">`;
-    }
-
-    // regex borrowed from https://stackoverflow.com/a/3726073
-    const match = /https?:\/\/(?:www\.)?youtu(?:be\.com\/watch\?v=|\.be\/)([\w-]*)(&(amp;)?[\w=?]*)?/.exec(item.embedUrl);
-    if (match) {
-        return `<img src="${imageRootUrl}/image/embed/original/youtube/${match[1]}">`;
-    }
-
-    return '';
 };
 
 export const route: Route = {
@@ -53,9 +28,13 @@ export const route: Route = {
 
 async function handler(ctx) {
     const { username, type = 'video' } = ctx.req.param();
+    if (!Object.hasOwn(apiUrlMap, type)) {
+        throw new InvalidParameterError('Invalid content type. Use video or image.');
+    }
 
-    const profile = await cache.tryGet(`${apiRootUrl}/profile/${username}`, async () => {
-        const response = await ofetch(`${apiRootUrl}/profile/${username}`, {
+    const profileUrl = `${apiRootUrl}/profile/${encodeURIComponent(username)}`;
+    const profile = await cache.tryGet(profileUrl, async () => {
+        const response = await ofetch(profileUrl, {
             headers: {
                 'user-agent': config.trueUA,
             },
@@ -81,15 +60,15 @@ async function handler(ctx) {
     const items = list.map((item) => ({
         title: item.title,
         author: username,
-        link: `${rootUrl}/${type}/${item.id}/${item.slug}`,
-        category: item.tags.map((i) => i.id),
+        link: `${rootUrl}/${type}/${item.id}${item.slug ? `/${item.slug}` : ''}`,
+        category: item.tags?.map((i) => i.id) || [],
         description: parseThumbnail(type, item),
-        pubDate: parseDate(item.createdAt),
+        pubDate: parseCreatedAt(item.createdAt),
     }));
 
     return {
         title: `${username}'s iwara - ${typeMap[type]}`,
-        link: `${rootUrl}/users/${username}`,
+        link: `${rootUrl}/users/${encodeURIComponent(username)}`,
         item: items,
     };
 }

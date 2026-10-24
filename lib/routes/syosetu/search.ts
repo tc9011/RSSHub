@@ -1,15 +1,16 @@
 import type { Context } from 'hono';
-import type { Genre, NovelTypeParam, Order, SearchParams } from 'narou';
+import type { SearchParams } from 'narou';
 import { GenreNotation, NarouNovelFetch, R18Site, SearchBuilder, SearchBuilderR18 } from 'narou';
-import type { Join } from 'narou/util/type';
 import queryString from 'query-string';
 
 import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Data, Route } from '@/types';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import { renderDescription } from './templates/description';
 import type { NarouSearchParams } from './types/search';
 import { SyosetuSub, syosetuSubToJapanese } from './types/search';
+import { getNovelDates } from './utils';
 
 export const route: Route = {
     path: '/search/:sub/:query',
@@ -18,7 +19,7 @@ export const route: Route = {
     parameters: {
         sub: {
             description: 'The target Syosetu subsite.',
-            options: Object.entries(SyosetuSub).map(([, value]) => ({
+            options: Object.values(SyosetuSub).map((value) => ({
                 value,
                 label: syosetuSubToJapanese[value],
             })),
@@ -79,10 +80,10 @@ function mapToSearchParams(query: string, limit: number): SearchParams {
         minlen: setIfExists(params.minlen),
         maxlen: setIfExists(params.maxlen),
 
-        type: setIfExists(params.type as NovelTypeParam),
-        order: setIfExists(params.order as Order),
-        genre: setIfExists(params.genre as Join<Genre> | Genre),
-        nocgenre: setIfExists(params.nocgenre as Join<R18Site> | R18Site),
+        type: setIfExists(params.type),
+        order: setIfExists(params.order),
+        genre: setIfExists(params.genre),
+        nocgenre: setIfExists(params.nocgenre),
     };
 
     if (params.mintime || params.maxtime) {
@@ -109,7 +110,7 @@ function createNovelSearchBuilder(sub: string, searchParams: SearchParams) {
             // If either 女性向け/BL is chosen, nocgenre will be in query string
             // If no specific genre selected, include both
             if (!r18Params.nocgenre) {
-                r18Params.nocgenre = [R18Site.MoonLight, R18Site.MoonLightBL].join('-') as Join<R18Site>;
+                r18Params.nocgenre = `${R18Site.MoonLight}-${R18Site.MoonLightBL}`;
             }
             break;
         case SyosetuSub.MIDNIGHT:
@@ -126,7 +127,7 @@ async function handler(ctx: Context): Promise<Data> {
     const { sub, query } = ctx.req.param();
     const searchUrl = `https://${sub}.syosetu.com/search/search/search.php?${query}`;
 
-    const limit = Math.min(Number(ctx.req.query('limit') ?? 40), 40);
+    const limit = Math.min(getRouteLimit(ctx, 40), 40);
     const searchParams = mapToSearchParams(query, limit);
     const builder = createNovelSearchBuilder(sub, searchParams);
     const result = await builder.execute();
@@ -135,11 +136,10 @@ async function handler(ctx: Context): Promise<Data> {
         title: novel.title,
         link: `https://${isGeneral(sub) ? 'ncode' : 'novel18'}.syosetu.com/${String(novel.ncode).toLowerCase()}`,
         description: renderDescription({ novel, genreText: GenreNotation[novel.genre] }),
-        // Skip pubDate - search results prioritize search sequence over timestamps
-        // pubDate: novel.general_lastup,
+        ...getNovelDates(novel),
         author: novel.writer,
         // Split by whitespace characters(\s), slash(/), full-width slash(／)
-        category: novel.keyword.split(/[\s/\uFF0F]/).filter(Boolean),
+        category: novel.keyword.split(/[\s/\u{FF0F}]/u).filter(Boolean),
     }));
 
     const searchTerms: string[] = [];
@@ -154,5 +154,6 @@ async function handler(ctx: Context): Promise<Data> {
         title: searchTerms.length > 0 ? `Syosetu Search: ${searchTerms.join(' ')}` : 'Syosetu Search',
         link: searchUrl,
         item: items,
+        sortItems: false,
     };
 }

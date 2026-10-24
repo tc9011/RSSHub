@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import { fetchItems } from '@/routes/ecnu/utils';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
@@ -12,47 +13,37 @@ export const route: Route = {
     example: '/ecnu/cee',
     radar: [
         {
-            source: ['cee.ecnu.edu.cn'],
+            source: ['ieeic.ecnu.edu.cn', 'ieeic.ecnu.edu.cn/tzgg_4170/list.htm'],
             target: '/cee',
         },
     ],
     name: '通信与电子工程学院通知公告',
     maintainers: ['FrozenStarrrr', 'ChiyoYuki', 'ECNU-minus'],
     handler: async () => {
-        const baseUrl = 'https://cee.ecnu.edu.cn/';
+        const baseUrl = 'https://ieeic.ecnu.edu.cn/';
 
         const response = await got(`${baseUrl}tzgg_4170/list.htm`);
         const $ = load(response.data);
         const links = $('ul.news_list.list2 > li')
             .toArray()
-            .map((el) => ({
-                pubDate: timezone(parseDate($(el).find('.news_meta').text()), +8),
-                link: new URL($(el).find('a').attr('href'), baseUrl).toString(),
-                title: $(el).find('a').text(),
+            .map((el): DataItem & { link: string } => ({
+                pubDate: timezone(parseDate($(el).find('.news_date').text()), 8),
+                link: new URL($(el).find('a').attr('href')!, baseUrl).href,
+                title: $(el).find('.news_title').text(),
             }));
-        const items = await Promise.all(
-            links.map((item) =>
-                cache.tryGet(item.link, async () => {
-                    const { data } = await got(item.link);
-                    const $ = load(data);
-                    const $read = $('div.read');
-                    $read.find('img[src], a[href]').each((i, el) => {
-                        const $el = $(el);
-                        const attr = el.tagName === 'img' ? 'src' : 'href';
-                        const val = $el.attr(attr);
-                        if (val) {
-                            $el.attr(attr, new URL(val, baseUrl).toString());
-                        }
-                    });
-                    item.description = $read.html()?.trim();
-                    return item;
-                })
-            )
+        const items = await fetchItems(links, (item) =>
+            cache.tryGet(item.link, async () => {
+                const { data } = await got(item.link);
+                const $ = load(data);
+                const $read = $('div.read');
+                item.description = $read.html()?.trim();
+                return item;
+            })
         );
 
         return {
             title: '通信与电子工程学院通知公告',
-            link: 'https://cee.ecnu.edu.cn/tzgg_4170/list.htm',
+            link: 'https://ieeic.ecnu.edu.cn/tzgg_4170/list.htm',
             item: items,
         };
     },

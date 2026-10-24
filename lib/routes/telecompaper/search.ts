@@ -1,8 +1,10 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
+import { parseDate } from '@/utils/parse-date';
 
 export const route: Route = {
     path: '/search/:keyword?/:company?/:sort?/:period?',
@@ -26,7 +28,7 @@ export const route: Route = {
 | -------------- | --------------- |
 | 1              | 2               |
 
-  Date selection
+Date selection
 
 | 1 month | 3 months | 6 months | 12 months | 24 months |
 | ------- | -------- | -------- | --------- | --------- |
@@ -74,30 +76,28 @@ async function handler(ctx) {
     const list = $('table.details_rows tbody tr')
         .slice(0, 15)
         .toArray()
-        .map((item) => {
-            item = $(item);
-            const a = item.find('a');
+        .map((item): DataItem => {
+            const $item = $(item);
+            const a = $item.find('a');
+            const date = $item.find('span.source').text().split(' | ', 1)[0];
             return {
                 title: a.text(),
                 link: a.attr('href'),
-                pubDate: new Date(item.find('span.source').text().split(' | ')[0] + ' GMT+1').toUTCString(),
+                pubDate: date ? parseDate(`${date} GMT+1`) : undefined,
             };
         });
 
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
-                const detailResponse = await got({
-                    method: 'get',
-                    url: item.link,
-                });
+    const items = await pMap(
+        list,
+        async (item) => {
+            const detail = await cache.tryGet(`telecompaper:detail-fields:v1:${item.link}`, async (): Promise<Partial<DataItem>> => {
+                const detailResponse = await got({ method: 'get', url: item.link });
                 const content = load(detailResponse.data);
-
-                item.description = content('#pageContainer').html();
-
-                return item;
-            })
-        )
+                return { description: content('#pageContainer').html() };
+            });
+            return { ...item, ...detail };
+        },
+        { concurrency: 3 }
     );
 
     return {

@@ -3,46 +3,56 @@ import { load } from 'cheerio';
 import type { Element } from 'domhandler';
 import type { Context } from 'hono';
 
-import type { Data, DataItem, Route } from '@/types';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
+import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
+import { isValidHost } from '@/utils/valid-host';
 
 export const handler = async (ctx: Context): Promise<Data> => {
-    const { category, id } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '30', 10);
+    const { category, id: rawId } = ctx.req.param();
+    const id = rawId.endsWith('.jspx') ? rawId.slice(0, -5) : rawId;
+    if (!isValidHost(category)) {
+        throw new InvalidParameterError('Invalid category');
+    }
+
+    const limit = getRouteLimit(ctx, 30);
 
     const baseUrl = 'http://load.grainoil.com.cn';
     const targetUrl: string = new URL(`${category}/${id}.jspx`, baseUrl).href;
 
     const response = await ofetch(targetUrl);
     const $: CheerioAPI = load(response);
-    const language = $('html').attr('lang') ?? 'zh-CN';
+    const language = ($('html').attr('lang') ?? 'zh-CN') as Language;
 
-    let items: DataItem[] = [];
-
-    items = $('div.m_listpagebox ol li a')
-        .slice(0, limit)
+    let items: DataItem[] = $('div.m_listpagebox ol li a')
         .toArray()
-        .map((el): Element => {
+        .map((el) => {
             const $el: Cheerio<Element> = $(el);
 
             const title: string = $el.find('b').text();
             const pubDateStr: string | undefined = $el.find('span').text().trim();
             const linkUrl: string | undefined = $el.attr('href');
-            const upDatedStr: string | undefined = pubDateStr;
 
             const processedItem: DataItem = {
                 title,
-                pubDate: pubDateStr ? timezone(parseDate(pubDateStr), +8) : undefined,
-                link: linkUrl,
-                updated: upDatedStr ? timezone(parseDate(upDatedStr), +8) : undefined,
+                pubDate: pubDateStr ? timezone(parseDate(pubDateStr), 8) : undefined,
+                link: linkUrl ? new URL(linkUrl, targetUrl).href : undefined,
                 language,
             };
 
             return processedItem;
         });
+
+    const datesKnown = items.every((item) => item.pubDate instanceof Date && Number.isFinite(item.pubDate.getTime()));
+    if (ctx.req.query('sorted') !== 'false' && datesKnown) {
+        items.sort((a, b) => Number(b.pubDate) - Number(a.pubDate));
+    }
+    items = items.slice(0, datesKnown || ctx.req.query('sorted') === 'false' ? limit : Math.max(30, limit));
 
     items = (
         await Promise.all(
@@ -52,11 +62,12 @@ export const handler = async (ctx: Context): Promise<Data> => {
                 }
 
                 return cache.tryGet(item.link, async (): Promise<DataItem> => {
-                    const detailResponse = await ofetch(item.link);
+                    const detailResponse = await ofetch(item.link!);
                     const $$: CheerioAPI = load(detailResponse);
 
                     const title: string = $$('div.m_tit h2').text();
-                    const description: string = $$('div.TRS_Editor').html() ?? '';
+                    const content = $$('div.TRS_Editor');
+                    const description = content.html();
                     const authors: DataItem['author'] = $$('div.m_tit h2 a').first().text();
 
                     const processedItem: DataItem = {
@@ -65,7 +76,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
                         author: authors,
                         content: {
                             html: description,
-                            text: description,
+                            text: content.text(),
                         },
                         language,
                     };
@@ -79,13 +90,14 @@ export const handler = async (ctx: Context): Promise<Data> => {
         )
     ).filter((_): _ is DataItem => true);
 
+    const logoSrc = $('div.top_logo img').attr('src');
+
     return {
         title: $('title').text(),
         description: $('meta[http-equiv="description"]').attr('content'),
         link: targetUrl,
         item: items,
-        allowEmpty: true,
-        image: $('div.top_logo img').attr('src') ? new URL($('div.top_logo img').attr('src') as string, baseUrl).href : undefined,
+        image: logoSrc ? new URL(logoSrc, baseUrl).href : undefined,
         author: $('meta[http-equiv="keywords"]').attr('content'),
         language,
         id: targetUrl,
@@ -136,8 +148,7 @@ export const route: Route = {
 | 统计资料 | newsListChannel/20 |
 | 综合信息 | newsListChannel/21 |
 
-</details>
-`,
+</details>`,
     categories: ['new-media'],
     features: {
         requireConfig: false,
@@ -151,12 +162,7 @@ export const route: Route = {
     radar: [
         {
             source: ['load.grainoil.com.cn/:category/:id'],
-            target: (params) => {
-                const category: string = params.category;
-                const id: string = params.id;
-
-                return `/grainoil/${category}/${id}`;
-            },
+            target: '/:category/:id',
         },
         {
             title: '政务信息',

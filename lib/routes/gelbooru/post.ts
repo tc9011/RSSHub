@@ -1,10 +1,14 @@
 import type { Context } from 'hono';
+import { FetchError } from 'ofetch';
 import queryString from 'query-string';
 
+import ConfigNotFoundError from '@/errors/types/config-not-found';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Route } from '@/types';
 import { ViewType } from '@/types';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import { getAPIKeys, renderDesc } from './utils';
 
@@ -48,32 +52,33 @@ export const route: Route = {
     ],
     name: '标签查询',
     maintainers: ['magicFeirl'],
-    description: `
-- 默认查询: \`/gelbooru/post\` 功能等同查询 Gelbooru 网站最新的投稿
+    description: `- 默认查询: \`/gelbooru/post\` 功能等同查询 Gelbooru 网站最新的投稿
 - 单标签查询: \`/gelbooru/post/1girl\` 查询 \`1girl\` 的最新投稿
 - 多标签查询: \`/gelbooru/post/1girl school_uniform rating:general\`
 - 指定为原图: \`/gelbooru/post/1girl school_uniform rating:general/orig\`
-- 更多例子: 请参考 Gelbooru 官方 wiki https://gelbooru.com/index.php?page=wiki&s=&s=view&id=25921
+- 更多例子：请参考 Gelbooru 官方 wiki <https://gelbooru.com/index.php?page=wiki&s=&s=view&id=25921>
 
 **可选的 URL 参数**
-- limit 页面返回数据量，默认 40，可选 1 ~ 100
 
-e.g.: \`/gelbooru/post?limit=20&\`
-`,
+- limit 页面返回数据量，默认 40，可选 1 \\~ 100
+
+e.g.: \`/gelbooru/post?limit=20&\``,
     handler,
 };
 
 async function handler(ctx: Context) {
     const { tags: _tags = '', quality = 'sample' }: { tags?: string; quality?: 'sample' | 'orig' } = ctx.req.param();
 
-    const tags = decodeURIComponent(_tags).trim();
+    if (quality !== 'sample' && quality !== 'orig') {
+        throw new InvalidParameterError('quality must be sample or orig.');
+    }
+    const tags = _tags.trim();
 
-    const { limit = 40 }: { limit?: number } = ctx.req.query();
+    const limit = getRouteLimit(ctx, 40);
     const { apiKey, userId } = getAPIKeys();
 
-    const response = await got({
-        url: 'https://gelbooru.com/index.php',
-        searchParams: queryString.stringify({
+    const response = await fetchPosts(
+        queryString.stringify({
             page: 'dapi',
             s: 'post',
             q: 'index',
@@ -83,13 +88,14 @@ async function handler(ctx: Context) {
             limit: limit <= 0 || limit > 100 ? 40 : limit,
             json: 1,
         }),
-    });
+        Boolean(apiKey && userId)
+    );
 
     const posts = response.data.post;
 
     return {
         title: tags ? `${tags} - gelbooru.com` : 'gelbooru.com post list',
-        link: `https://gelbooru.com/index.php?page=post&s=list&tags=${tags}`,
+        link: `https://gelbooru.com/index.php?${new URLSearchParams({ page: 'post', s: 'list', tags })}`,
         icon: 'https://gelbooru.com/favicon.png',
         logo: 'https://gelbooru.com/favicon.png',
         description: 'Gelbooru post list',
@@ -113,4 +119,15 @@ async function handler(ctx: Context) {
             category: post.tags.split(/\s+/g),
         })),
     };
+}
+
+async function fetchPosts(searchParams: string, hasCredentials: boolean) {
+    try {
+        return await got({ url: 'https://gelbooru.com/index.php', searchParams });
+    } catch (error) {
+        if (error instanceof FetchError && error.statusCode === 401 && !hasCredentials) {
+            throw new ConfigNotFoundError('Gelbooru API requires authentication. Configure GELBOORU_API_KEY and GELBOORU_USER_ID.');
+        }
+        throw error;
+    }
 }

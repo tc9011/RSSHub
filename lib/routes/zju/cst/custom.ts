@@ -1,4 +1,5 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
 import type { Route } from '@/types';
 import got from '@/utils/got';
@@ -13,11 +14,11 @@ async function getPage(id) {
     const content = $('.lm_new ul li');
 
     return content.toArray().map((item) => {
-        item = $(item);
+        const $item = $(item);
 
-        const title = item.find('a').text();
-        const pubDate = parseDate(item.find('.fr').text());
-        const link = item.find('a').attr('href');
+        const title = $item.find('a').text();
+        const pubDate = parseDate($item.find('.fr').text());
+        const link = $item.find('a').attr('href');
 
         return {
             title,
@@ -52,12 +53,16 @@ export const route: Route = {
 
 async function handler(ctx) {
     const id = ctx.req.param('id').split('+');
-    const tasks = id.map((id) => getPage(id));
-    const results = await Promise.all(tasks);
-    let items = [];
-    for (const result of results) {
-        items = [...items, ...result];
-    }
+    const results = await pMap(id, (id) => getPage(id), { concurrency: 3 });
+    const seen = new Set<string>();
+    const items = results.flat().filter((item) => {
+        const link = new URL(item.link!, 'http://www.cst.zju.edu.cn/').href;
+        if (seen.has(link)) {
+            return false;
+        }
+        seen.add(link);
+        return true;
+    });
 
     return {
         title: '浙江大学软件学院通知',

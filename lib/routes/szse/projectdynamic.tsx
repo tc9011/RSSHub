@@ -1,6 +1,7 @@
 import { renderToString } from 'hono/jsx/dom/server';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
@@ -34,7 +35,7 @@ export const route: Route = {
 | --- | ------ | ------------ |
 | 1   | 2      | 3            |
 
-  阶段
+阶段
 
 | 全部 | 受理 | 问询 | 上市委会议 |
 | ---- | ---- | ---- | ---------- |
@@ -44,7 +45,7 @@ export const route: Route = {
 | -------- | -------- | ---- | ---- |
 | 35       | 40       | 50   | 60   |
 
-  状态
+状态
 
 | 全部 | 新受理 | 已问询 | 通过 | 未通过 |
 | ---- | ------ | ------ | ---- | ------ |
@@ -110,13 +111,14 @@ async function handler(ctx) {
         url: apiUrl,
     });
 
-    let items = response.data.data.map((item) => ({
-        title: item.prjid,
+    let items: Array<DataItem & { title: string; link: string }> = response.data.data.map((item) => ({
+        title: String(item.prjid),
         link: `${rootUrl}/api/ras/projectrends/details?id=${item.prjid}`,
     }));
 
-    items = await Promise.all(
-        items.map((item) =>
+    items = await pMap(
+        items,
+        (item) =>
             cache.tryGet(item.link, async () => {
                 const detailResponse = await got({
                     method: 'get',
@@ -131,11 +133,11 @@ async function handler(ctx) {
 
                 item.description = renderDescription(data, current);
 
-                item.pubDate = timezone(parseDate(current.startTime, 'YYYY-MM-DD HH:mm:ss'), +8);
+                item.pubDate = current.startTime ? timezone(parseDate(current.startTime, 'YYYY-MM-DD HH:mm:ss'), 8) : undefined;
 
                 return item;
-            })
-        )
+            }),
+        { concurrency: 3 }
     );
 
     return {
@@ -212,7 +214,7 @@ const renderDescription = (data, current): string =>
                     </tr>
                     <tr>
                         <td class="title">最近一期审计基准日</td>
-                        <td class="info" colspan="3">
+                        <td class="info" colspan={3}>
                             {data.lastestAuditEndDate}
                         </td>
                     </tr>

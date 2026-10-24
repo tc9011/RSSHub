@@ -2,7 +2,6 @@ import { config } from '@/config';
 import ConfigNotFoundError from '@/errors/types/config-not-found';
 import type { Route } from '@/types';
 import { ViewType } from '@/types';
-import cache from '@/utils/cache';
 import { parseDate } from '@/utils/parse-date';
 
 import getRanking from './api/get-ranking';
@@ -86,7 +85,7 @@ export const route: Route = {
                     label: 'male rank',
                 },
                 {
-                    value: 'day_felame',
+                    value: 'day_female',
                     label: 'female rank',
                 },
                 {
@@ -131,7 +130,12 @@ export const route: Route = {
         date: 'format: `2018-4-25`',
     },
     features: {
-        requireConfig: false,
+        requireConfig: [
+            {
+                name: 'PIXIV_REFRESHTOKEN',
+                description: 'Pixiv refresh token required for accessing the app API.',
+            },
+        ],
         requirePuppeteer: false,
         antiCrawler: false,
         supportBT: false,
@@ -152,7 +156,7 @@ async function handler(ctx) {
     const mode = alias[ctx.req.param('mode')] ?? ctx.req.param('mode');
     const date = ctx.req.param('date') ? new Date(ctx.req.param('date')) : new Date();
 
-    const token = await getToken(cache.tryGet);
+    const token = await getToken();
     if (!token) {
         throw new ConfigNotFoundError('pixiv not login');
     }

@@ -50,16 +50,20 @@ async function handler() {
     const list = $('#videolistss li')
         .toArray()
         .map((item) => {
-            item = $(item);
-            const title = item.find('span.t1').text();
-            const link = item.find('input[name=data-url]').attr('value');
+            const $item = $(item);
+            const title = $item.find('span.t1').text();
+            const link = $item.find('input[name=data-url]').attr('value');
 
             return {
                 title,
                 link,
-                pubDate: timezone(parseDate(item.find('span.t2').text() + ' 16:30', 'YYYY-MM-DD hh:mm'), +8),
+                pubDate: timezone(parseDate($item.find('span.t2').text() + ' 16:30', 'YYYY-MM-DD hh:mm'), 8),
             };
         });
+
+    if (!list.length) {
+        throw new Error('CZT no longer provides the Zhejiang News list at the legacy videos/zjxwlb page. Check whether the source page has moved or is blocked.');
+    }
 
     const out = {
         title: list[0].title,

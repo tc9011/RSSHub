@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import { fetchItems } from '@/routes/ecnu/utils';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
@@ -12,7 +13,7 @@ export const route: Route = {
     example: '/ecnu/tyxx',
     radar: [
         {
-            source: ['tyxx.ecnu.edu.cn'],
+            source: ['tyxx.ecnu.edu.cn', 'tyxx.ecnu.edu.cn/37979/list.htm'],
             target: '/tyxx',
         },
     ],
@@ -25,29 +26,19 @@ export const route: Route = {
         const $ = load(response.data);
         const links = $('ul.news_list.list2 > li')
             .toArray()
-            .map((el) => ({
-                pubDate: timezone(parseDate($(el).find('.news_meta').text()), +8),
-                link: new URL($(el).find('a').attr('href'), baseUrl).toString(),
+            .map((el): DataItem & { link: string } => ({
+                pubDate: timezone(parseDate($(el).find('.news_meta').text()), 8),
+                link: new URL($(el).find('a').attr('href')!, baseUrl).href,
                 title: $(el).find('a').text(),
             }));
-        const items = await Promise.all(
-            links.map((item) =>
-                cache.tryGet(item.link, async () => {
-                    const { data } = await got(item.link);
-                    const $ = load(data);
-                    const $read = $('div.wp_articlecontent');
-                    $read.find('img[src], a[href]').each((i, el) => {
-                        const $el = $(el);
-                        const attr = el.tagName === 'img' ? 'src' : 'href';
-                        const val = $el.attr(attr);
-                        if (val) {
-                            $el.attr(attr, new URL(val, baseUrl).toString());
-                        }
-                    });
-                    item.description = $read.html()?.trim();
-                    return item;
-                })
-            )
+        const items = await fetchItems(links, (item) =>
+            cache.tryGet(item.link, async () => {
+                const { data } = await got(item.link);
+                const $ = load(data);
+                const $read = $('div.wp_articlecontent');
+                item.description = $read.html();
+                return item;
+            })
         );
 
         return {

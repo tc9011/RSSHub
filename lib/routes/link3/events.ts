@@ -4,7 +4,7 @@ import { parseDate } from '@/utils/parse-date';
 
 export const route: Route = {
     path: '/events',
-    name: 'Link3 Events',
+    name: 'Events',
     url: 'link3.to',
     maintainers: ['cxheng315'],
     example: '/link3/events',
@@ -38,7 +38,7 @@ async function handler() {
             variables: {
                 order: 'START_TIME_ASC',
             },
-            query: `
+            query: /* GraphQL */ `
                 query getTrendingEvents($first: Int, $after: String, $order: TrendingEventsRequest_EventOrder, $filter: TrendingEventsRequest_EventFilter) {
                     trendingEvents(first: $first, after: $after, order: $order, filter: $filter) {
                         list {
@@ -58,7 +58,6 @@ async function handler() {
                         }
                     }
                 }
-            
             `,
         },
     });

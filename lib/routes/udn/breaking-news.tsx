@@ -1,11 +1,18 @@
 import { load } from 'cheerio';
 import { renderToString } from 'hono/jsx/dom/server';
+import pMap from 'p-map';
 
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
 import timezone from '@/utils/timezone';
+
+type ArticleSummary = {
+    title: string;
+    titleLink: string;
+    time: { date: string };
+};
 
 export const route: Route = {
     path: '/news/breakingnews/:id',
@@ -26,7 +33,7 @@ export const route: Route = {
         },
     ],
     name: '即時新聞',
-    maintainers: ['miles170'],
+    maintainers: ['miles170', 'pseudoyu'],
     handler,
     description: `| 0    | 1    | 2    | 3    | 4    | 5    | 6    | 7    | 8    | 9    | 11   | 12   | 13   | 99     |
 | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ------ |
@@ -39,16 +46,18 @@ async function handler(ctx) {
     const name = await getLinkName(link);
     const rootUrl = 'https://udn.com';
     const response = await got(`${rootUrl}/api/more?page=1&channelId=1&cate_id=${id}&type=breaknews`);
+    const list: ArticleSummary[] = response.data.lists;
 
-    const items = await Promise.all(
-        response.data.lists.map((item) => {
+    const items = await pMap(
+        list,
+        async (item) => {
             let link = item.titleLink.startsWith('http') ? item.titleLink : `${rootUrl}${item.titleLink}`;
             const linkUrl = new URL(link);
             // cleanup query paramter
-            linkUrl.query = linkUrl.search = '';
-            link = linkUrl.toString();
+            linkUrl.search = '';
+            link = linkUrl.href;
 
-            return cache.tryGet(link, async () => {
+            const details = await cache.tryGet(`udn:breaking:detail:v3:${link}`, async () => {
                 let result = await got(link);
                 // VIP article requires redirection
                 // e.g. https://udn.com/news/story/7331/6576320
@@ -62,7 +71,7 @@ async function handler(ctx) {
                     .eq(0)
                     .text()
                     .trim()
-                    .replaceAll(/[\b\t\n]/g, '');
+                    .replaceAll(/[\t\n]/g, '');
                 const data = metadata.startsWith('[') ? JSON.parse(metadata)[0] : JSON.parse(metadata);
                 // e.g. https://udn.com/news/story/7331/6576320
                 const content = $('.article-content__editor');
@@ -76,7 +85,7 @@ async function handler(ctx) {
                             <picture>
                                 <img src={data.image.contentUrl} alt={data.image.name} />
                             </picture>
-                            <figurecaption>{data.image.name}</figurecaption>
+                            <figcaption>{data.image.name}</figcaption>
                         </figure>
                     );
                 }
@@ -87,24 +96,31 @@ async function handler(ctx) {
                 }
 
                 if (data.publisher.name.includes('轉角國際 udn Global')) {
-                    // 轉角24小時
+                    // Global news
                     description = $('.story_body_content')
-                        .html()
-                        .split(/<!--\d+?-->/g)
+                        .html()!
+                        .split(/<!--\d+-->/g)
                         .slice(1, -1)
                         .join('');
                 }
 
                 return {
-                    title: item.title,
-                    author: [{ name: $('.article-content__author').text().match('中央社')?.at(0) }, { name: data.publisher.name.match('轉角國際 udn Global')?.at(0) }, data.author].filter((e) => Boolean(e.name)),
+                    author: [{ name: $('.article-content__author').text().match('中央社')?.at(0) }, { name: data.publisher.name.match('轉角國際 udn Global')?.at(0) }, data.author].filter((e) => e.name),
                     description,
-                    pubDate: timezone(parseDate(item.time.date, 'YYYY-MM-DD HH:mm'), +8),
                     category: [data.articleSection, vip ? $('.article-head li.breadcrumb__item:last > b').text() : $("meta[name='subsection']").attr('content'), ...data.keywords.split(',')],
-                    link,
                 };
             });
-        })
+
+            const date = item.time?.date;
+            const pubDate = date ? parseDate(date, 'YYYY-MM-DD HH:mm', true) : undefined;
+            return {
+                ...details,
+                title: item.title,
+                pubDate: pubDate && !Number.isNaN(pubDate.getTime()) ? timezone(pubDate, 8) : undefined,
+                link,
+            };
+        },
+        { concurrency: 3 }
     );
 
     return {
@@ -123,12 +139,12 @@ const getLinkName = async (link) => {
         const data = $('.cate-list__subheader a')
             .toArray()
             .map((item) => {
-                item = $(item);
-                return [item.attr('href'), item.text().trim()];
+                const $item = $(item);
+                return [$item.attr('href'), $item.text().trim()];
             });
         return Object.fromEntries(data);
     });
-    if (link in links) {
+    if (Object.hasOwn(links, link)) {
         return links[link];
     }
     return '列表';

@@ -1,6 +1,6 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
@@ -20,7 +20,7 @@ export const route: Route = {
         supportPodcast: false,
         supportScihub: false,
     },
-    name: 'Inverstigates',
+    name: 'Investigates',
     maintainers: ['LyleLee'],
     handler,
 };
@@ -34,19 +34,20 @@ async function handler() {
 
     const list = $('article.section-article-container.row')
         .toArray()
-        .map((item) => ({
+        .map((item): DataItem => ({
             title: $(item).find('h2.subtitle').text(),
             link: $(item).find('a.row.d-flex').prop('href'),
         }));
     const items = await Promise.all(
         list.map((item) =>
-            cache.tryGet(item.link, async () => {
+            cache.tryGet(item.link!, async () => {
                 const detailResponse = await got(item.link);
                 const content = load(detailResponse.data);
 
                 item.title = content('title').text();
                 item.description = content('article.special-report').html();
-                item.pubDate = parseDate(content('time[itemprop="datePublished"]').attr('datetime'));
+                const pubDate = content('time[itemprop="datePublished"]').attr('datetime')?.trim();
+                item.pubDate = pubDate ? parseDate(pubDate) : undefined;
                 item.author = content('meta[property="og:article:publisher"]').attr('content');
 
                 return item;

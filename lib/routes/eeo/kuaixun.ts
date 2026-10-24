@@ -1,18 +1,20 @@
 import type { CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
 import type { Context } from 'hono';
+import pMap from 'p-map';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
 import { renderDescription } from './templates/description';
 
 export const handler = async (ctx: Context): Promise<Data> => {
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '50', 10);
+    const limit = getRouteLimit(ctx, 50);
 
     const baseUrl = 'https://www.eeo.com.cn';
     const apiUrl = 'https://app.eeo.com.cn';
@@ -32,11 +34,9 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
     const targetResponse = await ofetch(targetUrl);
     const $: CheerioAPI = load(targetResponse);
-    const language = $('html').attr('lang') ?? 'en';
+    const language = ($('html').attr('lang') ?? 'en') as Language;
 
-    let items: DataItem[] = [];
-
-    items = response.data.slice(0, limit).map((item): DataItem => {
+    let items: DataItem[] = response.data.slice(0, limit).map((item): DataItem => {
         const title: string = item.title;
         const description: string | undefined = renderDescription({
             intro: item.description,
@@ -48,12 +48,11 @@ export const handler = async (ctx: Context): Promise<Data> => {
         const authors: DataItem['author'] = item.author;
         const guid: string = item.contentid ? `eeo-${item.contentid}` : '';
         const image: string | undefined = item.thumb;
-        const updated: number | string = pubDate;
 
         const processedItem: DataItem = {
             title,
             description,
-            pubDate: pubDate ? timezone(parseDate(pubDate), +8) : undefined,
+            pubDate: pubDate ? timezone(parseDate(pubDate), 8) : undefined,
             link: linkUrl,
             category: categories,
             author: authors,
@@ -61,47 +60,42 @@ export const handler = async (ctx: Context): Promise<Data> => {
             id: guid,
             content: {
                 html: description,
-                text: description,
+                text: description ? load(description).text() : undefined,
             },
             image,
             banner: image,
-            updated: updated ? timezone(parseDate(updated), +8) : undefined,
             language,
         };
 
         return processedItem;
     });
 
-    items = await Promise.all(
-        items.map((item) => {
+    items = await pMap(
+        items,
+        (item) => {
             if (!item.link) {
                 return item;
             }
 
             return cache.tryGet(item.link, async (): Promise<DataItem> => {
-                const detailResponse = await ofetch(item.link);
+                const detailResponse = await ofetch(item.link!);
                 const $$: CheerioAPI = load(detailResponse);
 
                 const title: string = $$('h1').first().text() || $$('h2.title').text() || item.title;
-                const description: string | undefined =
-                    item.description +
-                    renderDescription({
-                        description: $$('div.xx_boxsing, div#mainBody').html() || undefined,
-                    });
+                const articleHtml = $$('div.xx_boxsing, div#mainBody').html();
+                const description: string | undefined = articleHtml ? renderDescription({ description: articleHtml }) : (item.description ?? undefined);
                 const pubDateStr: string | undefined = $$('h1').next().find('span').first().text() || $$('div.from').text();
                 const authors: DataItem['author'] = $$('h1').next().contents().first().text() || $$('span.showMoreAuthor').text() || item.author;
-                const upDatedStr: string | undefined = pubDateStr;
 
                 const processedItem: DataItem = {
                     title,
                     description,
-                    pubDate: pubDateStr ? timezone(parseDate(pubDateStr), +8) : item.pubDate,
+                    pubDate: pubDateStr ? timezone(parseDate(pubDateStr), 8) : item.pubDate,
                     author: authors,
                     content: {
                         html: description,
-                        text: description,
+                        text: articleHtml ? $$('div.xx_boxsing, div#mainBody').text() : item.content?.text,
                     },
-                    updated: upDatedStr ? timezone(parseDate(upDatedStr), +8) : item.updated,
                     language,
                 };
 
@@ -110,7 +104,8 @@ export const handler = async (ctx: Context): Promise<Data> => {
                     ...processedItem,
                 };
             });
-        })
+        },
+        { concurrency: 3 }
     );
 
     return {
@@ -118,7 +113,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
         description: $('meta[name="description"]').attr('content'),
         link: targetUrl,
         item: items,
-        allowEmpty: true,
         image: $('div.logo img').attr('src'),
         author: $('meta[name="author"]').attr('content'),
         language,

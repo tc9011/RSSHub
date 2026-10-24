@@ -1,13 +1,16 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
+import timezone from '@/utils/timezone';
 
 export const handler = async (ctx) => {
     const { category } = ctx.req.param();
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 5;
+    const limit = getRouteLimit(ctx, 5);
 
     const domain = 'moa.gov.cn';
     const rootFrameUrl = `http://www.${domain}`;
@@ -36,8 +39,8 @@ export const handler = async (ctx) => {
 
         const categories = category.split(/\//);
         for (const c of categories) {
-            for (const key of Object.keys(filters)) {
-                if (filters[key].includes(c)) {
+            for (const [key, value] of Object.entries(filters)) {
+                if (value.includes(c)) {
                     filterForm[key] = c;
                 }
             }
@@ -54,15 +57,16 @@ export const handler = async (ctx) => {
         },
     });
 
-    let items = response.result.table.slice(0, limit).map((item) => ({
+    let items: Array<DataItem & { link: string; guid: string }> = response.result.table.slice(0, limit).map((item): DataItem & { link: string; guid: string } => ({
         title: item.title,
         link: item.id,
         guid: `moa-zdscxx-${item.id}`,
-        pubDate: parseDate(item.date),
+        pubDate: item.date ? timezone(parseDate(item.date), 8) : undefined,
     }));
 
-    items = await Promise.all(
-        items.map((item) =>
+    items = await pMap(
+        items,
+        (item) =>
             cache.tryGet(item.guid, async () => {
                 const { data: detailResponse } = await got.post(apiDetailUrl, {
                     form: {
@@ -76,11 +80,11 @@ export const handler = async (ctx) => {
                 item.link = new URL(`nyb/pc/messageView.jsp?id=${item.link}`, rootUrl).href;
                 item.description = data.content;
                 item.author = data.source;
-                item.pubDate = parseDate(data.date);
+                item.pubDate = data.date ? timezone(parseDate(data.date), 8) : undefined;
 
                 return item;
-            })
-        )
+            }),
+        { concurrency: 3 }
     );
 
     const { data: frameResponse } = await got(frameUrl);
@@ -94,29 +98,27 @@ export const handler = async (ctx) => {
         description: '数据',
         link: currentUrl,
         item: items,
-        allowEmpty: true,
         image: $('h1.logo a img').prop('src'),
         author: title,
     };
 };
 
 export const route: Route = {
-    path: '/moa/zdscxx/:category{.+}?',
-    name: '中华人民共和国农业农村部数据',
+    path: '/zdscxx/:category{.+}?',
+    name: '数据',
     url: 'www.moa.gov.cn',
     maintainers: ['nczitzk'],
     handler,
     example: '/gov/moa/zdscxx',
     parameters: { category: '分类，默认为全部，见下表' },
     description: `::: tip
-  若订阅 [中华人民共和国农业农村部数据](http://zdscxx.moa.gov.cn:8080/nyb/pc/messageList.jsp) 的 \`价格指数\` 报告主题。此时路由为 [\`/gov/moa/zdscxx/价格指数\`](https://rsshub.app/gov/moa/zdscxx/价格指数)。
+若订阅 [中华人民共和国农业农村部数据](http://zdscxx.moa.gov.cn:8080/nyb/pc/messageList.jsp) 的 \`价格指数\` 报告主题。此时路由为 [\`/gov/moa/zdscxx/价格指数\`](https://rsshub.app/gov/moa/zdscxx/价格指数)。
 
-  若订阅 \`央视网\` 报告来源 的 \`蔬菜生产\` 报告主题。此时路由为 [\`/gov/moa/zdscxx/央视网/蔬菜生产\`](https://rsshub.app/gov/moa/zdscxx/央视网/蔬菜生产)。
+若订阅 \`央视网\` 报告来源 的 \`蔬菜生产\` 报告主题。此时路由为 [\`/gov/moa/zdscxx/央视网/蔬菜生产\`](https://rsshub.app/gov/moa/zdscxx/央视网/蔬菜生产)。
 :::
 
 | 价格指数 | 供需形势 | 分析报告周报 | 分析报告日报 | 日历信息 | 蔬菜生产 |
-| -------- | -------- | ------------ | ------------ | -------- | -------- |
-    `,
+| -------- | -------- | ------------ | ------------ | -------- | -------- |`,
     categories: ['government'],
 
     features: {
@@ -132,32 +134,32 @@ export const route: Route = {
         {
             title: '价格指数',
             source: ['zdscxx.moa.gov.cn:8080/nyb/pc/messageList.jsp'],
-            target: '/gov/moa/zdscxx/价格指数',
+            target: '/zdscxx/价格指数',
         },
         {
             title: '供需形势',
             source: ['zdscxx.moa.gov.cn:8080/nyb/pc/messageList.jsp'],
-            target: '/gov/moa/zdscxx/供需形势',
+            target: '/zdscxx/供需形势',
         },
         {
             title: '分析报告周报',
             source: ['zdscxx.moa.gov.cn:8080/nyb/pc/messageList.jsp'],
-            target: '/gov/moa/zdscxx/分析报告周报',
+            target: '/zdscxx/分析报告周报',
         },
         {
             title: '分析报告日报',
             source: ['zdscxx.moa.gov.cn:8080/nyb/pc/messageList.jsp'],
-            target: '/gov/moa/zdscxx/分析报告日报',
+            target: '/zdscxx/分析报告日报',
         },
         {
             title: '日历信息',
             source: ['zdscxx.moa.gov.cn:8080/nyb/pc/messageList.jsp'],
-            target: '/gov/moa/zdscxx/日历信息',
+            target: '/zdscxx/日历信息',
         },
         {
             title: '蔬菜生产',
             source: ['zdscxx.moa.gov.cn:8080/nyb/pc/messageList.jsp'],
-            target: '/gov/moa/zdscxx/蔬菜生产',
+            target: '/zdscxx/蔬菜生产',
         },
     ],
 };

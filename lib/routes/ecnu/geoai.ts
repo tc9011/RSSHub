@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import { fetchItems } from '@/routes/ecnu/utils';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
@@ -14,7 +15,7 @@ export const route: Route = {
     example: '/ecnu/geoai',
     radar: [
         {
-            source: ['geoai.ecnu.edu.cn'],
+            source: ['geoai.ecnu.edu.cn', 'geoai.ecnu.edu.cn/tzgg/list.htm'],
             target: '/geoai',
         },
     ],
@@ -27,35 +28,24 @@ export const route: Route = {
         const $ = load(response.data);
         const links = $('ul.news_list > li')
             .toArray()
-            .map((el) => ({
-                pubDate: timezone(parseDate($(el).find('.news_meta').text()), +8),
-                link: new URL($(el).find('a').attr('href'), baseUrl).toString(),
+            .map((el): DataItem & { link: string } => ({
+                pubDate: timezone(parseDate($(el).find('.news_meta').text()), 8),
+                link: new URL($(el).find('a').attr('href')!, baseUrl).href,
                 title: $(el).find('a').text(),
             }));
-        const items = await Promise.all(
-            links.map((item) =>
-                cache.tryGet(item.link, async () => {
-                    if (type(item.link) === 'htm') {
-                        const { data } = await got(item.link);
-                        const $ = load(data);
-                        const $read = $('div.wp_articlecontent');
-                        $read.find('img[src], a[href]').each((i, el) => {
-                            const $el = $(el);
-                            const attr = el.tagName === 'img' ? 'src' : 'href';
-                            const val = $el.attr(attr);
-                            if (val) {
-                                $el.attr(attr, new URL(val, baseUrl).toString());
-                            }
-                        });
-                        item.description = $read.html()?.trim();
-                        return item;
-                    } else {
-                        // file to download
-                        item.description = '点击认证后访问内容';
-                        return item;
-                    }
-                })
-            )
+        const items = await fetchItems(links, (item) =>
+            cache.tryGet(item.link, async () => {
+                if (type(item.link) === 'htm') {
+                    const { data } = await got(item.link);
+                    const $ = load(data);
+                    const $read = $('div.wp_articlecontent');
+                    item.description = $read.html();
+                    return item;
+                }
+                // file to download
+                item.description = '点击认证后访问内容';
+                return item;
+            })
         );
 
         return {

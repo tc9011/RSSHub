@@ -33,23 +33,24 @@ export const route: Route = {
     maintainers: ['JimenezLi'],
     handler,
     description: `::: warning
-  用户稍后再看需要 b 站登录后的 Cookie 值，所以只能自建，详情见部署页面的配置模块。
+用户稍后再看需要 b 站登录后的 Cookie 值，所以只能自建，详情见部署页面的配置模块。
 :::`,
 };
 
 async function handler(ctx) {
     const uid = ctx.req.param('uid');
     const embed = !ctx.req.param('embed');
-    const name = await cache.getUsernameFromUID(uid);
 
     const cookie = config.bilibili.cookies[uid];
     if (cookie === undefined) {
         throw new ConfigNotFoundError('缺少对应 uid 的 Bilibili 用户登录后的 Cookie 值');
     }
 
+    const name = await cache.getUsernameFromUID(uid);
+
     const response = await got({
         method: 'get',
-        url: `https://api.bilibili.com/x/v2/history/toview`,
+        url: 'https://api.bilibili.com/x/v2/history/toview',
         headers: {
             Referer: `https://space.bilibili.com/${uid}/`,
             Cookie: cookie,

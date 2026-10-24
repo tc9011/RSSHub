@@ -5,6 +5,7 @@ import ConfigNotFoundError from '@/errors/types/config-not-found';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
+import md5 from '@/utils/md5';
 import { parseDate } from '@/utils/parse-date';
 import { fallback, queryToBoolean } from '@/utils/readable-social';
 import timezone from '@/utils/timezone';
@@ -20,7 +21,6 @@ export const route: Route = {
         requireConfig: [
             {
                 name: 'WEIBO_COOKIES',
-                optional: true,
                 description: '',
             },
         ],
@@ -41,11 +41,11 @@ export const route: Route = {
     handler,
     url: 'weibo.com/',
     description: `::: warning
-  此方案必须使用用户\`Cookie\`进行抓取，只可以获取本人的收藏动态
+此方案必须使用用户\`Cookie\`进行抓取，只可以获取本人的收藏动态
 
-  因微博 cookies 的过期与更新方案未经验证，部署一次 Cookie 的有效时长未知
+因微博 cookies 的过期与更新方案未经验证，部署一次 Cookie 的有效时长未知
 
-  微博用户 Cookie 的配置可参照部署文档
+微博用户 Cookie 的配置可参照部署文档
 :::`,
 };
 
@@ -69,7 +69,7 @@ async function handler(ctx) {
     }
 
     const uid = await cache.tryGet(
-        'weibo:user_bookmarks:login-user',
+        `weibo:user_bookmarks:login-user:${md5(config.weibo.cookies)}`,
         async () => {
             const _r = await got({
                 method: 'get',
@@ -85,6 +85,10 @@ async function handler(ctx) {
         config.cache.routeExpire,
         false
     );
+
+    if (String(uid) !== ctx.req.param('uid')) {
+        throw new Error('The requested user does not match the configured Weibo Cookie account. Only the logged-in user can access their own bookmarks.');
+    }
 
     const containerData = await cache.tryGet(
         `weibo:user_bookmarks:index:${uid}`,
@@ -143,7 +147,7 @@ async function handler(ctx) {
                         item.mblog.retweeted_status.created_at = data.retweeted_status.created_at;
                     }
                 } else {
-                    item.mblog.created_at = timezone(item.mblog.created_at, +8);
+                    item.mblog.created_at = timezone(item.mblog.created_at, 8);
                 }
 
                 // 转发的长微博处理

@@ -2,13 +2,48 @@ import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
 
 import { config } from '@/config';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { DataItem } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
 
+interface SharedPost {
+    title: string;
+    summary?: string;
+    image?: string;
+    permalink: string;
+}
+
+interface FeedPost extends SharedPost {
+    id: string;
+    type: string;
+    commentsPermalink?: string;
+    createdAt: string;
+    numUpvotes?: number;
+    numComments?: number;
+    author?: { name: string };
+    tags?: string[];
+    contentHtml?: string;
+    sharedPost: SharedPost;
+}
+
+export interface FeedEdge {
+    node: FeedPost;
+}
+
+export const getDateSort = (value?: string): boolean => {
+    if (value === undefined || value === 'true') {
+        return true;
+    }
+    if (value === 'false') {
+        return false;
+    }
+    throw new InvalidParameterError('Invalid dateSort: use "true" or "false".');
+};
+
 export const baseUrl = 'https://app.daily.dev';
-const gqlUrl = `https://api.daily.dev/graphql`;
+const gqlUrl = 'https://api.daily.dev/graphql';
 export const variables = {
     version: 54,
     loggedIn: false,
@@ -46,32 +81,24 @@ const render = ({ image, content }: { image?: string; content?: string }) =>
         </>
     );
 
-export const getList = (edges, innerSharedContent: boolean, dateSort: boolean) =>
+export const getList = (edges: FeedEdge[]): DataItem[] =>
     edges.map(({ node }) => {
-        let link: string;
-        let title: string;
-        if (innerSharedContent && node.type === 'share') {
-            link = node.sharedPost.permalink;
-            title = node.sharedPost.title;
-        } else {
-            link = node.commentsPermalink ?? node.permalink;
-            title = node.title;
-        }
+        const post = node.type === 'share' ? node.sharedPost : node;
 
         return {
             id: node.id,
-            title,
-            link,
+            title: post.title,
+            link: node.commentsPermalink ?? node.permalink,
             guid: node.permalink,
             description: render({
-                image: node.image,
-                content: node.contentHtml?.replaceAll('\n', '<br>') ?? node.summary,
+                image: post.image?.includes('/public/Placeholder') ? undefined : post.image,
+                content: node.contentHtml ?? post.summary,
             }),
             author: node.author?.name,
-            itunes_item_image: node.image,
-            pubDate: dateSort ? parseDate(node.createdAt) : '',
+            itunes_item_image: post.image,
+            pubDate: node.createdAt ? parseDate(node.createdAt) : undefined,
             upvotes: node.numUpvotes,
             comments: node.numComments,
             category: node.tags,
-        } as DataItem;
+        };
     });

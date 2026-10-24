@@ -1,9 +1,11 @@
+import { load } from 'cheerio';
 import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
 
 import type { Route } from '@/types';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import timezone from '@/utils/timezone';
 
 export const route: Route = {
     path: '/inquire/:category?/:select?/:keyword?',
@@ -34,7 +36,7 @@ export const route: Route = {
 | ---- | ------ |
 | 0    | 1      |
 
-  函件类别
+函件类别
 
 | 全部函件类别 | 非许可类重组问询函 | 问询函 | 违法违规线索分析报告 | 许可类重组问询函 | 监管函（会计师事务所模板） | 提请关注函（会计师事务所模板） | 年报问询函 | 向中介机构发函 | 半年报问询函 | 关注函 | 公司部函 | 三季报问询函 |
 | ------------ | ------------------ | ------ | -------------------- | ---------------- | -------------------------- | ------------------------------ | ---------- | -------------- | ------------ | ------ | -------- | ------------ |`,
@@ -55,17 +57,35 @@ async function handler(ctx) {
 
     const data = response.data[category];
 
-    const items = data.data.map((item) => {
-        item.ck = item.ck.match(/encode-open='\/(.*)'>详细内容/)[1];
-        item.hfck = item.hfck.replace(/encode-open='\//, "encode-open='http://reportdocs.static.szse.cn/");
+    const inquiries = new Map<string, { item: Record<string, string>; replies: Set<string> }>();
+    for (const item of data.data) {
+        const documentPath = item.ck.match(/encode-open='\/(.*)'>详细内容/)[1];
+        const inquiry = inquiries.get(documentPath) ?? { item: { ...item, ck: documentPath }, replies: new Set<string>() };
+        if (item.hfck) {
+            inquiry.replies.add(item.hfck);
+        }
+        inquiries.set(documentPath, inquiry);
+    }
 
-        return {
-            title: `[${item.gsdm}] ${item.gsjc} (${item.hjlb})`,
-            link: `http://reportdocs.static.szse.cn/${item.ck}`,
-            pubDate: parseDate(item.fhrq),
-            description: renderInquireDescription(item),
-        };
-    });
+    const items = inquiries
+        .values()
+        .toArray()
+        .map(({ item, replies }) => {
+            const reply = load([...replies].join(''), null, false);
+            reply('a[encode-open]').each((_, element) => {
+                const anchor = reply(element);
+                anchor.attr('href', new URL(anchor.attr('encode-open')!, 'http://reportdocs.static.szse.cn').href);
+                anchor.removeAttr('encode-open');
+            });
+            item.hfck = reply.html();
+
+            return {
+                title: `[${item.gsdm}] ${item.gsjc} (${item.hjlb})`,
+                link: `http://reportdocs.static.szse.cn/${item.ck}`,
+                pubDate: item.fhrq ? timezone(parseDate(item.fhrq, 'YYYY-MM-DD'), 8) : undefined,
+                description: renderInquireDescription(item),
+            };
+        });
 
     return {
         title: `深圳证券交易所 - 问询函件 - ${data.metadata.name}`,

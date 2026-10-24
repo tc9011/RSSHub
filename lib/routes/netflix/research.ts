@@ -20,11 +20,7 @@ export const route: Route = {
 };
 
 const resolveArticle = (data, store) => {
-    if (data === null) {
-        return data;
-    }
-
-    if (typeof data !== 'object') {
+    if (!(data instanceof Object)) {
         return data;
     }
 
@@ -38,7 +34,7 @@ const resolveArticle = (data, store) => {
         return target === undefined ? null : resolveArticle(target, store);
     }
 
-    const out = Array.isArray(data) ? [] : {};
+    const out = {};
     for (const [k, v] of Object.entries(data)) {
         out[k] = resolveArticle(v, store);
     }
@@ -61,17 +57,17 @@ async function handler() {
     const seen = new Set();
     const items = list
         .filter((item) => {
-            const title = item.title.trim();
-            if (seen.has(title)) {
+            if (!item.link || seen.has(item.link)) {
                 return false;
             }
-            seen.add(title);
+            seen.add(item.link);
             return true;
         })
         .map((item) => ({
             title: item.title,
             description: item.description,
             link: item.link,
+            guid: item.link,
             pubDate: (item.date ?? item.startDate) ? parseDate(item.date ?? item.startDate) : undefined,
             category: item.tags?.json,
             image: item.image?.url,
@@ -80,7 +76,7 @@ async function handler() {
     return {
         title: $('head title').text(),
         link,
-        image: `${link}/favicon.ico`,
+        image: `${baseUrl}/favicon.ico`,
         item: items,
     };
 }

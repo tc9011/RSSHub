@@ -1,6 +1,6 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
@@ -39,20 +39,21 @@ async function handler(ctx) {
     const list = $('#entry_list div.item')
         .find('h2.title')
         .toArray()
-        .map((item) => {
-            item = $(item);
-            const a = item.find('a');
+        .map((item): DataItem => {
+            const $item = $(item);
+            const a = $item.find('a');
+            const dateString = $item.parent().find('.time').text().split('·', 1)[0].trim();
             return {
                 title: a.text(),
-                link: new URL(a.attr('href'), 'https://bgm.tv').href,
-                pubDate: timezone(parseDate(item.parent().find('small.time').text()), 0),
+                link: new URL(a.attr('href')!, 'https://bgm.tv').href,
+                pubDate: dateString ? timezone(parseDate(dateString), 8) : undefined,
             };
         });
 
     const items = await Promise.all(
         list.map((item) =>
-            cache.tryGet(item.link, async () => {
-                const res = await ofetch(item.link);
+            cache.tryGet(item.link!, async () => {
+                const res = await ofetch(item.link!);
                 const content = load(res);
 
                 item.description = content('#entry_content').html();

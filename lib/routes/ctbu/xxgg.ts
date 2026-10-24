@@ -3,6 +3,7 @@ import { load } from 'cheerio';
 import type { Route } from '@/types';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import timezone from '@/utils/timezone';
 
 const baseURL = 'https://www.ctbu.edu.cn/index/xxgg.htm';
 
@@ -36,12 +37,12 @@ async function handler() {
     const items = $('li.clearfix')
         .toArray()
         .map((item) => {
-            item = $(item);
+            const $item = $(item);
             return {
-                title: item.find('a').attr('title'),
-                description: item.find('p').text(),
-                pubDate: parseDate(item.find('h6').text() + '-' + item.find('em').text(), 'YYYY-MM-DD'),
-                link: item.find('a').attr('href'),
+                title: $item.find('a').attr('title')!,
+                description: $item.find('p').text(),
+                pubDate: timezone(parseDate($item.find('h6').text() + '-' + $item.find('em').text(), 'YYYY.MM-DD'), 8),
+                link: $item.find('a').attr('href'),
             };
         });
     return {

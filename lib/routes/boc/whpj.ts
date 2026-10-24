@@ -2,6 +2,8 @@ import { load } from 'cheerio';
 
 import type { Route } from '@/types';
 import got from '@/utils/got';
+import { parseDate } from '@/utils/parse-date';
+import timezone from '@/utils/timezone';
 
 export const route: Route = {
     path: '/whpj/:format?',
@@ -72,21 +74,21 @@ async function handler(ctx) {
         .slice(2)
         .toArray()
         .map((e) => {
-            e = $(e);
-            const zh_name = e.find('td:nth-child(1)').text();
+            const $e = $(e);
+            const zh_name = $e.find('td:nth-child(1)').text();
             const en_name = en_names[zh_name] || '';
             const name = `${zh_name} ${en_name}`;
-            const date = e.find('td:nth-child(7)').text();
+            const date = $e.find('td:nth-child(7)').text();
 
-            const xhmr = `现汇买入价：${e.find('td:nth-child(2)').text()}`;
+            const xhmr = `现汇买入价：${$e.find('td:nth-child(2)').text()}`;
 
-            const xcmr = `现钞买入价：${e.find('td:nth-child(3)').text()}`;
+            const xcmr = `现钞买入价：${$e.find('td:nth-child(3)').text()}`;
 
-            const xhmc = `现汇卖出价：${e.find('td:nth-child(4)').text()}`;
+            const xhmc = `现汇卖出价：${$e.find('td:nth-child(4)').text()}`;
 
-            const xcmc = `现钞卖出价：${e.find('td:nth-child(5)').text()}`;
+            const xcmc = `现钞卖出价：${$e.find('td:nth-child(5)').text()}`;
 
-            const zs = `中行折算价：${e.find('td:nth-child(6)').text()}`;
+            const zs = `中行折算价：${$e.find('td:nth-child(6)').text()}`;
 
             const content = `${xhmr} ${xcmr} ${xhmc} ${xcmc} ${zs}`;
 
@@ -115,8 +117,9 @@ async function handler(ctx) {
 
             const info = {
                 title: formatTitle(),
+                link,
                 description: content.replaceAll(/\s/g, '<br>'),
-                pubDate: new Date(date).toUTCString(),
+                pubDate: timezone(parseDate(date, 'YYYY/MM/DD HH:mm:ss'), 8),
                 guid: `${name} ${content}`,
             };
             return info;

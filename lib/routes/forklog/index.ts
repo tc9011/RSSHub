@@ -27,16 +27,16 @@ async function handler() {
     });
     const items = JSON.parse(response.body).map((post) => {
         const link = post.link;
-        const title = (post.title || post.text?.post_title)?.trim();
+        const title = post.title || post.text?.post_title;
         const description = post.text?.post_content.trim();
         const author = post.author_name.trim();
         let pubDate;
         if (post.text?.post_date_gmt) {
-            pubDate = timezone(parseDate(post.text.post_date_gmt), +1);
+            pubDate = parseDate(`${post.text.post_date_gmt}Z`);
         } else if (post.text?.post_date) {
-            pubDate = timezone(parseDate(post.text.post_date), +4);
+            pubDate = timezone(parseDate(post.text.post_date), 4);
         } else if (post.date) {
-            pubDate = timezone(parseDate(post.date, 'DD.MM.YYYY HH:mm'), +4);
+            pubDate = timezone(parseDate(post.date, 'DD.MM.YYYY HH:mm'), 4);
         }
         const imageSrc = post.image || post.image_mobile;
         const views = post.views;
@@ -46,19 +46,17 @@ async function handler() {
             author,
             pubDate,
             description,
-            category: ['news', 'crypto', 'finance'],
-            ...(imageSrc
-                ? {
-                      media: {
-                          thumbnail: {
-                              url: imageSrc,
-                              width: 250,
-                              height: 250,
-                          },
-                      },
-                  }
-                : {}),
-            extra: {
+            category: post.category?.map((category) => category.name),
+            ...(imageSrc && {
+                media: {
+                    thumbnail: {
+                        url: imageSrc,
+                        width: 250,
+                        height: 250,
+                    },
+                },
+            }),
+            _extra: {
                 views,
             },
         };

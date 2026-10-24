@@ -1,8 +1,10 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
+import { parseDateInTimezone } from '@/utils/parse-date-in-timezone';
 
 export const route: Route = {
     path: '/zhongchou/:category?/:sort?/:status?',
@@ -29,13 +31,13 @@ export const route: Route = {
 | -------- | ------ |
 | wishes   | others |
 
-  排序
+排序
 
 | 最新上线  | 金额最高   | 评论最多     |
 | --------- | ---------- | ------------ |
-| top_time | top_money | top_comment |
+| top\\_time | top\\_money | top\\_comment |
 
-  状态
+状态
 
 | 全部 | 创意 | 预热    | 众筹中 | 众筹成功 |
 | ---- | ---- | ------- | ------ | -------- |
@@ -64,18 +66,19 @@ async function handler(ctx) {
     const list = $('.pro_title')
         .slice(0, 12)
         .toArray()
-        .map((item) => {
-            item = $(item).parent();
+        .map((item): DataItem => {
+            const $item = $(item).parent();
 
             return {
-                title: item.text(),
-                link: item.attr('href'),
+                title: $item.text(),
+                link: $item.attr('href'),
             };
         });
 
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
+    const items = await pMap(
+        list,
+        async (item) => {
+            const details = await cache.tryGet(`${item.link}:details`, async () => {
                 const detailResponse = await got({
                     method: 'get',
                     url: item.link,
@@ -84,14 +87,17 @@ async function handler(ctx) {
 
                 const startTime = detailResponse.data.match(/realtime_sync\.pro_time\('(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', '\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}'\);/);
 
-                item.pubDate = startTime === null ? Date.parse(content('.start-time h3').text() || content('h3[start_time]').attr('start_time')) : Date.parse(startTime[1]);
+                const date = startTime?.[1] || content('.start-time h3').text() || content('h3[start_time]').attr('start_time');
+                const pubDate = date ? parseDateInTimezone(date, 8) : undefined;
 
-                item.author = content('span[data-nickname]').text();
-                item.description = `<img src="${content('#big_logo').attr('src')}"><br>` + content('.center-top').html() + content('#my_back_info').html() + content('#cont_match_htmlstr').html();
+                const author = content('span[data-nickname]').text();
+                const description = `<img src="${content('#big_logo').attr('src')}"><br>` + content('.center-top').html() + content('#my_back_info').html() + content('#cont_match_htmlstr').html();
 
-                return item;
-            })
-        )
+                return { description, pubDate, author };
+            });
+            return { ...item, ...details };
+        },
+        { concurrency: 3 }
     );
 
     return {

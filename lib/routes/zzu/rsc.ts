@@ -2,6 +2,8 @@ import { load } from 'cheerio';
 
 import type { Route } from '@/types';
 import got from '@/utils/got';
+import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 export const route: Route = {
     path: '/rsc/:type',
@@ -21,13 +23,29 @@ export const route: Route = {
             source: ['www5.zzu.edu.cn/rsc/'],
         },
     ],
-    name: '郑大人事部',
+    name: '人事部',
     maintainers: ['amandus1990'],
     handler,
     description: `| 人事要闻 | 通知公告 | 招聘公告 |
 | -------- | -------- | -------- |
 | rsyw     | tzgg     | zpxx     |`,
 };
+
+function parsePublishedDate(value?: string) {
+    if (!value) {
+        return;
+    }
+    const match = value.match(/^\s*(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:\s|T|$)/);
+    if (!match) {
+        return;
+    }
+    const calendarDate = `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
+    if (!Number.isFinite(parseDate(calendarDate, 'YYYY-MM-DD', true).getTime())) {
+        return;
+    }
+    const date = parseDate(Date.parse(value));
+    return Number.isFinite(date.getTime()) ? date : undefined;
+}
 
 async function handler(ctx) {
     const type = ctx.req.param('type');
@@ -46,21 +64,21 @@ async function handler(ctx) {
 
     // 解析页面内容并提取文章信息
     const list = $('.list_guild')
+        .slice(0, Math.max(14, getRouteLimit(ctx, 14)))
         .toArray()
-        .slice(0, 14)
         .map((element) => {
             const $element = $(element);
-            const $link = $element.find('a').first();
-            const link = new URL($link.attr('href'), typeDict[type][1]).href;
-            const title = $link.attr('title') || $link.text().trim();
+            const $link = $element.find('a');
+            const link = new URL($link.attr('href')!, typeDict[type][1]).href;
+            const title = $link.attr('title') || $link.text();
 
             // 获取发布时间
-            const pubDateText = $element.find('span').text().trim();
+            const pubDateText = $element.find('span').text();
 
             return {
                 title,
                 link,
-                pubDate: pubDateText || null,
+                pubDate: parsePublishedDate(pubDateText),
             };
         });
 

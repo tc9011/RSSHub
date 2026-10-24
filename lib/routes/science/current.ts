@@ -8,10 +8,9 @@
 // stm:            Science Translational Medicine
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
-import cache from '@/utils/cache';
+import type { Language, Route } from '@/types';
 import got from '@/utils/got';
-import puppeteer from '@/utils/puppeteer';
+import { getPlaywrightPage } from '@/utils/playwright';
 
 import { baseUrl, fetchDesc, getItem } from './utils';
 
@@ -46,8 +45,8 @@ export const route: Route = {
 |  signaling  |        Science Signaling       | [/science/current/signaling](https://rsshub.app/science/current/signaling)     |
 |     stm     | Science Translational Medicine | [/science/current/stm](https://rsshub.app/science/current/stm)                 |
 
-  -   Using route (\`/science/current/\` + "short name for a journal") to get current issue of a journal from AAAS.
-  -   Leaving it empty (\`/science/current\`) to get update from Science.`,
+- Using route (\`/science/current/\` + "short name for a journal") to get current issue of a journal from AAAS.
+- Leaving it empty (\`/science/current\`) to get update from Science.`,
 };
 
 async function handler(ctx) {
@@ -66,16 +65,20 @@ async function handler(ctx) {
         .toArray()
         .map((item) => getItem(item, $));
 
-    const browser = await puppeteer();
-    const items = await fetchDesc(list, browser, cache.tryGet);
-    await browser.close();
+    const { page, destroy } = await getPlaywrightPage('about:blank', { noGoto: true, closeTimeout: 0 });
+    let items;
+    try {
+        items = await fetchDesc(list, page);
+    } finally {
+        await destroy();
+    }
 
     return {
         title: `${pageTitleName} | Current Issue`,
         description: `Current Issue of ${pageTitleName}`,
         image: `${baseUrl}/apple-touch-icon.png`,
         link: pageURL,
-        language: 'en-US',
+        language: 'en-us' as const satisfies Language,
         item: items,
     };
 }

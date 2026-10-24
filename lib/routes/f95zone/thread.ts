@@ -1,4 +1,4 @@
-import { load } from 'cheerio';
+import { type CheerioAPI, load } from 'cheerio';
 
 import { config } from '@/config';
 import type { DataItem, Route } from '@/types';
@@ -13,7 +13,7 @@ export const route: Route = {
     maintainers: ['wsmbsbbz'],
     example: '/f95zone/thread/ubermation-collection-2026-01-19-uebermation-uebermation.231247',
     categories: ['game'],
-    description: `Track replies in a thread. Fetches the first page and the last page.
+    description: `Track replies on the first page of a thread.
 
 URL format: \`https://f95zone.to/threads/{thread}/\` → use \`{thread}\` as the parameter.
 
@@ -50,58 +50,47 @@ Note: If you want to track a specific post's content changes (e.g., first post w
         const threadLink = `${baseUrl}/threads/${thread}/`;
 
         const headers = {
-            referer: baseUrl,
-            ...(config.f95zone.cookie ? { cookie: config.f95zone.cookie } : {}),
+            ...(config.f95zone.cookie && { cookie: config.f95zone.cookie }),
         };
 
         const firstPageResponse = await ofetch(threadLink, { headers });
         const $firstPage = load(firstPageResponse);
-        const title = $firstPage('h1.p-title-value').text().trim();
-
-        const lastPageLink = $firstPage('ul.pageNav-main li.pageNav-page:last-child a').attr('href');
-        const totalPages = lastPageLink ? Number.parseInt(lastPageLink.match(/page-(\d+)/)?.[1] || '1', 10) : 1;
-
-        const extractPosts = ($: ReturnType<typeof load>): DataItem[] =>
-            $('article.message')
-                .toArray()
-                .flatMap((article) => {
-                    const $article = $(article);
-                    const postId = $article.attr('data-content')?.replace('post-', '');
-                    if (!postId) {
-                        return [];
-                    }
-
-                    const author = $article.find('.message-name a').text().trim();
-                    const postDate = $article.find('time.u-dt').attr('datetime');
-                    const content = $article.find('.bbWrapper').html() || '';
-                    const postLink = `${threadLink}post-${postId}`;
-
-                    // Get post number from the attribution list (e.g., "#717")
-                    const postNumber = $article.find('.message-attribution-opposite--list li:last-child a').text().trim().replace('#', '') || postId;
-
-                    return {
-                        title: `#${postNumber} by ${author}`,
-                        link: postLink,
-                        guid: postLink,
-                        description: processContent(content),
-                        pubDate: postDate ? parseDate(postDate) : undefined,
-                        author,
-                    };
-                });
-
-        // Extract posts from the first page
-        const allPosts: DataItem[] = [...extractPosts($firstPage)];
-
-        // Fetch the last page if there are multiple pages
-        if (totalPages > 1) {
-            const lastPageResponse = await ofetch(`${threadLink}page-${totalPages}`, { headers });
-            allPosts.push(...extractPosts(load(lastPageResponse)));
-        }
+        const title = $firstPage('h1.p-title-value').text();
 
         return {
             title: `[F95zone] ${title}`,
             link: threadLink,
-            item: allPosts,
+            item: extractPosts($firstPage, threadLink),
         };
     },
 };
+
+function extractPosts($: CheerioAPI, threadLink: string): DataItem[] {
+    return $('article.message')
+        .toArray()
+        .map((article) => {
+            const $article = $(article);
+            const postId = $article.attr('data-content')?.replace('post-', '');
+            if (!postId) {
+                return;
+            }
+
+            const author = $article.find('.message-name a').text();
+            const postDate = $article.find('time.u-dt').attr('datetime');
+            const content = $article.find('.bbWrapper').html() || '';
+            const postLink = `${threadLink}post-${postId}`;
+
+            // Get post number from the attribution list (e.g., "#717").
+            const postNumber = $article.find('.message-attribution-opposite--list li:last-child a').text().trim().replace('#', '') || postId;
+
+            return {
+                title: `#${postNumber} by ${author}`,
+                link: postLink,
+                guid: postLink,
+                description: processContent(content),
+                pubDate: postDate ? parseDate(postDate) : undefined,
+                author,
+            };
+        })
+        .filter((post) => post !== undefined);
+}

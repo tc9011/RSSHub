@@ -55,12 +55,29 @@ interface Creator {
     nc: number;
 }
 
+function getThumbnailUrl(thumbnail?: { src?: string; srcset?: string }): string {
+    let imageUrl = thumbnail?.src || '';
+    let largestSize = 0;
+    const candidates = thumbnail?.srcset?.split(',') || [];
+    for (const candidate of candidates) {
+        const [url, descriptor] = candidate.trim().split(/\s+/, 2);
+        const size = descriptor ? Number(descriptor.replace(/[wx]$/, '')) : 1;
+        if (!(url && Number.isFinite(size) && size > largestSize)) {
+            continue;
+        }
+
+        imageUrl = url;
+        largestSize = size;
+    }
+    return imageUrl;
+}
+
 export function processWork(work: Work): DataItem | null {
-    if (!work || typeof work !== 'object' || work.private === true) {
+    if (!work || work.private) {
         return null;
     }
 
-    const imageUrl = work.thumbnail_image_urls?.srcset?.split(',').pop()?.trim().split(' ')[0] || '';
+    const imageUrl = getThumbnailUrl(work.thumbnail_image_urls);
     const body = work.body || '';
 
     const audioUrl = work.genre === 'music' || work.genre === 'voice' ? work.preview_url : null;
@@ -85,7 +102,7 @@ const skillMap = {
 };
 
 export function processCreator(creator: Creator): DataItem | null {
-    if (!creator || typeof creator !== 'object') {
+    if (!creator) {
         return null;
     }
 
@@ -132,14 +149,14 @@ export async function getFollowingsItems(username: string, path: 'friend_works' 
         false
     );
 
-    if (!followings_data || typeof followings_data !== 'object') {
+    if (!followings_data) {
         throw new Error('Failed to fetch followings data');
     }
 
     if (path === 'following_creators') {
-        return followings_data[path].map((item) => processCreator(item)).filter(Boolean) as DataItem[];
+        return followings_data[path].map((item) => processCreator(item)).filter((item) => item !== null);
     }
-    return followings_data[path].map((item) => processWork(item)).filter(Boolean) as DataItem[];
+    return followings_data[path].map((item) => processWork(item)).filter((item) => item !== null);
 }
 
 const SkebWorkDescription = ({ imageUrl, body, audioUrl }: { imageUrl?: string; body: string; audioUrl?: string | null }) => (
@@ -153,7 +170,7 @@ const SkebWorkDescription = ({ imageUrl, body, audioUrl }: { imageUrl?: string; 
         {audioUrl ? (
             <>
                 <audio controls>
-                    <source src={audioUrl} type="audio/mp3" />
+                    <source src={audioUrl} type="audio/mpeg" />
                     Your browser does not support the audio element.
                 </audio>
                 <br />

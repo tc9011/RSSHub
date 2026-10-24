@@ -1,68 +1,44 @@
-import { load } from 'cheerio';
-import { raw } from 'hono/html';
-import { renderToString } from 'hono/jsx/dom/server';
-
 import type { Route } from '@/types';
-import cache from '@/utils/cache';
-import got from '@/utils/got';
+import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
 
 const rootUrl = 'https://www.chaincatcher.com';
 
 export const route: Route = {
     path: '/',
+    categories: ['new-media'],
+    example: '/chaincatcher',
     radar: [
         {
             source: ['chaincatcher.com/'],
             target: '',
         },
     ],
-    name: 'Unknown',
+    name: '首页',
     maintainers: ['TonyRL'],
     handler,
     url: 'chaincatcher.com/',
 };
 
 async function handler() {
-    const { data } = await got.post(`${rootUrl}/api/article/lists`, {
-        form: {
-            page: 1,
-            home: 1,
-        },
+    const response = await ofetch<{
+        result: number;
+        message: string;
+        data: { items: Array<{ title: string; url: string; content: string; releaseTimeStamp: number; keywords?: string }> };
+    }>('https://api.chaincatcher.com/v1/open-api/news-flash', {
+        responseType: 'json',
+        query: { page: 1, size: 20, lang: 'zh-CN' },
     });
-
-    const list = data.data.map((item) => ({
+    if (!response.result) {
+        throw new Error(`ChainCatcher API: ${response.message}`);
+    }
+    const items = response.data.items.map((item) => ({
         title: item.title,
-        description: item.description,
-        link: `${rootUrl}/article/${item.id}`,
-        pubDate: parseDate(item.add_time, 'X'),
-        categoryId: item.categoryid,
-        category: [...item.keywords.split(','), item.category_name],
+        link: item.url,
+        description: item.content,
+        pubDate: parseDate(item.releaseTimeStamp),
+        category: item.keywords?.split(',').filter(Boolean),
     }));
-
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
-                if (item.categoryId !== 3) {
-                    const { data: response } = await got(item.link);
-                    const $ = load(response);
-                    item.description = renderToString(
-                        <>
-                            {item.description ? (
-                                <>
-                                    <blockquote>{item.description}</blockquote>
-                                    <br />
-                                </>
-                            ) : null}
-                            {$('.article-container').html() ? raw($('.article-container').html() as string) : null}
-                        </>
-                    );
-                }
-
-                return item;
-            })
-        )
-    );
 
     return {
         title: '链捕手ChainCatcher — 专业的区块链技术研究与资讯平台-Chain Catcher',

@@ -1,5 +1,6 @@
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, Route } from '@/types';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import { API_HOST, CDN_HOST, HOST } from './constant';
 import { renderPost } from './templates/post';
@@ -7,7 +8,7 @@ import type { PostsResponse } from './types';
 import { customFetch, parseUserData } from './utils';
 
 export const route: Route = {
-    path: ['/timeline/:user'],
+    path: '/timeline/:user',
     categories: ['social-media'],
     example: '/cara/timeline/fengz',
     parameters: { user: 'username' },
@@ -24,7 +25,7 @@ export const route: Route = {
 
 async function handler(ctx): Promise<Data> {
     const user = ctx.req.param('user');
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 15;
+    const limit = getRouteLimit(ctx, 15);
     const userInfo = await parseUserData(user);
 
     const api = `${API_HOST}/posts/getAllByUser?slug=${userInfo.slug}&take=${limit}`;
@@ -41,7 +42,7 @@ async function handler(ctx): Promise<Data> {
             pubDate: parseDate(item.createdAt),
             link: `${HOST}/post/${item.id}`,
             description,
-        } as DataItem;
+        };
     });
 
     return {
