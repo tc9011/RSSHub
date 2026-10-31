@@ -1,6 +1,8 @@
+/* oxlint-disable unicorn/prefer-code-point */
 import CryptoJS from 'crypto-js';
 
 import { config } from '@/config';
+import type cacheModule from '@/utils/cache';
 import md5 from '@/utils/md5';
 import ofetch from '@/utils/ofetch';
 
@@ -203,7 +205,7 @@ const bvidTime = 1_589_990_400;
  * @param cache - 缓存 module。
  * @returns {Promise<MediaResult>} 番剧信息。
  */
-export const getBangumi = (id: string, cache): Promise<MediaResult> =>
+const getBangumi = (id: string, cache: typeof cacheModule): Promise<MediaResult> =>
     cache.tryGet(
         `bilibili:getBangumi:${id}`,
         async () => {
@@ -220,7 +222,7 @@ export const getBangumi = (id: string, cache): Promise<MediaResult> =>
         },
         config.cache.routeExpire,
         false
-    ) as Promise<MediaResult>;
+    );
 
 /**
  * 获取番剧分集信息并缓存
@@ -229,7 +231,7 @@ export const getBangumi = (id: string, cache): Promise<MediaResult> =>
  * @param cache - 缓存 module。
  * @returns {Promise<SeasonResult>} 番剧分集信息。
  */
-export const getBangumiItems = (id: string, cache): Promise<SeasonResult> =>
+const getBangumiItems = (id: string, cache: typeof cacheModule): Promise<SeasonResult> =>
     cache.tryGet(
         `bilibili:getBangumiItems:${id}`,
         async () => {
@@ -242,7 +244,7 @@ export const getBangumiItems = (id: string, cache): Promise<SeasonResult> =>
         },
         config.cache.routeExpire,
         false
-    ) as Promise<SeasonResult>;
+    );
 
 /**
  * Render the UGC (user-generated content) description.
@@ -257,7 +259,7 @@ export const getBangumiItems = (id: string, cache): Promise<SeasonResult> =>
  *
  * @see https://player.bilibili.com/ for details.
  */
-export const renderUGCDescription = (embed: boolean, img: string, description: string, aid?: string, cid?: string, bvid?: string): string => {
+const renderUGCDescription = (embed: boolean, img: string, description: string, aid?: string, cid?: string, bvid?: string): string => {
     // docs: https://player.bilibili.com/
     const rendered = renderDescription({
         embed,
@@ -283,7 +285,7 @@ export const renderUGCDescription = (embed: boolean, img: string, description: s
  *
  * @see https://player.bilibili.com/ for details.
  */
-export const renderOGVDescription = (embed: boolean, img: string, description: string, seasonId?: string, episodeId?: string): string => {
+const renderOGVDescription = (embed: boolean, img: string, description: string, seasonId?: string, episodeId?: string): string => {
     // docs: https://player.bilibili.com/
     const rendered = renderDescription({
         embed,

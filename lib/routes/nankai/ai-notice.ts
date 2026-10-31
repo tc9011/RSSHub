@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
@@ -32,14 +33,14 @@ export const route: Route = {
 | zxdt     | xygg     | xszc     | kyxx     | bksjx      | dtyd     | yjszs      | yjsjx      | jyxx     | gjjl     |`,
     url: 'ai.nankai.edu.cn',
     handler: async (ctx) => {
-        // 从 URL 参数中获取通知分类
+        // Read the notice category from the route path.
         const { type = 'zxdt' } = ctx.req.param();
         const baseUrl = 'https://ai.nankai.edu.cn';
         const { data: response } = await got(`${baseUrl}/xwzx/${type}.htm`);
         const $ = load(response);
 
-        // 获取分类名称映射
-        const categoryMap: Record<string, string> = {
+        // Map the category identifier to its name.
+        const categoryMap = {
             zxdt: '最新动态',
             xygg: '学院公告',
             xszc: '学生之窗',
@@ -54,11 +55,10 @@ export const route: Route = {
 
         const categoryName = categoryMap[type] || '最新动态';
 
-        // 解析新闻列表
+        // Parse the notice list.
         const list = $('.gage-list-news table tr')
-            .slice(1) // 跳过表头
             .toArray()
-            .map((tr) => {
+            .map((tr): DataItem | null => {
                 const $tr = $(tr);
                 const cells = $tr.find('td');
 
@@ -70,73 +70,54 @@ export const route: Route = {
                 const sourceCell = cells.eq(1);
                 const dateCell = cells.eq(2);
 
-                // 提取标题和链接
+                // Extract the title and link.
                 const $titleLink = titleCell.find('a');
-                const title = $titleLink.text().trim();
-                let link = $titleLink.attr('href') || '';
+                const title = $titleLink.attr('title') || $titleLink.text();
+                const href = $titleLink.attr('href');
+                const link = href ? new URL(href, `${baseUrl}/xwzx/${type}.htm`).href : undefined;
 
-                // 处理相对链接
-                link = link && !link.startsWith('http') ? `${baseUrl}/${link}` : link;
-
-                // 提取日期
+                // Extract the publication date.
                 const dateStr = dateCell.text().trim();
-                const pubDate = dateStr.includes('/') ? timezone(parseDate(dateStr, 'YYYY/MM/DD'), +8) : timezone(parseDate(dateStr), +8);
+                const pubDate = dateStr ? (dateStr.includes('/') ? timezone(parseDate(dateStr, 'YYYY/MM/DD'), 8) : timezone(parseDate(dateStr), 8)) : undefined;
 
-                // 提取来源
-                const source = sourceCell.text().trim();
+                // Extract the publisher.
+                const source = sourceCell.text();
 
                 return {
                     title,
                     link,
                     pubDate,
                     author: source || '人工智能学院',
-                    description: '', // 初始化description属性
+                    description: '', // Initialize the description.
                 };
             })
-            .filter((item) => item && item.link && item.title); // 过滤掉空项目和没有链接的项目
+            .filter((item): item is DataItem => Boolean(item?.link && item.title)); // Discard entries without a link.
 
-        // 获取每篇文章的详细内容
-        const items = await Promise.all(
-            list.map((item) =>
-                item
-                    ? cache.tryGet(item.link, async () => {
-                          try {
-                              const { data: response } = await got(item.link);
-                              const $ = load(response);
+        // Fetch the article details.
+        const items = await pMap(
+            list,
+            async (item) => {
+                const detail = await cache.tryGet(`nankai:ai:article:v3:${item.link}`, async () => {
+                    const { data: response } = await got(item.link);
+                    const $ = load(response);
 
-                              const $description = $('.v_news_content');
-
-                              // 处理相对链接，转换为绝对链接
-                              if ($description.length > 0) {
-                                  // 处理图片
-                                  $description.find('img').each((i, el) => {
-                                      const $el = $(el);
-                                      let src = $el.attr('src');
-
-                                      if (src && !src.startsWith('http')) {
-                                          src = `${baseUrl}${src}`;
-                                          $el.attr('src', src);
-                                      }
-                                  });
-                              }
-
-                              item.description = $description.html() || item.title;
-                          } catch {
-                              // 如果获取详细内容失败，返回基本信息
-                              item.description = item.title + ' (获取详细内容失败)';
-                          }
-                          return item;
-                      })
-                    : null
-            )
+                    const $description = $('.v_news_content').length ? $('.v_news_content') : $('#txt');
+                    if (!$description.length) {
+                        throw new Error(`Could not find the AI notice content: ${item.link}`);
+                    }
+                    return { description: $description.html() };
+                });
+                return { ...item, ...detail };
+            },
+            { concurrency: 3 }
         );
 
         return {
-            // 源标题
+            // Feed title.
             title: `南开大学人工智能学院-${categoryName}`,
-            // 源链接
+            // Feed link.
             link: `${baseUrl}/xwzx/${type}.htm`,
-            // 源文章
+            // Feed items.
             item: items,
         };
     },

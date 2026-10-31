@@ -1,9 +1,11 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import timezone from '@/utils/timezone';
 
 const rootUrl = 'http://cec.hrbeu.edu.cn';
 
@@ -31,44 +33,34 @@ export const route: Route = {
     description: `汉语拼音和中文不对应，猜测后三个为：教务工作、科研成果、学生工作的拼音。
 
 | 新闻动态 | 通知公告 | 综合办公 | 教务动态 | 科研动态 | 学工动态 |
-| :------: | :------: |:------: | :------: | :------: | :------: |
-|   xwdt   |   tzgg   |  zhbg   |   jxgz   |   kycg   |   xsgz   |`,
+| :------: | :------: | :------: | :------: | :------: | :------: |
+|   xwdt   |   tzgg   |   zhbg   |   jxgz   |   kycg   |   xsgz   |`,
 };
 
 async function handler(ctx) {
     const id = ctx.req.param('id');
-    const response = await got(`${rootUrl}/${id}/list.htm`, {
-        headers: {
-            Referer: rootUrl,
-        },
-    });
+    const response = await got(`${rootUrl}/${id}/list.htm`);
 
     const $ = load(response.data);
 
-    const bigTitle = $('div.column-news-box')
-        .find('h2.column-title')
-        .text()
-        .replaceAll(/[\s·]/g, '')
-        .trim();
+    const bigTitle = $('div.column-news-box').find('h2.column-title').text().replaceAll(/[\s·]/g, '');
 
     const list = $('a.column-news-item')
         .toArray()
-        .map((item) => {
-            let link = $(item).attr('href');
-            if (link && link.includes('page.htm')) {
-                link = `${rootUrl}${link}`;
-            }
+        .map((item): DataItem => {
+            const link = new URL($(item).attr('href')!, `${rootUrl}/${id}/list.htm`).href;
             return {
-                title: $(item).find('span.column-news-title').text().trim(),
-                pubDate: parseDate($(item).find('span.column-news-date').text()),
+                title: $(item).find('span.column-news-title').text(),
+                pubDate: $(item).find('span.column-news-date').text() ? timezone(parseDate($(item).find('span.column-news-date').text()), 8) : undefined,
                 link,
             };
         });
 
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
-                if (item.link.includes('page.htm')) {
+    const items = await pMap(
+        list,
+        (item) =>
+            cache.tryGet(item.link!, async () => {
+                if (item.link!.includes('page.htm')) {
                     const detailResponse = await got(item.link);
                     const content = load(detailResponse.data);
                     item.description = content('div.wp_articlecontent').html();
@@ -76,8 +68,8 @@ async function handler(ctx) {
                     item.description = '本文需跳转，请点击标题后阅读';
                 }
                 return item;
-            })
-        )
+            }),
+        { concurrency: 3 }
     );
 
     return {

@@ -1,13 +1,17 @@
 import { load } from 'cheerio';
 import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
+import pMap from 'p-map';
 
 import { config } from '@/config';
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
+
+class RestrictedThreadError extends Error {}
 
 export const route: Route = {
     path: '/digest/:tid',
@@ -25,7 +29,7 @@ export const route: Route = {
     name: '论坛摘要',
     maintainers: ['shinemoon'],
     handler,
-    description: `版面网址如果为 \`https://stage1st.com/2b/forum-6-1.html\` 那么论坛 id 就是 \`forum-6-1\`。`,
+    description: '版面网址如果为 `https://stage1st.com/2b/forum-6-1.html` 那么论坛 id 就是 `forum-6-1`。',
 };
 
 async function handler(ctx) {
@@ -41,27 +45,36 @@ async function handler(ctx) {
     const title = $('head title').text().replace(/-.*/, '');
     const list = $('#threadlisttableid tbody[id^="normalthread_"] tr');
     const count = list
-        .slice(0, ctx.req.query('limit') ? Number(ctx.req.query('limit')) : 20)
+        .slice(0, getRouteLimit(ctx, 20))
         .toArray()
-        .map((each) => {
-            each = $(each);
-            const floor = each.find('th.new a.s.xst').text();
-            const floorUrl = each.find('th.new a.s.xst').attr('href');
+        .map((each): DataItem => {
+            const $each = $(each);
+            const floor = $each.find('th.new a.s.xst').text();
+            const floorUrl = $each.find('th.new a.s.xst').attr('href');
             return {
                 title: `${title}:${floor}`,
-                link: new URL(floorUrl, `${host}/2b/`).href,
-                author: each.find('td.by cite').text(),
-                pubDate: timezone(parseDate(each.find('td.by em').first().text()), +8),
+                link: new URL(floorUrl!, `${host}/2b/`).href,
+                author: $each.find('td.by cite').first().text(),
+                pubDate: timezone(parseDate($each.find('td.by em').first().text()), 8),
             };
         });
 
-    const resultItems = await Promise.all(
-        count.map((i) =>
-            cache.tryGet(i.link, async () => {
-                i.description = await fetchContent(i.link);
-                return i;
-            })
-        )
+    const resultItems = await pMap(
+        count,
+        async (i) => {
+            try {
+                return await cache.tryGet(i.link!, async () => {
+                    i.description = await fetchContent(i.link);
+                    return i;
+                });
+            } catch (error) {
+                if (error instanceof RestrictedThreadError) {
+                    return i;
+                }
+                throw error;
+            }
+        },
+        { concurrency: 3 }
     );
 
     return {
@@ -81,36 +94,44 @@ async function fetchContent(url) {
         },
     });
     const subind = load(subres.data);
+    if (/^抱歉，本帖要求阅读权限高于 \d+ 才能浏览$/.test(subind('#messagetext').text().trim())) {
+        throw new RestrictedThreadError('This thread requires a higher reading permission level');
+    }
+    if (!subind('#postlist td[id*="postmessage_"]').length) {
+        throw new Error('Stage1st thread posts are missing');
+    }
     const stubS = subind('<div>');
     subind('#postlist')
         .find('div[id*="post_"] ')
-        .each(function () {
-            if (subind(this).find('td[id*="postmessage_"]').length > 0) {
-                const section = renderToString(
-                    <DigestSection
-                        author={{
-                            link: subind(this).find('.pls.favatar div.authi a').attr('href'),
-                            name: subind(this).find('.pls.favatar div.authi').text(),
-                            postinfo: subind(this).find('div.authi em[id*=authorposton]').text(),
-                        }}
-                        msg={subind(this).find('td[id*="postmessage_"]').html()}
-                        host={config.saraba1st.host}
-                    />
-                );
-                stubS.append(section);
+        .each((_, el) => {
+            if (!subind(el).find('td[id*="postmessage_"]').length) {
+                return;
             }
+            const section = renderToString(
+                <DigestSection
+                    author={{
+                        link: subind(el).find('.pls.favatar div.authi a').attr('href'),
+                        name: subind(el).find('.pls.favatar div.authi').text(),
+                        postinfo: subind(el).find('div.authi em[id*=authorposton]').text(),
+                    }}
+                    msg={subind(el).find('td[id*="postmessage_"]').html() ?? undefined}
+                    host={config.saraba1st.host!}
+                />
+            );
+            stubS.append(section);
         });
 
-    stubS.find('img').each(function () {
-        const img = subind(this);
+    stubS.find('img').each((_, el) => {
+        const img = subind(el);
         const file = img.attr('file');
-        if (file) {
-            img.attr('src', file);
-            img.removeAttr('zoomfile');
-            img.removeAttr('file');
-            img.removeAttr('onmouseover');
-            img.removeAttr('onclick');
+        if (!file) {
+            return;
         }
+
+        img.attr('src', file);
+        img.removeAttr('zoomfile');
+        img.removeAttr('file');
+        img.removeAttr('onmouseover');
     });
 
     return stubS.html();

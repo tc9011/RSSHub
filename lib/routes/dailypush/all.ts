@@ -1,9 +1,9 @@
 import { load } from 'cheerio';
 
 import type { Route } from '@/types';
-import ofetch from '@/utils/ofetch';
+import { getPlaywrightPage } from '@/utils/playwright';
 
-import { BASE_URL, enhanceItemsWithSummaries, parseArticles } from './utils';
+import { BASE_URL, enhanceItemsWithSummaries, fetchPageHtml, parseArticles } from './utils';
 
 export const route: Route = {
     path: '/:sort?',
@@ -21,16 +21,21 @@ export const route: Route = {
     },
     features: {
         requireConfig: false,
-        requirePuppeteer: false,
-        antiCrawler: false,
+        requirePuppeteer: true,
+        antiCrawler: true,
         supportBT: false,
         supportPodcast: false,
         supportScihub: false,
     },
+    // Radar's client preserves legacy array tails when it merges remote sources.
     radar: [
         {
-            source: ['dailypush.dev/', 'dailypush.dev/latest'],
+            source: ['dailypush.dev/', 'dailypush.dev/', 'dailypush.dev/'],
             target: '/',
+        },
+        {
+            source: ['dailypush.dev/latest', 'dailypush.dev/latest', 'dailypush.dev/latest'],
+            target: '/latest',
         },
     ],
     name: 'All',
@@ -42,17 +47,23 @@ async function handler(ctx) {
     const { sort = '' } = ctx.req.param();
     const url = sort ? `${BASE_URL}/${sort}` : BASE_URL;
 
-    const response = await ofetch(url);
-    const $ = load(response);
+    const { context, destroy } = await getPlaywrightPage(url, { noGoto: true, closeTimeout: 0 });
+    try {
+        const html = await fetchPageHtml(context, url, 'article');
+        const $ = load(html);
+        const list = parseArticles($, BASE_URL);
+        const orderedList = list;
+        const candidates = orderedList;
+        const items = await enhanceItemsWithSummaries(context, candidates);
 
-    const list = parseArticles($, BASE_URL);
-    const items = await enhanceItemsWithSummaries(list);
+        const pageTitle = $('title').text() || 'DailyPush - All';
 
-    const pageTitle = $('title').text() || 'DailyPush - All';
-
-    return {
-        title: pageTitle,
-        link: url,
-        item: items,
-    };
+        return {
+            title: pageTitle,
+            link: url,
+            item: items,
+        };
+    } finally {
+        await destroy();
+    }
 }

@@ -1,8 +1,7 @@
 import type { Route } from '@/types';
-import cache from '@/utils/cache';
-import got from '@/utils/got';
+import { getRouteLimit } from '@/utils/route-limit';
 
-import { ProcessItems, rootUrl } from './utils';
+import { getChannel, processItems, rootUrl } from './utils';
 
 export const route: Route = {
     path: '/news/:id?',
@@ -20,7 +19,7 @@ export const route: Route = {
     radar: [
         {
             source: ['yicai.com/news/:id', 'yicai.com/news'],
-            target: '/news/:id',
+            target: '/news/:id?',
         },
     ],
     name: '新闻',
@@ -42,7 +41,7 @@ export const route: Route = {
 | books                    | 阅读周刊   |
 | loushi                   | 地产       |
 | automobile               | 汽车       |
-| china_financial_herald | 对话陆家嘴 |
+| china\\_financial\\_herald | 对话陆家嘴 |
 | fashion                  | 时尚       |
 | ad                       | 商业资讯   |
 | info                     | 资讯       |
@@ -58,31 +57,13 @@ export const route: Route = {
 async function handler(ctx) {
     const id = ctx.req.param('id') ?? '';
 
-    let channel;
-    if (id) {
-        const navUrl = `${rootUrl}/api/ajax/getnavs`;
+    const limit = getRouteLimit(ctx, 30);
+    const channel = id ? await getChannel('news', id, limit) : undefined;
 
-        const response = await got({
-            method: 'get',
-            url: navUrl,
-        });
+    const currentUrl = `${rootUrl}/news${id ? `/${channel!.slug}` : ''}`;
+    const apiUrl = `${rootUrl}/api/ajax/${id ? `getlistbycid?cid=${channel!.id}` : 'getjuhelist?action=news'}&page=1&pagesize=${limit}`;
 
-        for (const c of response.data.header.news) {
-            if (c.EnglishName === id || c.ChannelID === id) {
-                channel = {
-                    id: c.ChannelID,
-                    name: c.ChannelName,
-                    slug: c.EnglishName,
-                };
-                break;
-            }
-        }
-    }
-
-    const currentUrl = `${rootUrl}/news${id ? `/${channel.slug}` : ''}`;
-    const apiUrl = `${rootUrl}/api/ajax/${id ? `getlistbycid?cid=${channel.id}` : 'getjuhelist?action=news'}&page=1&pagesize=${ctx.req.query('limit') ?? 30}`;
-
-    const items = await ProcessItems(apiUrl, cache.tryGet);
+    const items = await processItems(apiUrl, channel?.items);
 
     return {
         title: `第一财经 - ${channel?.name ?? '新闻'}`,

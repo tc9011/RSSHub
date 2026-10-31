@@ -8,17 +8,30 @@ import { parseDate } from '@/utils/parse-date';
 
 const host = 'https://dribbble.com';
 
+async function fetchHtml(url: string): Promise<string> {
+    const response = await ofetch.raw<string, 'text'>(url, { responseType: 'text' });
+    const html = response._data ?? '';
+    if (response.status === 202 && html.includes('awsWafCookieDomainList')) {
+        throw new Error('Dribbble returned an AWS WAF challenge (HTTP 202). Anonymous source access is currently blocked.');
+    }
+    return html;
+}
+
 // Refactored function to load a link asynchronously
 async function loadContent(link) {
     // Make a GET request to the specified  and retrieve the response
-    const response = await ofetch(link);
+    const response = await fetchHtml(link);
     const $ = load(response);
 
     const shotData = JSON.parse(
         $('script')
             .text()
-            .match(/shotData:\s({.+?}),\n/)?.[1] ?? '{}'
+            .match(/shotData:\s(\{.+?\}),\n/)?.[1] ?? '{}'
     );
+
+    if (!shotData.shotUser) {
+        throw new Error('Dribbble did not provide shot metadata. The source page may be blocked or its format may have changed.');
+    }
 
     // Join multiple shots together by selecting elements with class 'media-shot' or 'main-shot' or 'block-media-wrapper'
     // 'block-media-wrapper' is a new class of dribbble
@@ -31,37 +44,42 @@ async function loadContent(link) {
             object.find('span.cropped-indicator, button').remove();
 
             object.find('video').each((_, video) => {
-                video = $(video);
+                const $video = $(video);
+                const dataSrc = $video.attr('data-src');
 
-                if (!video.attr('src') && video.data('src')) {
-                    video.attr('src', video.data('src'));
-                    video.removeAttr('data-src');
-                    video.removeAttr('data-video-small');
-                    video.removeAttr('data-video-medium');
-                    video.removeAttr('data-video-large');
+                if ($video.attr('src') || !dataSrc) {
+                    return;
                 }
+
+                $video.attr('src', dataSrc);
+                $video.removeAttr('data-src');
+                $video.removeAttr('data-video-small');
+                $video.removeAttr('data-video-medium');
+                $video.removeAttr('data-video-large');
             });
             object.find('img').each((_, img) => {
-                img = $(img);
+                const $img = $(img);
+                const animatedUrl = $img.attr('data-animated-url');
+                const dataSrc = $img.attr('data-src');
 
-                if (img.data('animated-url')) {
-                    img.attr('src', img.data('animated-url'));
-                    img.removeAttr('data-animated-url');
-                    img.removeAttr('srcset');
+                if (animatedUrl) {
+                    $img.attr('src', animatedUrl);
+                    $img.removeAttr('data-animated-url');
+                    $img.removeAttr('srcset');
                 }
 
-                if (!img.attr('src') && img.data('src')) {
-                    img.attr('src', img.data('src').split('?')[0]);
-                    img.removeAttr('data-src');
+                if (!$img.attr('src') && dataSrc) {
+                    $img.attr('src', dataSrc.split('?', 1)[0]);
+                    $img.removeAttr('data-src');
                 }
 
-                img.attr('src', img.attr('src').split('?')[0]);
-                img.removeAttr('srcset');
-                img.removeAttr('data-srcset');
+                $img.attr('src', $img.attr('src')!.split('?', 1)[0]);
+                $img.removeAttr('srcset');
+                $img.removeAttr('data-srcset');
             });
             object.find('a').each((_, a) => {
-                a = $(a);
-                a.removeAttr('data-pswp-srcset');
+                const $a = $(a);
+                $a.removeAttr('data-pswp-srcset');
             });
 
             return object.html();
@@ -74,7 +92,7 @@ async function loadContent(link) {
     const description = renderShotDescription({
         shotMedia,
         shotData,
-        descriptionHtml: shotDescription.length ? shotDescription.html() : undefined,
+        descriptionHtml: shotDescription.length ? (shotDescription.html() ?? undefined) : undefined,
     });
 
     // Get the text content of the element with class 'shot-date' and convert it to a UTC string representation of a date
@@ -157,7 +175,7 @@ function ProcessFeed(list) {
  */
 const getData = async (url, title) => {
     // Make a GET request to the specified URL
-    const response = await ofetch(url);
+    const response = await fetchHtml(url);
 
     // Load the response data into a cheerio object
     const $ = load(response);

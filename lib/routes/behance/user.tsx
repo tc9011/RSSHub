@@ -38,20 +38,18 @@ export const route: Route = {
     name: 'User Works',
     maintainers: ['MisteryMonster'],
     handler,
-    description: `Behance user's profile URL, like [https://www.behance.net/mishapetrick](https://www.behance.net/mishapetrick) the username will be \`mishapetrick\`。`,
+    description: `Behance user's profile URL, like <https://www.behance.net/mishapetrick> the username will be \`mishapetrick\`。`,
 };
 
-const getUserProfile = async (nodes, user) =>
-    (await cache.tryGet(`behance:profile:${user}`, () => {
-        const profile = nodes.flatMap((item) => item.owners).find((owner) => owner.username === user);
-
-        return Promise.resolve({
+const getUserProfile = (profile, user) =>
+    cache.tryGet<{ displayName: string; id: string; link: string; image?: string }>(`behance:profile:${user}`, () =>
+        Promise.resolve({
             displayName: profile.displayName,
             id: profile.id,
             link: profile.url,
-            image: profile.images.size_50.url.replace('/user/50/', '/user/source/'),
-        });
-    })) as { displayName: string; id: string; link: string; image: string };
+            image: profile.images?.size_50?.url?.replace('/user/50/', '/user/source/'),
+        })
+    );
 
 const renderDescription = (description, modules) =>
     renderToString(
@@ -92,8 +90,8 @@ const renderDescription = (description, modules) =>
                         </>
                     );
                 }
-                if (module.__typename === 'EmbedModule') {
-                    const embed = module.fluidEmbed || module.originalEmbed;
+                if (module.__typename === 'EmbedModule' || module.__typename === 'VideoModule') {
+                    const embed = module.fluidEmbed || module.originalEmbed || module.embed;
                     return (
                         <>
                             {embed ? raw(embed) : null}
@@ -145,7 +143,7 @@ async function handler(ctx) {
         projectId: item.id,
     }));
 
-    const profile = await getUserProfile(nodes, user);
+    const profile = await getUserProfile(response.data.user, user);
 
     const items = await Promise.all(
         list.map((item) =>
@@ -164,7 +162,7 @@ async function handler(ctx) {
 
                 item.description = renderDescription(project.description, project.allModules);
                 item.category = [...new Set([...(item.category || []), ...(project.tags?.map((tag) => tag.title.toLowerCase()) || [])])];
-                item.pubDate = item.pubDate || (project.publishedOn ? parseDate(project.publishedOn, 'X') : undefined);
+                item.pubDate ||= project.publishedOn ? parseDate(project.publishedOn, 'X') : undefined;
 
                 return item;
             })

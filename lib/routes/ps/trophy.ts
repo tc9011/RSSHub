@@ -16,7 +16,7 @@ export const route: Route = {
         supportPodcast: false,
         supportScihub: false,
     },
-    name: 'PlayStation Network user trophy',
+    name: 'Network user trophy',
     maintainers: ['DIYgod'],
     handler,
 };
@@ -31,7 +31,7 @@ async function handler(ctx) {
 
     const $ = load(response.data);
     const list = $('.zebra tr')
-        .filter((element) => $(element).find('.progress-bar span').text() !== '0%')
+        .filter((_, element) => $(element).find('.progress-bar span').text() !== '0%')
         .toArray()
         .map((e) => $(e).find('.title').attr('href'))
         .slice(0, 3);
@@ -49,32 +49,33 @@ async function handler(ctx) {
 
             const list = $('.zebra tr.completed');
             const items = list.toArray().map((item) => {
-                item = $(item);
+                const $item = $(item);
                 const classMap = {
                     Platinum: '白金',
                     Gold: '金',
                     Silver: '银',
                     Bronze: '铜',
                 };
+                const image = $item.find('.trophy source').attr('srcset')?.split(',', 1)[0].trim().split(/\s+/, 1)[0] ?? $item.find('.trophy img').attr('src');
                 return {
-                    title: item.find('.title').text() + ' - ' + $('.page h3').eq(0).text().trim().replace(' Trophies', ''),
-                    description: `<img src="${item.find('.trophy source').attr('srcset').split(' ')[1]}"><br>${item
+                    title: $item.find('.title').text() + ' - ' + $('.page h3').eq(0).text().trim().replace(' Trophies', ''),
+                    description: `${image ? `<img src="${image}">` : ''}<br>${$item
                         .find('.title')
                         .parent()
                         .contents()
                         .filter((_, element) => element.nodeType === 3)
                         .text()
-                        .trim()}<br>等级：${classMap[item.find('td').eq(5).find('img').attr('title')]}<br>珍贵度：${item.find('.hover-show .typo-top').text()}`,
-                    link: 'https://psnprofiles.com' + item.find('.title').attr('href'),
+                        .trim()}<br>等级：${classMap[$item.find('td').eq(5).find('img').attr('title')!]}<br>珍贵度：${$item.find('.hover-show .typo-top').text()}`,
+                    link: 'https://psnprofiles.com' + $item.find('.title').attr('href'),
                     pubDate: new Date(
                         +new Date(
-                            item
+                            $item
                                 .find('.typo-top-date nobr')
                                 .contents()
                                 .filter((_, element) => element.nodeType === 3)
                                 .text() +
                                 ' ' +
-                                item.find('.typo-bottom-date').text()
+                                $item.find('.typo-bottom-date').text()
                         ) +
                             8 * 60 * 60 * 1000
                     ).toUTCString(),
@@ -84,11 +85,8 @@ async function handler(ctx) {
             return items;
         })
     );
-    let result = [];
-    for (const item of items) {
-        result = [...result, ...item];
-    }
-    result = result.toSorted((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+    let result: any[] = items.flat();
+    result = result.toSorted((a, b) => new Date(b.pubDate).getTime() - new Date(a.pubDate).getTime());
 
     return {
         title: `${id} 的 PSN 奖杯`,

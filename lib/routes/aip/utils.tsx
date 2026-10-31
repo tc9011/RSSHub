@@ -1,19 +1,5 @@
 import { renderToString } from 'hono/jsx/dom/server';
 
-const puppeteerGet = async (url, browser) => {
-    const page = await browser.newPage();
-    // await page.setExtraHTTPHeaders({ referer: host });
-    await page.setRequestInterception(true);
-    page.on('request', (request) => {
-        request.resourceType() === 'document' ? request.continue() : request.abort();
-    });
-    await page.goto(url, {
-        waitUntil: 'domcontentloaded',
-    });
-    const html = await page.evaluate(() => document.documentElement.innerHTML);
-    return html;
-};
-
 const renderDesc = (title, authors, doi, img) =>
     renderToString(
         <>
@@ -41,4 +27,4 @@ const renderDesc = (title, authors, doi, img) =>
         </>
     );
 
-export { puppeteerGet, renderDesc };
+export { renderDesc };

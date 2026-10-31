@@ -1,5 +1,6 @@
 import type { Route } from '@/types';
 import got from '@/utils/got';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import loadArticle from './article';
 import { SUB_NAME_PREFIX, SUB_URL } from './const';
@@ -32,12 +33,12 @@ export const route: Route = {
 };
 
 async function handler(ctx) {
-    const limit = Number.parseInt(ctx.req.query('limit')) || 20;
-    const { data: posts } = await got(`${SUB_URL}wp-json/wp/v2/posts?per_page=${limit}`);
+    const limit = getRouteLimit(ctx, 20);
+    const { data: posts }: { data: WPPost[] } = await got(`${SUB_URL}wp-json/wp/v2/posts?per_page=${limit}`);
 
     return {
         title: `${SUB_NAME_PREFIX} - Latest`,
         link: SUB_URL,
-        item: posts.map((post) => loadArticle(post as WPPost)),
+        item: posts.map((post) => loadArticle(post)),
     };
 }

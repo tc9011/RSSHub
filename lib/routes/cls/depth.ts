@@ -1,10 +1,11 @@
 import { load } from 'cheerio';
 
 import InvalidParameterError from '@/errors/types/invalid-parameter';
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
-import got from '@/utils/got';
+import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import { renderDepthDescription } from './templates/depth';
 import { getSearchParams, rootUrl } from './utils';
@@ -50,42 +51,41 @@ export const route: Route = {
 
 async function handler(ctx) {
     const category = ctx.req.param('category') ?? '1000';
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit')) : 50;
+    const limit = getRouteLimit(ctx, 50);
 
     const title = categories[category];
 
-    if (!title) {
+    if (!Object.hasOwn(categories, category)) {
         throw new InvalidParameterError('Bad category. See <a href="https://docs.rsshub.app/routes/finance#cai-lian-she-shen-du">docs</a>');
     }
 
     const apiUrl = `${rootUrl}/v3/depth/home/assembled/${category}`;
     const currentUrl = `${rootUrl}/depth?id=${category}`;
 
-    const response = await got({
-        method: 'get',
-        url: apiUrl,
-        searchParams: getSearchParams(),
+    const response = await ofetch(apiUrl, {
+        query: getSearchParams(),
     });
 
-    let items = [...response.data.data.top_article, ...response.data.data.depth_list].slice(0, limit).map((item) => ({
+    const articles = [...response.data.top_article, ...response.data.depth_list];
+    const ordered = ctx.req.query('sorted') === 'false' ? articles : articles.toSorted((a, b) => b.ctime - a.ctime);
+    let items = ordered.slice(0, limit).map((item): DataItem => ({
         title: item.title || item.brief,
         link: `${rootUrl}/detail/${item.id}`,
-        pubDate: parseDate(item.ctime * 1000),
+        pubDate: parseDate(item.ctime, 'X'),
         author: item.source,
+        category: item.article_tag?.map((tag) => tag.name),
+        image: item.image,
     }));
 
     items = await Promise.all(
         items.map((item) =>
-            cache.tryGet(item.link, async () => {
-                const detailResponse = await got({
-                    method: 'get',
-                    url: item.link,
-                });
+            cache.tryGet(item.link!, async () => {
+                const detailResponse = await ofetch(item.link!);
 
-                const content = load(detailResponse.data);
+                const content = load(detailResponse);
 
                 const nextData = JSON.parse(content('script#__NEXT_DATA__').text());
-                const articleDetail = nextData.props.initialState.detail.articleDetail;
+                const articleDetail = nextData.props.pageProps.articleDetail;
 
                 item.author = articleDetail.author?.name ?? item.author ?? '';
                 item.description = renderDepthDescription(articleDetail);

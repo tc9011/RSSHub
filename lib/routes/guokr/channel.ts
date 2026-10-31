@@ -18,10 +18,11 @@ export const route: Route = {
     parameters: { channel: '专栏类别' },
     radar: [
         {
-            source: ['guokr.com/:channel'],
+            source: ['guokr.com/scientific/channel/:channel'],
+            target: '/column/:channel',
         },
     ],
-    name: '果壳网专栏',
+    name: '专栏',
     maintainers: ['DHPO', 'hoilc'],
     handler,
     url: 'guokr.com/',
@@ -33,7 +34,7 @@ export const route: Route = {
 async function handler(ctx) {
     const channel = channelMap[ctx.req.param('channel')] ?? ctx.req.param('channel');
 
-    const { data: response } = await got(`https://www.guokr.com/apis/minisite/article.json`, {
+    const { data: response } = await got('https://www.guokr.com/apis/minisite/article.json', {
         searchParams: {
             retrieve_type: 'by_wx',
             channel_key: channel,

@@ -1,18 +1,21 @@
 import { load } from 'cheerio';
 import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
+import pMap from 'p-map';
 
 import { config } from '@/config';
 import ConfigNotFoundError from '@/errors/types/config-not-found';
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import { getSubPath } from '@/utils/common-utils';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { parseDateInTimezone } from '@/utils/parse-date-in-timezone';
+import { getRouteLimit } from '@/utils/route-limit';
 
 const toSize = (raw) => {
-    const matches = raw.match(/(\d+(\.\d+)?)(\w+)/);
+    const matches = raw.match(/(\d+(\.\d+)?)(\D\w*)/);
     return matches[3] === 'GB' ? matches[1] * 1024 : matches[1];
 };
 
@@ -67,13 +70,14 @@ export const route: Route = {
             description: 'Any path of list page on javbus',
         },
     },
+    description: String.raw`The item title receives a \[中字] prefix and the 中文字幕 category when the magnet selected as the enclosure has a subtitle badge. The existing magnet selection order is preserved.`,
     features: {
         nsfw: true,
     },
 };
 
 async function handler(ctx) {
-    const isWestern = /^\/western/.test(getSubPath(ctx));
+    const isWestern = getSubPath(ctx).startsWith('/western');
     const domain = ctx.req.query('domain') ?? 'javbus.com';
     const westernDomain = ctx.req.query('western_domain') ?? 'javbus.org';
 
@@ -84,7 +88,8 @@ async function handler(ctx) {
         throw new ConfigNotFoundError(`This RSS is disabled unless 'ALLOW_USER_SUPPLY_UNSAFE_DOMAIN' is set to 'true'.`);
     }
 
-    const currentUrl = `${isWestern ? westernUrl : rootUrl}${getSubPath(ctx)
+    const sourceRootUrl = isWestern ? westernUrl : rootUrl;
+    const currentUrl = `${sourceRootUrl}${getSubPath(ctx)
         .replace(/^\/western/, '')
         .replace(/\/home/, '')}`;
 
@@ -101,21 +106,25 @@ async function handler(ctx) {
     const $ = load(response.data);
 
     let items = $('.movie-box')
-        .slice(0, ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit')) : 50)
+        .slice(0, getRouteLimit(ctx, 50))
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem => {
+            const $item = $(item);
+            const date = $item.find('date').last().text();
 
             return {
-                link: item.attr('href'),
-                guid: item.find('date').first().text(),
-                pubDate: parseDate(item.find('date').last().text()),
+                link: $item.attr('href'),
+                guid: $item.find('date').first().text(),
+                // This is a calendar release date, represented at UTC midnight.
+                pubDate: date && Number.isFinite(parseDate(date, 'YYYY-MM-DD', true).getTime()) ? parseDateInTimezone(date, 0) : undefined,
+                title: '',
             };
         });
 
-    items = await Promise.all(
-        items.map((item) =>
-            cache.tryGet(item.link, async () => {
+    items = await pMap(
+        items,
+        async (item) => {
+            const cached = await cache.tryGet(item.link!, async () => {
                 const detailResponse = await got({
                     method: 'get',
                     url: item.link,
@@ -145,20 +154,21 @@ async function handler(ctx) {
                         .toArray()
                         .map((i) => {
                             const thumbSrc = content(i).attr('href');
-                            return thumbSrc.startsWith('http') ? thumbSrc : `${rootUrl}${thumbSrc}`;
+                            return thumbSrc!.startsWith('http') ? thumbSrc : `${sourceRootUrl}${thumbSrc}`;
                         }),
                 };
 
                 let magnets;
+                let selectedHasSubtitles = false;
 
                 // To fetch magnets.
 
                 try {
-                    const matches = detailResponse.data.match(/var gid = (\d+);[\S\s]*var uc = (\d+);[\S\s]*var img = '(.*)';/);
+                    const matches = detailResponse.data.match(/var gid = (\d+);[\s\S]*var uc = (\d+);[\s\S]*var img = '(.*)';/);
 
                     const magnetResponse = await got({
                         method: 'get',
-                        url: `${rootUrl}/ajax/uncledatoolsbyajax.php`,
+                        url: `${sourceRootUrl}/ajax/uncledatoolsbyajax.php`,
                         searchParams: {
                             gid: matches[1],
                             lang: 'zh',
@@ -176,28 +186,32 @@ async function handler(ctx) {
                     magnets = content('tr')
                         .toArray()
                         .map((tr) => {
-                            const td = content(tr).find('a[href]');
+                            const row = content(tr);
+                            const td = row.find('a[href]');
 
                             return {
                                 title: td.first().text().trim(),
-                                link: td.first().attr('href'),
+                                link: td.attr('href'),
                                 size: td.eq(1).text().trim(),
                                 date: td.last().text().trim(),
-                                score: content(tr).find('a').length ** 8 * toSize(td.eq(1).text().trim()),
+                                score: row.find('a').length ** 8 * toSize(td.eq(1).text().trim()),
+                                hasSubtitles: row.find('a[title="包含字幕的磁力連結"]').length > 0,
                             };
                         });
 
-                    if (magnets) {
-                        item.enclosure_url = magnets.toSorted((a, b) => b.score - a.score)[0].link;
+                    const selectedMagnet = magnets.toSorted((a, b) => b.score - a.score)[0];
+                    if (selectedMagnet) {
+                        item.enclosure_url = selectedMagnet.link;
                         item.enclosure_type = 'application/x-bittorrent';
+                        selectedHasSubtitles = selectedMagnet.hasSubtitles;
                     }
                 } catch {
                     // no-empty
                 }
 
                 item.author = cacheIn.author;
-                item.title = cacheIn.title;
-                item.category = cacheIn.category;
+                item.title = `${selectedHasSubtitles ? '[中字] ' : ''}${cacheIn.title}`;
+                item.category = selectedHasSubtitles ? [...new Set([...cacheIn.category, '中文字幕'])] : cacheIn.category;
                 item.description = renderDescription({
                     info: cacheIn.info,
                     thumbs: cacheIn.thumbs,
@@ -205,8 +219,10 @@ async function handler(ctx) {
                 });
 
                 return item;
-            })
-        )
+            });
+            return { ...cached, pubDate: item.pubDate };
+        },
+        { concurrency: 3 }
     );
 
     const title = $('head title').text();
@@ -215,6 +231,5 @@ async function handler(ctx) {
         title: `${title.startsWith('JavBus') ? '' : 'JavBus - '}${title.replace(/ - AV磁力連結分享/, '')}`,
         link: currentUrl,
         item: items,
-        allowEmpty: true,
     };
 }

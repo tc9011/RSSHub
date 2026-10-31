@@ -11,11 +11,10 @@ const PATH_PREFIX = '/genossenschaften/' as const;
 
 export const route: Route = {
     name: 'Immobiliensuche',
-    path: '*',
+    path: '/:path{.+}?',
     maintainers: ['sk22'],
     categories: ['other'],
-    description: `
-Note that all parameters are optional and many can be specified multiple times
+    description: `Note that all parameters are optional and many can be specified multiple times
 (e.g. \`district=wien-1-innere-stadt&district=wien-2-leopoldstadt\`).
 
 Only returns the first page of search results, allowing you to keep track of
@@ -23,13 +22,28 @@ newly added apartments. If you're looking for an apartment, make sure to also
 look through the other pages on the website.
 
 ::: tip
-To get your query URL, go to https://genossenschaften.immo and apply all
+To get your query URL, go to <https://genossenschaften.immo> and apply all
 desired filters. If you want to filter by (all districts of a) federal state
 (e.g. \`/immobilien/regionen/wien/\`), please open the district selector and
 de- and re-select any district, so that the region in the URL gets replaced
 with a number of \`district\` parameters. Once you've set up all desired
 filters, copy the part of the URL after the \`?\`.
-:::`,
+:::
+
+| Search parameter  | Meaning                                             |
+| ----------------- | --------------------------------------------------- |
+| \`cost\`            | Miete bis (in €, number)                            |
+| \`district\`        | Bezirk (string, multiple)                           |
+| \`size\`            | Größe ab (in m², number)                            |
+| \`room\`            | Zimmer ab (number)                                  |
+| \`genossenschaft\`  | Bauvereinigung (string, multiple)                   |
+| \`own_funds\`       | Eigenkapital bis                                    |
+| \`has_property\`    | Eigentum (\`on\` or \`off\`)                            |
+| \`has_rent\`        | Miete (\`on\` or \`off\`)                               |
+| \`has_rent_option\` | Miete mit Kaufoption (\`on\` or \`off\`)                |
+| \`status\`          | multiple, \`available\`, \`construction\`, or \`planned\` |
+| \`type\`            | multiple, \`residence\` or \`project\`                  |
+| \`keywords\`        | Keyword search                                      |`,
     example:
         PATH_PREFIX +
         'district=wien-1-innere-stadt&district=wien-2-leopoldstadt&district=wien-3-landstrasse&district=wien-4-wieden&district=wien-5-margareten&district=wien-6-mariahilf&district=wien-7-neubau&district=wien-8-josefstadt&district=wien-9-alsergrund&district=wien-10-favoriten&district=wien-11-simmering&district=wien-12-meidling&district=wien-13-hietzing&district=wien-14-penzing&district=wien-15-rudolfsheim-fuenfhaus&district=wien-16-ottakring&district=wien-17-hernals&district=wien-18-waehring&district=wien-19-doebling&district=wien-20-brigittenau&district=wien-21-floridsdorf&district=wien-22-donaustadt&district=wien-23-liesing' +
@@ -39,21 +53,7 @@ filters, copy the part of the URL after the \`?\`.
         '&has_property=off&has_rent=on&has_rent_option=on' +
         '&status=available&status=construction&status=planned' +
         '&type=residence&type=project',
-    parameters: {
-        // labels are in german language because it's the same on the website
-        cost: 'Miete bis (in €, number)',
-        district: 'Bezirk (string, multiple)',
-        size: 'Größe ab (in m², number)',
-        room: 'Zimmer ab (number)',
-        genossenschaft: 'Bauvereinigung (string, multiple)',
-        own_funds: 'Eigenkapital bis',
-        has_property: 'Eigentum (`on` | `off`)',
-        has_rent: 'Miete (`on` | `off`)',
-        has_rent_option: 'Miete mit Kaufoption (`on` | `off`)',
-        status: 'multiple, `available` | `construction` | `planned`',
-        type: 'multiple, `residence` | `project`',
-        keywords: 'Keyword search',
-    },
+    parameters: { path: 'Search parameters copied from the website URL, without the leading `?`' },
     features: {
         requireConfig: false,
         requirePuppeteer: false,
@@ -63,7 +63,7 @@ filters, copy the part of the URL after the \`?\`.
         supportScihub: false,
     },
     async handler(ctx) {
-        let path = ctx.req.path.slice(PATH_PREFIX.length);
+        let path = ctx.req.param('path') ?? '';
         if (path.startsWith('&')) {
             // in case request url is something like `/genossenschaften/&cost=…`
             path = path.slice(1);
@@ -99,7 +99,7 @@ filters, copy the part of the URL after the \`?\`.
 
                 const titleAppendix = numbers.length ? ` | ${numbers.join(' · ')}` : '';
                 const itemTitle = name + titleAppendix;
-                const itemDescription = itemCategories.join(' · ') + (body.length ? ` / ${body}` : '');
+                const itemDescription = body;
 
                 return {
                     title: itemTitle,
@@ -115,7 +115,6 @@ filters, copy the part of the URL after the \`?\`.
             title: FEED_TITLE,
             language: FEED_LANGUAGE,
             logo: FEED_LOGO,
-            allowEmpty: true,
             item: items,
             link,
         } satisfies Data;

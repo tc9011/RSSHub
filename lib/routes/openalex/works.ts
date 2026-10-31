@@ -1,6 +1,8 @@
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
+import { parseDate } from '@/utils/parse-date';
+import timezone from '@/utils/timezone';
 
 const rootUrl = 'https://api.openalex.org';
 
@@ -34,14 +36,14 @@ export const handler = async (ctx) => {
     // Get date 14 days ago (2 weeks)
     const twoWeeksAgo = new Date();
     twoWeeksAgo.setDate(twoWeeksAgo.getDate() - 14);
-    const twoWeeksAgoStr = twoWeeksAgo.toISOString().split('T')[0];
+    const twoWeeksAgoStr = twoWeeksAgo.toISOString().split('T', 1)[0];
 
     // Build filter parameters
     const filters = [`publication_date:>${twoWeeksAgoStr}`, 'has_abstract:true', `primary_location.source.id:${journals}`];
 
     // Add type filter if provided
     if (type && ids) {
-        if (!filterTypeMap[type]) {
+        if (!Object.hasOwn(filterTypeMap, type)) {
             throw new Error(`Invalid type: ${type}. Must be one of: ${Object.keys(filterTypeMap).join(', ')}`);
         }
         const typeField = filterTypeMap[type];
@@ -59,26 +61,36 @@ export const handler = async (ctx) => {
         },
     });
 
-    const items = response.results.map((work) => {
-        const doi = work.doi || work.id;
-        const cacheKey = `${doi}-${work.updated_date}`;
+    const seenWorkIds = new Set<string>();
 
-        const abstract = reconstructAbstract(work.abstract_inverted_index);
-        const authors = work.authorships?.map((a) => a.author.display_name).join(', ') || '';
-        const doiUrl = work.doi ? `https://doi.org/${work.doi.replace('https://doi.org/', '')}` : work.id;
+    const items = response.results
+        .filter((work) => reconstructAbstract(work.abstract_inverted_index).trim())
+        .map((work) => {
+            const abstract = reconstructAbstract(work.abstract_inverted_index);
+            const authors = work.authorships?.map((a) => a.author.display_name).join(', ') || '';
+            const doiUrl = work.doi ? `https://doi.org/${work.doi.replace('https://doi.org/', '')}` : work.id;
 
-        const pubDate = work.publication_date ? new Date(work.publication_date) : undefined;
+            const publicationDate = work.publication_date ? timezone(parseDate(work.publication_date, 'YYYY-MM-DD', true), 0) : undefined;
+            const pubDate = publicationDate && !Number.isNaN(publicationDate.getTime()) ? publicationDate : undefined;
 
-        return {
-            title: work.title || 'Untitled',
-            link: doiUrl,
-            description: abstract,
-            author: authors,
-            pubDate,
-            guid: cacheKey,
-            category: work.primary_topic?.subfield?.display_name ? [work.primary_topic.subfield.display_name] : [],
-        };
-    });
+            return {
+                title: work.title || 'Untitled',
+                link: doiUrl,
+                description: abstract,
+                author: authors,
+                pubDate,
+                // OpenAlex id is immutable and stable across metadata updates.
+                guid: work.id,
+                category: work.primary_topic?.subfield?.display_name ? [work.primary_topic.subfield.display_name] : [],
+            };
+        })
+        .filter((item) => {
+            if (seenWorkIds.has(item.guid)) {
+                return false;
+            }
+            seenWorkIds.add(item.guid);
+            return true;
+        });
 
     // Get journal and filter type names for title
     const journalIdArray = journals.split('|');
@@ -157,6 +169,7 @@ export const route: Route = {
     description: `Get recent scientific publications from OpenAlex filtered by journal and optionally by topic classification (last 2 weeks).
 
 Examples:
+
 - /openalex/s64187185 - All works from a journal (no topic filter)
 - /openalex/s64187185/subfield/2604 - Filter by subfield
 - /openalex/s64187185|s123456/topic/T10001|T10002 - Filter by topic with multiple journals

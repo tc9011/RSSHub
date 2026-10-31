@@ -1,9 +1,11 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import timezone from '@/utils/timezone';
 
 const baseUrl = 'http://www.bmie.neu.edu.cn';
 
@@ -45,19 +47,19 @@ export const route: Route = {
 | ----------------------- | ---------- |
 | news                    | 学院新闻   |
 | academic                | 学术科研   |
-| talent_development     | 人才培养   |
-| international_exchange | 国际交流   |
+| talent\\_development     | 人才培养   |
+| international\\_exchange | 国际交流   |
 | announcement            | 通知公告   |
-| undergraduate_dev      | 本科生培养 |
-| postgraduate_dev       | 研究生培养 |
-| undergraduate_recruit  | 本科生招募 |
-| postgraduate_recruit   | 研究生招募 |
-| CPC_build              | 党的建设   |
-| CPC_work               | 党委工作   |
-| union_work             | 工会工作   |
-| CYL_work               | 共青团工作 |
-| security_management    | 安全管理   |
-| alumni_style           | 校友风采   |`,
+| undergraduate\\_dev      | 本科生培养 |
+| postgraduate\\_dev       | 研究生培养 |
+| undergraduate\\_recruit  | 本科生招募 |
+| postgraduate\\_recruit   | 研究生招募 |
+| CPC\\_build              | 党的建设   |
+| CPC\\_work               | 党委工作   |
+| union\\_work             | 工会工作   |
+| CYL\\_work               | 共青团工作 |
+| security\\_management    | 安全管理   |
+| alumni\\_style           | 校友风采   |`,
 };
 
 async function handler(ctx) {
@@ -73,8 +75,9 @@ async function handler(ctx) {
 
     const title = $('title').text();
     const items = $('#subIndex > div.main_frame_sub > div.detail_sub > div > div > div > ul > li').slice(0, 7).toArray();
-    const results = await Promise.all(
-        items.map(async (item) => {
+    const results = await pMap(
+        items,
+        async (item) => {
             const $ = load(item);
             const title = $('a').attr('title');
             const url = baseUrl + $('a').attr('href');
@@ -91,38 +94,39 @@ async function handler(ctx) {
                 const auhor = info.slice(au_start, au_end).trim();
                 $('.entry')
                     .find('span')
-                    .each(function () {
-                        const temp = $(this).text();
-                        $(this).replaceWith(temp);
+                    .each((_, el) => {
+                        const temp = $(el).text();
+                        $(el).replaceWith(temp);
                     });
                 $('.entry')
                     .find('div')
-                    .each(function () {
-                        const temp = $(this).html();
-                        $(this).replaceWith(temp);
+                    .each((_, el) => {
+                        const temp = $.html($(el).contents());
+                        $(el).replaceWith(temp);
                     });
                 $('.entry').find('a').remove();
                 $('.entry')
                     .find('p')
-                    .each(function () {
-                        $(this).removeAttr('style');
-                        $(this).removeAttr('class');
+                    .each((_, el) => {
+                        $(el).removeAttr('style');
+                        $(el).removeAttr('class');
                     });
                 $('.wp_art_adjoin').remove();
                 return { description: $('.entry').html(), date, author: auhor };
             });
             const description = data.description;
-            const pubDate = parseDate(data.date);
+            const pubDate = data.date ? timezone(parseDate(data.date), 8) : undefined;
             const author = data.author;
             const result = {
-                title,
+                title: title!,
                 description,
                 link: url,
                 pubDate,
                 author,
             };
             return result;
-        })
+        },
+        { concurrency: 3 }
     );
     return {
         title: `东北大学 医学与生物信息工程学院 ${title}`,

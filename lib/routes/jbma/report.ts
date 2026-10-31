@@ -2,14 +2,24 @@ import type { CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
 import type { Context } from 'hono';
 
-import type { Data, Route } from '@/types';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
+
+const parseGmtDate = (value: string | undefined) => {
+    if (!value) {
+        return;
+    }
+    const date = parseDate(/(?:Z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : `${value}Z`);
+    return Number.isNaN(date.getTime()) ? undefined : date;
+};
 
 export const handler = async (ctx: Context): Promise<Data> => {
     const { filter } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '50', 10);
+    const limit = Math.min(getRouteLimit(ctx, 50), 100);
 
     const apiSlug = 'wp-json/wp/v2';
 
@@ -18,6 +28,10 @@ export const handler = async (ctx: Context): Promise<Data> => {
     let targetUrl: string = new URL('report/', baseUrl).href;
 
     const [taxonomy, keyword] = filter ? (filter.includes('/') ? filter.split('/') : [undefined, filter]) : [undefined, undefined];
+
+    if (filter?.includes('/') && (!['cat_report', 'tag_report'].includes(taxonomy!) || !keyword || filter.split('/').length !== 2)) {
+        throw new InvalidParameterError('Use a keyword, cat_report/<category>, or tag_report/<tag>.');
+    }
 
     let searchId: number | undefined = undefined;
 
@@ -31,8 +45,11 @@ export const handler = async (ctx: Context): Promise<Data> => {
         });
 
         const searchObj = searchResponse.find((c) => c.slug === keyword || c.name === keyword);
-        searchId = searchObj?.id ?? undefined;
-        targetUrl = searchObj?.link ?? targetUrl;
+        if (!searchObj) {
+            throw new InvalidParameterError(`No ${taxonomy} term matches ${keyword}. Choose a term from the source page URL.`);
+        }
+        searchId = searchObj.id;
+        targetUrl = searchObj.link;
     }
 
     const response = await ofetch(apiUrl, {
@@ -41,7 +58,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
             per_page: limit,
             ...(taxonomy && searchId
                 ? {
-                      [taxonomy as string]: searchId,
+                      [taxonomy]: searchId,
                   }
                 : {
                       search: keyword,
@@ -51,7 +68,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
     const targetResponse = await ofetch(targetUrl);
     const $: CheerioAPI = load(targetResponse);
-    const language = $('html').attr('lang') ?? 'ja';
+    const language = ($('html').attr('lang') ?? 'ja') as Language;
 
     const postIds: number[] = [];
     const regExp = new RegExp(String.raw`^${baseUrl.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`)}/?(?:[a-zA-Z0-9-]+/)*\?p=\d+$`);
@@ -74,13 +91,15 @@ export const handler = async (ctx: Context): Promise<Data> => {
         });
 
         for (const media of mediaResponse) {
-            if (media.parent) {
-                const existing = mediaMap.get(media.parent);
-                if (existing) {
-                    existing.push(media);
-                } else {
-                    mediaMap.set(media.parent, [media]);
-                }
+            if (!media.parent) {
+                continue;
+            }
+
+            const existing = mediaMap.get(media.parent);
+            if (existing) {
+                existing.push(media);
+            } else {
+                mediaMap.set(media.parent, [media]);
             }
         }
     }
@@ -100,7 +119,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
                 avatar: author.avatar_urls?.['96'] ?? author.avatar_urls?.['48'] ?? author.avatar_urls?.['24'] ?? undefined,
             })) ?? [];
         const guid = item.guid?.rendered ?? item.guid;
-        const updated = item.modified_gmt ?? pubDate;
+        const updated = item.modified_gmt;
 
         let image = item._embedded?.['wp:featuredmedia']?.[0].source_url ?? undefined;
         let enclosureUrl: string | undefined;
@@ -132,10 +151,10 @@ export const handler = async (ctx: Context): Promise<Data> => {
             linkUrl = new URL(`report/${item.slug}`, baseUrl).href;
         }
 
-        let processedItem = {
+        let processedItem: DataItem = {
             title,
             description,
-            pubDate: pubDate ? parseDate(pubDate) : undefined,
+            pubDate: parseGmtDate(pubDate),
             link: linkUrl ?? guid,
             category: categories,
             author: authors,
@@ -147,7 +166,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
             },
             image,
             banner: image,
-            updated: updated ? parseDate(updated) : undefined,
+            updated: parseGmtDate(updated),
             language,
         };
 
@@ -169,7 +188,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
         description: $('meta[property="og:description"]').attr('content'),
         link: targetUrl,
         item: items,
-        allowEmpty: true,
         image: $('meta[property="og:image"]').attr('content'),
         author: $('meta[property="og:site_name"]').attr('content'),
         language,
@@ -327,17 +345,8 @@ To subscribe to [Metals Forcus](https://jbma.net/cat_report/metals-forcus/), whe
     },
     radar: [
         {
-            source: ['jbma.net/:type/:name?'],
-            target: (params) => {
-                const type: string = params.type;
-                const name: string = params.name;
-
-                if (type === 'report' || type === 'cat_report' || type === 'tag_report') {
-                    return `/${type}${name ? `/${name}` : ''}`;
-                }
-
-                return `/${type}`;
-            },
+            source: ['jbma.net/report'],
+            target: '/report',
         },
         {
             title: 'Metals Forcus',
@@ -438,6 +447,14 @@ To subscribe to [Metals Forcus](https://jbma.net/cat_report/metals-forcus/), whe
             title: 'レポート',
             source: ['jbma.net/tag_report/report'],
             target: '/report/tag_report/report',
+        },
+        {
+            source: ['jbma.net/cat_report/:keyword'],
+            target: '/report/cat_report/:keyword',
+        },
+        {
+            source: ['jbma.net/tag_report/:keyword'],
+            target: '/report/tag_report/:keyword',
         },
     ],
     view: ViewType.Articles,

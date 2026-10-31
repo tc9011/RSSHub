@@ -2,29 +2,29 @@ import type { Cheerio, CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
 import type { Element } from 'domhandler';
 import type { Context } from 'hono';
+import pMap from 'p-map';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 export const handler = async (ctx: Context): Promise<Data> => {
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '30', 10);
+    const limit = getRouteLimit(ctx, 30);
 
     const baseUrl = 'https://jlpt.neea.cn';
     const targetUrl: string = new URL('index.do', baseUrl).href;
 
     const response = await ofetch(targetUrl);
     const $: CheerioAPI = load(response);
-    const language = $('html').attr('lang') ?? 'zh-CN';
+    const language = ($('html').attr('lang') ?? 'zh-CN') as Language;
 
-    let items: DataItem[] = [];
-
-    items = $('div.indexcontent a')
+    let items: DataItem[] = $('div.indexcontent a')
         .slice(0, limit)
         .toArray()
-        .map((el): Element => {
+        .map((el) => {
             const $el: Cheerio<Element> = $(el);
 
             const title: string = $el.text();
@@ -44,18 +44,19 @@ export const handler = async (ctx: Context): Promise<Data> => {
         });
 
     items = (
-        await Promise.all(
-            items.map((item) => {
+        await pMap(
+            items,
+            (item) => {
                 if (!item.link) {
                     return item;
                 }
 
                 return cache.tryGet(item.link, async (): Promise<DataItem> => {
-                    const detailResponse = await ofetch(item.link);
+                    const detailResponse = await ofetch(item.link!);
                     const $$: CheerioAPI = load(detailResponse);
 
                     const title: string = $$('div.dvTitle').text();
-                    const description: string = $$('div.dvContent').html() ?? '';
+                    const description = $$('div.dvContent').html();
 
                     const processedItem: DataItem = {
                         title,
@@ -67,20 +68,21 @@ export const handler = async (ctx: Context): Promise<Data> => {
                         ...processedItem,
                     };
                 });
-            })
+            },
+            { concurrency: 6 }
         )
     ).filter((_): _ is DataItem => true);
 
     const title: string = $('title').text();
+    const imageUrl: string | undefined = $('div.header img').attr('src');
 
     return {
         title: `${title.split(/-/).pop()} - ${$('div.indexcontent h1').text()}`,
         description: title,
         link: targetUrl,
         item: items,
-        allowEmpty: true,
-        image: $('div.header img').attr('arc') ? new URL($('div.header img').attr('arc') as string, baseUrl).href : undefined,
-        author: title.split(/-/)[0],
+        image: imageUrl ? new URL(imageUrl, baseUrl).href : undefined,
+        author: title.split(/-/, 1)[0],
         language,
         id: targetUrl,
     };

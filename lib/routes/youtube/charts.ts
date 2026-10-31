@@ -1,9 +1,10 @@
 import { config } from '@/config';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 
-import { renderDescription } from './utils';
+import { renderYoutube } from './utils';
 
 export const route: Route = {
     path: '/charts/:category?/:country?/:embed?',
@@ -19,7 +20,7 @@ export const route: Route = {
 | ----------- | --------- | ---------------- | -------------- |
 | TopArtists  | TopSongs  | TopVideos        | TrendingVideos |
 
-  Country Code
+Country Code
 
 | Argentina | Australia | Austria | Belgium | Bolivia | Brazil | Canada |
 | --------- | --------- | ------- | ------- | ------- | ------ | ------ |
@@ -85,6 +86,10 @@ async function handler(ctx) {
     const { category = 'TopVideos', country } = ctx.req.param();
     const embed = !ctx.req.param('embed');
 
+    if (!Object.hasOwn(contentMap, category)) {
+        throw new InvalidParameterError('Invalid YouTube chart category. Choose from TopArtists, TopSongs, TopVideos, TrendingVideos.');
+    }
+
     const { content } = await cache.tryGet(
         `youtube:charts:${country ?? 'global'}`,
         async () => {
@@ -137,7 +142,7 @@ async function handler(ctx) {
                       .join(', ');
                   return {
                       title: `${item.title ?? item.name} - ${author}`,
-                      description: renderDescription(embed, videoId, item.thumbnail?.thumbnails.pop().url, ''),
+                      description: renderYoutube(embed, videoId, item.thumbnail?.thumbnails.pop().url, ''),
                       link: `https://www.youtube.com/watch?v=${videoId}`,
                       guid: `youtube:charts:${category}:${entityId}:${item.id}`,
                       author,

@@ -1,4 +1,5 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
@@ -38,29 +39,35 @@ async function handler(ctx) {
     const type = ctx.req.param('type') === 'week' ? 1 : 2;
     const rootUrl = 'https://www.qianzhan.com/analyst/';
 
-    const response = await got(rootUrl);
+    const response = await got(rootUrl, { allowH2: false });
     const $ = load(response.data);
-    const links = $(`#div_hotlist ul[idx='${type}'] a`).map((_, item) => $(item).attr('href'));
+    const links = $(`#div_hotlist ul[idx='${type}'] a`)
+        .toArray()
+        .flatMap((item) => {
+            const href = $(item).attr('href');
+            return href === undefined ? [] : href;
+        });
 
-    const items = await Promise.all(
-        links.map((_, item) =>
+    const items = await pMap(
+        links,
+        (item) =>
             cache.tryGet(item, async () => {
-                const detailResponse = await got(item);
+                const detailResponse = await got(item, { allowH2: false });
                 const $ = load(detailResponse.data);
                 const description = $('#divArtBody').html();
                 const title = $('#h_title').text();
-                const pubDate = timezone(parseDate($('#pubtime_baidu').text().split('• ')[1], 'YYYY-MM-DD HH:mm:ss'), +8);
-                const author = $('.bljjxue').text().match(/\S+/)[0];
+                const pubDate = timezone(parseDate($('#pubtime_baidu').text().split('• ', 2)[1], 'YYYY-MM-DD HH:mm:ss'), 8);
+                const author = $('.bljjxue').text().match(/\S+/)![0];
                 return {
                     title,
                     link: item,
                     description,
                     pubDate,
                     author,
-                    category: $('meta[name="Keywords"]').attr('content').split(','),
+                    category: $('meta[name="Keywords"]').attr('content')!.split(','),
                 };
-            })
-        )
+            }),
+        { concurrency: 3 }
     );
 
     return {

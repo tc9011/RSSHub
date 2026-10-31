@@ -5,6 +5,12 @@ import got from '@/utils/got';
 
 export const route: Route = {
     path: '/839studio/:id',
+    categories: ['traditional-media'],
+    example: '/thepaper/839studio/2',
+    parameters: { id: '分类 id，可在分类页 URL 的 cat 参数中找到；全部作品使用 /thepaper/839studio' },
+    description: `| 视频 | 交互 | 信息图 | 数据故事 |
+| ---- | ---- | ------ | -------- |
+| 2    | 4    | 3      | 453      |`,
     radar: [
         {
             source: ['thepaper.cn/'],
@@ -20,7 +26,6 @@ async function handler(ctx) {
     const id = ctx.req.param('id');
     const link = `http://projects.thepaper.cn/thepaper-cases/839studio/?cat=${id}`;
 
-    // 发起 HTTP GET 请求
     const response = await got({
         method: 'get',
         url: link,
@@ -28,7 +33,6 @@ async function handler(ctx) {
 
     const data = response.data;
 
-    // 使用 cheerio 加载返回的 HTML
     const $ = load(data);
     const list = $('div[class=imgtext]');
 
@@ -40,11 +44,11 @@ async function handler(ctx) {
         link,
         description: desc,
         item: list.toArray().map((item) => {
-            item = $(item);
+            const $item = $(item);
             return {
-                title: item.find('.archive_up a').first().text(),
-                description: `描述：${item.find('.imgdown p').text()}`,
-                link: item.find('.archive_up a').attr('href'),
+                title: $item.find('.archive_up a').text(),
+                description: `描述：${$item.find('.imgdown p').text()}`,
+                link: $item.find('.archive_up a').attr('href'),
             };
         }),
     };

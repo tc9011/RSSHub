@@ -2,11 +2,12 @@ import type { Context } from 'hono';
 
 import type { Data, Route } from '@/types';
 import { ViewType } from '@/types';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import { CONFIG_OPTIONS, generatePostDataItem, getClient, postFilter } from './utils';
 
-const handler = async (ctx: Context) => {
-    const limit = Number.parseInt(ctx.req.query('limit') ?? '20', 10);
+const handler = async (ctx: Context): Promise<Data> => {
+    const limit = getRouteLimit(ctx, 20);
 
     const client = getClient();
 
@@ -21,7 +22,7 @@ const handler = async (ctx: Context) => {
     return {
         title: 'フォロー中',
         link: 'https://mixi.social/home',
-        image: 'https://mixi.social/_next/static/media/image_logo.8bb36f11.svg',
+        image: 'https://mixi.social/favicon/favicon-32x32.png',
         item:
             data?.feeds
                 ?.filter((feed) => postFilter(feed.post))
@@ -29,7 +30,7 @@ const handler = async (ctx: Context) => {
                     title: `@${personasData.personas.find((persona) => persona.personaId === feed.post.personaId)?.name}`,
                     ...generatePostDataItem(feed.post, personasData.personas),
                 })) ?? [],
-    } as Data;
+    };
 };
 
 export const route: Route = {

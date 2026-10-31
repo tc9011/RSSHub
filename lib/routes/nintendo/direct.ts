@@ -24,11 +24,19 @@ export const route: Route = {
             source: ['nintendo.com/nintendo-direct/archive', 'nintendo.com/'],
         },
     ],
-    name: 'Nintendo Direct',
+    name: 'Direct',
     maintainers: ['HFO4'],
     handler,
     url: 'nintendo.com/nintendo-direct/archive',
 };
+
+interface DirectEntry {
+    name: string;
+    startDate: string;
+    slug: string;
+    thumbnail: { publicId: string };
+    description: { json: { content: Array<{ nodeType?: string; content?: Array<{ value?: string }> }> } };
+}
 
 async function handler() {
     const response = await got('https://www.nintendo.com/nintendo-direct/archive/');
@@ -38,7 +46,7 @@ async function handler() {
     const nextData = JSON.parse($('script#__NEXT_DATA__').text());
 
     delete nextData.props.pageProps.initialApolloState.ROOT_QUERY;
-    const result = Object.values(nextData.props.pageProps.initialApolloState).map((item) => ({
+    const result = Object.values<DirectEntry>(nextData.props.pageProps.initialApolloState).map((item) => ({
         title: item.name,
         pubDate: parseDate(item.startDate),
         link: `https://www.nintendo.com/nintendo-direct/${item.slug}/`,

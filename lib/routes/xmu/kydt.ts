@@ -1,8 +1,11 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
+import { parseDate } from '@/utils/parse-date';
+import timezone from '@/utils/timezone';
 
 export const route: Route = {
     path: '/kydt',
@@ -26,6 +29,21 @@ export const route: Route = {
     handler,
 };
 
+async function fetchArticleContent(link: string): Promise<Pick<DataItem, 'description'>> {
+    const response = await ofetch(link);
+    const $ = load(response);
+    return { description: $('.v_news_content').html() };
+}
+
+function parseSourceDate(value?: string) {
+    const dateText = value?.match(/\d{4}[.-]\d{2}[.-]\d{2}/)?.[0].replaceAll('.', '-');
+    if (!dateText) {
+        return;
+    }
+    const date = parseDate(dateText, 'YYYY-MM-DD', true);
+    return Number.isNaN(date.getTime()) ? undefined : timezone(date, 8);
+}
+
 async function handler() {
     const host = 'https://soe.xmu.edu.cn/kxyj/kydt.htm';
     const response = await ofetch(host);
@@ -33,35 +51,30 @@ async function handler() {
 
     const list = $('div.news li')
         .toArray()
-        .map((item) => {
-            item = $(item);
-            const title = item.find('h4').first().text();
-            const time = item.find('h6').first().text();
-            const a = item.find('a').first().attr('href');
-            const fullUrl = new URL(a, host).href;
+        .map((item): DataItem => {
+            const $item = $(item);
+            const title = $item.find('h4').text();
+            const time = $item.find('h6').text();
+            const a = $item.find('a').attr('href');
+            const fullUrl = new URL(a!, host).href;
 
             return {
                 title,
                 link: fullUrl,
-                pubDate: time,
+                pubDate: parseSourceDate(time),
             };
         });
 
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
-                const response = await ofetch(item.link);
-                const $ = load(response);
-
-                item.description = $('.v_news_content').first().html();
-
-                return item;
-            })
-        )
+    const items = await pMap(
+        list,
+        async (item) => {
+            const detail = await cache.tryGet(item.link!, () => fetchArticleContent(item.link!));
+            return { ...item, description: detail.description };
+        },
+        { concurrency: 3 }
     );
 
     return {
-        allowEmpty: true,
         title: '厦门大学经济学院科研动态',
         link: host,
         item: items,

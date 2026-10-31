@@ -12,12 +12,12 @@
       # Helper to define the RSSHub package
       makeRSSHub = pkgs:
         let
-          pnpm = pkgs.pnpm_9;
-          deps = pnpm.fetchDeps {
+          pnpm = pkgs.pnpm_12;
+          deps = pkgs.fetchPnpmDeps {
             pname = "rsshub";
             src = ./.;
-            hash = "sha256-ErMPvlOIDqn03s2P+tzbQbYPZFEax5P61O1DJputvo4=";
-            fetcherVersion = 2;
+            hash = "sha256-CbWoSO65A2v9pUVZNcRFROIsZG/mXCKotfDo1kzShrU=";
+            fetcherVersion = 4;
           };
         in
         pkgs.stdenv.mkDerivation rec {
@@ -27,8 +27,9 @@
           src = ./.;
 
           nativeBuildInputs = with pkgs; [
-            nodejs_22
-            pnpm.configHook
+            nodejs_26
+            pnpm
+            pnpmConfigHook
             git
           ];
 
@@ -81,7 +82,7 @@
           #!${pkgs.bash}/bin/bash
           export NODE_ENV=production
           export NODE_OPTIONS='--max-http-header-size=32768'
-          exec ${pkgs.nodejs_22}/bin/node $out/lib/rsshub/dist/index.mjs "\$@"
+          exec ${pkgs.nodejs_26}/bin/node $out/lib/rsshub/dist/index.mjs "\$@"
           EOF
           chmod +x $out/bin/rsshub
           runHook postInstall
@@ -166,6 +167,19 @@
               '';
             };
 
+            environmentFiles = mkOption {
+              type = types.listOf types.path;
+              default = [ ];
+              example = literalExpression ''
+                [ config.sops.secrets.rsshub.path ]
+              '';
+              description = ''
+                Environment variables stored in files for RSSHub.
+                It can be used for secrets like agenix, sops-nix, etc.
+                See https://docs.rsshub.app/deploy/config for available options.
+              '';
+            };
+
             redis = {
               enable = mkOption {
                 type = types.bool;
@@ -238,7 +252,7 @@
                   User = cfg.user;
                   Group = cfg.group;
                   WorkingDirectory = cfg.dataDir;
-                  EnvironmentFile = environmentFile;
+                  EnvironmentFile = [environmentFile] ++ cfg.environmentFiles;
                   ExecStart = "${cfg.package}/bin/rsshub";
                   Restart = "on-failure";
                   RestartSec = "5s";

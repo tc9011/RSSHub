@@ -2,21 +2,33 @@ import { load } from 'cheerio';
 
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
-import got from '@/utils/got';
+import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import { renderDescription } from './templates/description';
 import { getSearchParams, rootUrl } from './utils';
 
+const audioMimeTypes = {
+    mp3: 'audio/mpeg',
+    m4a: 'audio/mp4',
+    mp4: 'audio/mp4',
+    aac: 'audio/aac',
+    ogg: 'audio/ogg',
+    oga: 'audio/ogg',
+    wav: 'audio/wav',
+    flac: 'audio/flac',
+};
+
 export const handler = async (ctx) => {
     const { id = '1103' } = ctx.req.param();
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 20;
+    const limit = getRouteLimit(ctx, 20);
 
     const currentUrl = new URL(`subject/${id}`, rootUrl).href;
     const apiUrl = new URL(`api/subject/${id}/article`, rootUrl).href;
 
-    const { data: response } = await got(apiUrl, {
-        searchParams: getSearchParams({
+    const response = await ofetch(apiUrl, {
+        query: getSearchParams({
             Subject_Id: id,
         }),
     });
@@ -50,11 +62,11 @@ export const handler = async (ctx) => {
     items = await Promise.all(
         items.map((item) =>
             cache.tryGet(item.link, async () => {
-                const { data: detailResponse } = await got(item.link);
+                const detailResponse = await ofetch(item.link);
 
                 const $$ = load(detailResponse);
 
-                const data = JSON.parse($$('script#__NEXT_DATA__').text())?.props?.initialState?.detail?.articleDetail ?? undefined;
+                const data = JSON.parse($$('script#__NEXT_DATA__').text())?.props?.pageProps?.articleDetail ?? undefined;
 
                 if (!data) {
                     return item;
@@ -62,7 +74,7 @@ export const handler = async (ctx) => {
 
                 const title = data.title;
                 const description = renderDescription({
-                    images: data.images.map((i) => ({
+                    images: data.images?.map((i) => ({
                         src: i,
                         alt: title,
                     })),
@@ -81,12 +93,12 @@ export const handler = async (ctx) => {
                 item.id = guid;
                 item.content = {
                     html: description,
-                    text: data.content,
+                    text: load(description).text(),
                 };
                 item.image = image;
                 item.banner = image;
                 item.enclosure_url = data.audioUrl;
-                item.enclosure_type = item.enclosure_url ? `audio/${item.enclosure_url.split(/\./).pop()}` : undefined;
+                item.enclosure_type = item.enclosure_url ? audioMimeTypes[new URL(item.enclosure_url).pathname.split('.').pop()?.toLowerCase() ?? ''] : undefined;
                 item.enclosure_title = title;
 
                 return item;
@@ -94,11 +106,11 @@ export const handler = async (ctx) => {
         )
     );
 
-    const { data: currentResponse } = await got(currentUrl);
+    const currentResponse = await ofetch(currentUrl);
 
     const $ = load(currentResponse);
 
-    const data = JSON.parse($('script#__NEXT_DATA__').text())?.props?.initialProps?.pageProps?.subjectDetail ?? undefined;
+    const data = JSON.parse($('script#__NEXT_DATA__').text())?.props?.pageProps?.data ?? undefined;
 
     const author = '财联社';
     const image = data?.img ?? undefined;
@@ -108,7 +120,6 @@ export const handler = async (ctx) => {
         description: data?.description ?? undefined,
         link: currentUrl,
         item: items,
-        allowEmpty: true,
         image,
         author,
     };
@@ -121,11 +132,10 @@ export const route: Route = {
     maintainers: ['nczitzk'],
     handler,
     example: '/cls/subject/1103',
-    parameters: { category: '分类，默认为 1103，即A股盘面直播，可在对应话题页 URL 中找到' },
+    parameters: { id: '话题 id，默认为 1103，即A股盘面直播，可在对应话题页 URL 中找到' },
     description: `::: tip
-  若订阅 [有声早报](https://www.cls.cn/subject/1151)，网址为 \`https://www.cls.cn/subject/1151\`。截取 \`https://www.cls.cn/subject/\` 到末尾的部分 \`1151\` 作为参数填入，此时路由为 [\`/cls/subject/1151\`](https://rsshub.app/cls/subject/1151)。
-:::
-    `,
+若订阅 [有声早报](https://www.cls.cn/subject/1151)，网址为 \`https://www.cls.cn/subject/1151\`。截取 \`https://www.cls.cn/subject/\` 到末尾的部分 \`1151\` 作为参数填入，此时路由为 [\`/cls/subject/1151\`](https://rsshub.app/cls/subject/1151)。
+:::`,
     categories: ['finance'],
 
     features: {
@@ -134,17 +144,13 @@ export const route: Route = {
         antiCrawler: false,
         supportRadar: true,
         supportBT: false,
-        supportPodcast: false,
+        supportPodcast: true,
         supportScihub: false,
     },
     radar: [
         {
             source: ['www.cls.cn/subject/:id'],
-            target: (params) => {
-                const id = params.id;
-
-                return `/subject${id ? `/${id}` : ''}`;
-            },
+            target: '/subject/:id',
         },
     ],
 };

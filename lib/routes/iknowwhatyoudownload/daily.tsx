@@ -2,10 +2,12 @@ import { load } from 'cheerio';
 import dayjs from 'dayjs';
 import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
+import pMap from 'p-map';
 
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
+import { parseDate } from '@/utils/parse-date';
 
 interface TableData {
     key: string;
@@ -31,8 +33,9 @@ async function handler(ctx) {
     const dates = Array.from({ length: 7 }, (_, i) => dayjs().subtract(i, 'day'));
 
     const items = (
-        await Promise.all(
-            dates.map((dateObj) => {
+        await pMap(
+            dates,
+            (dateObj) => {
                 const dateFormatted = dateObj.format('YYYY-MM-DD');
                 const url = `${baseUrl}${dateFormatted}`;
                 return cache.tryGet(url, async () => {
@@ -69,7 +72,7 @@ async function handler(ctx) {
                         for (const index in labelsList) {
                             const label = labelsList[index];
                             const count = dataList[index];
-                            const [key, percent] = label.split(' ');
+                            const [key, percent] = label.split(' ', 2);
                             tableData.push({
                                 key,
                                 count,
@@ -81,9 +84,13 @@ async function handler(ctx) {
                     const topList = $('.tab-pane')
                         .toArray()
                         .map((item) => ({
-                            title: $(item).attr('id')?.toUpperCase(),
+                            title: $(item).attr('id')?.toUpperCase() ?? '',
                             content: $(item).find('ul').toString(),
                         }));
+
+                    if (!numStats.length && !tableData.length && !$('.tab-pane li').length) {
+                        throw new Error(`Statistics are unavailable for ${country} on ${dateFormatted}: the source returned no statistics data.`);
+                    }
 
                     const content = renderToString(
                         <article>
@@ -132,12 +139,13 @@ async function handler(ctx) {
                         title: `Daily Torrents Statistics in ${country} for ${dateFormatted}`,
                         link: url,
                         description: content,
-                        pubDate: dateObj.toDate(),
+                        pubDate: parseDate(`${dateFormatted}T00:00:00Z`),
                     };
                 });
-            })
+            },
+            { concurrency: 3 }
         )
-    ).filter((item) => Object.keys(item).length > 0);
+    ).filter((item) => item.title !== undefined);
 
     return {
         title: `Daily Torrents Statistics in ${country} - iknownwhatyoudownload`,

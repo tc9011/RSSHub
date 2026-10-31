@@ -1,4 +1,5 @@
-import { load } from 'cheerio'; // cheerio@1.0.0
+import { load } from 'cheerio';
+import pMap from 'p-map'; // cheerio@1.0.0
 
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
@@ -26,8 +27,12 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['global.shu.edu.cn/cd/tzgg.htm', 'global.shu.edu.cn/cd/xwsd.htm'],
-            target: '/global',
+            source: ['global.shu.edu.cn/cd/tzgg.htm'],
+            target: '/global/tzgg',
+        },
+        {
+            source: ['global.shu.edu.cn/cd/xwsd.htm'],
+            target: '/global/xwsd',
         },
     ],
     name: '国际部港澳台办公室',
@@ -61,30 +66,33 @@ async function handler(ctx) {
         .map((el) => {
             const item = $(el); // 使用Cheerio包装每个li元素
             const rawLink = item.find('a').attr('href');
-            const pubDate = item.find('span').text().trim(); // 提取日期
+            const pubDate = item.find('span').text(); // 提取日期
 
             return {
-                title: item.find('a').text().trim(), // 获取标题
+                title: item.find('a').text(), // 获取标题
                 link: rawLink ? new URL(rawLink, rootUrl).href : rootUrl, // 生成完整链接
-                pubDate: timezone(parseDate(pubDate, 'YYYY年MM月DD日'), +8), // 解析并转换日期
+                pubDate: timezone(parseDate(pubDate, 'YYYY年MM月DD日'), 8), // 解析并转换日期
                 description: '', // 没有提供简要描述，设为空字符串
             };
         });
 
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
+    const items = await pMap(
+        list,
+        async (item) => {
+            const details = await cache.tryGet(`shu:global:v3:${item.link}`, async () => {
                 const detailResponse = await got({
                     method: 'get',
                     url: item.link,
                 }); // 获取详情页内容
                 const content = load(detailResponse.data); // 使用cheerio解析内容
 
-                item.description = content('#vsb_content_2 .v_news_content').html() || '内容无法提取'; // 提取内容区详情
+                const description = content('#vsb_content .v_news_content, #vsb_content_2 .v_news_content').html() || undefined;
 
-                return item; // 返回完整的item
-            })
-        )
+                return { description };
+            });
+            return { ...item, ...details };
+        },
+        { concurrency: 3 }
     );
 
     return {

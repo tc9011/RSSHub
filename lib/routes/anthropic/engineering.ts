@@ -4,6 +4,8 @@ import pMap from 'p-map';
 import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
+import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 export const route: Route = {
     path: '/engineering',
@@ -26,19 +28,20 @@ async function handler(ctx) {
     const link = `${baseUrl}/engineering`;
     const response = await ofetch(link);
     const $ = load(response);
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 20;
+    const limit = getRouteLimit(ctx, 20);
 
-    const list: DataItem[] = $('a[class*="cardLink"]')
+    const list: DataItem[] = $('article[data-listing-row]')
         .toArray()
         .map((element) => {
             const $e = $(element);
-            const href = $e.attr('href') ?? '';
+            const $link = $e.find('a[class$="_metaTitleLink"]');
+            const href = $link.attr('href') ?? '';
             const fullLink = href.startsWith('http') ? href : `${baseUrl}${href}`;
-            const pubDate = $e.find('div[class*="date"]').text().trim();
+            const dateText = $e.find('time').text();
             return {
-                title: $e.find('h2, h3').text().trim(),
+                title: $link.text().trim(),
                 link: fullLink,
-                pubDate,
+                pubDate: dateText ? parseDate(dateText, 'MMM D, YYYY') : undefined,
             };
         })
         .filter((item) => item.title && item.link)
@@ -51,7 +54,7 @@ async function handler(ctx) {
                 const response = await ofetch(item.link!);
                 const $ = load(response);
 
-                const content = $('article > div > div[class*="__body"]');
+                const content = $('article > div > div[class$="_body"]');
 
                 content.find('img').each((_, e) => {
                     const $e = $(e);
@@ -64,7 +67,9 @@ async function handler(ctx) {
                     }
                 });
 
-                item.description = content.html() ?? undefined;
+                item.description = content.html();
+                const dateText = $('p[class$="date"]').text().replace('Published', '').trim();
+                item.pubDate ||= dateText ? parseDate(dateText, 'MMM D, YYYY') : undefined;
 
                 return item;
             }),

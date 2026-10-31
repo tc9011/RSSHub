@@ -1,15 +1,18 @@
 import { load } from 'cheerio';
+import { FetchError } from 'ofetch';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import { renderDescription } from './templates/description';
 
 export const handler = async (ctx) => {
     const { column } = ctx.req.param();
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 20;
+    const limit = getRouteLimit(ctx, 20);
 
     const rootUrl = 'https://geekpark.net';
     const apiRootUrl = 'https://mainssl.geekpark.net';
@@ -18,7 +21,7 @@ export const handler = async (ctx) => {
 
     const { data: response } = await got(apiUrl);
 
-    let items = (response.homepage_posts ?? response.column.posts).slice(0, limit).map((item) => {
+    let items: Array<DataItem & { link: string }> = (response.homepage_posts ?? response.column.posts).slice(0, limit).map((item) => {
         item = item.post ?? item;
 
         const title = item.title;
@@ -54,9 +57,10 @@ export const handler = async (ctx) => {
         };
     });
 
-    items = await Promise.all(
-        items.map((item) =>
-            cache.tryGet(item.link, async () => {
+    items = await pMap(
+        items,
+        (item) =>
+            cache.tryGet(`${item.link}#html-content`, async () => {
                 const { data: detailResponse } = await got(item.link);
 
                 const data = detailResponse.post;
@@ -87,15 +91,14 @@ export const handler = async (ctx) => {
                 item.id = guid;
                 item.content = {
                     html: description,
-                    text: data.content,
                 };
                 item.image = image;
                 item.banner = image;
                 item.updated = parseDate(data.updated_at);
 
                 return item;
-            })
-        )
+            }),
+        { concurrency: 3 }
     );
 
     const data = {
@@ -103,7 +106,6 @@ export const handler = async (ctx) => {
         description: '',
         link: currentUrl,
         item: items,
-        allowEmpty: true,
         image: '',
         author: '',
     };
@@ -113,14 +115,21 @@ export const handler = async (ctx) => {
         data.description = response.column.description;
         data.image = response.column.banner_url;
     } else {
-        const { data: currentResponse } = await got(currentUrl);
+        try {
+            const { data: currentResponse } = await got(currentUrl);
 
-        const $ = load(currentResponse);
+            const $ = load(currentResponse);
 
-        data.title = $('title').text();
-        data.description = $('meta[property="og:description"]').prop('content');
-        data.image = `https:${$('meta[name="og:image"]').prop('content')}`;
-        data.author = $('meta[property="og:site_name"]').prop('content');
+            data.title = $('title').text();
+            data.description = $('meta[property="og:description"]').prop('content');
+            data.image = `https:${$('meta[name="og:image"]').prop('content')}`;
+            data.author = $('meta[property="og:site_name"]').prop('content');
+        } catch (error) {
+            if (!(error instanceof FetchError) || error.statusCode !== 403) {
+                throw error;
+            }
+            data.title = '极客公园';
+        }
     }
 
     return data;
@@ -135,20 +144,19 @@ export const route: Route = {
     example: '/geekpark',
     parameters: { column: '栏目 id，默认为空，即首页资讯，可在对应栏目页 URL 中找到' },
     description: `::: tip
-  若订阅 [综合报道](https://www.geekpark.net/column/179)，网址为 \`https://www.geekpark.net/column/179\`。截取 \`https://www.geekpark.net/column/\` 到末尾的部分 \`179\` 作为参数填入，此时路由为 [\`/geekpark/179\`](https://rsshub.app/geekpark/179)。
+若订阅 [综合报道](https://www.geekpark.net/column/179)，网址为 \`https://www.geekpark.net/column/179\`。截取 \`https://www.geekpark.net/column/\` 到末尾的部分 \`179\` 作为参数填入，此时路由为 [\`/geekpark/179\`](https://rsshub.app/geekpark/179)。
 :::
 
 | 栏目                                                         | ID                                     |
 | ------------------------------------------------------------ | -------------------------------------- |
 | [综合报道](https://www.geekpark.net/column/179)              | [179](https://rsshub.app/geekpark/179) |
-| [AI新浪潮观察](https://www.geekpark.net/column/304)          | [304](https://rsshub.app/geekpark/304) |
+| [AI 新浪潮观察](https://www.geekpark.net/column/304)         | [304](https://rsshub.app/geekpark/304) |
 | [新造车观察](https://www.geekpark.net/column/305)            | [305](https://rsshub.app/geekpark/305) |
 | [财报解读](https://www.geekpark.net/column/271)              | [271](https://rsshub.app/geekpark/271) |
-| [底稿对话CEO系列](https://www.geekpark.net/column/308)       | [308](https://rsshub.app/geekpark/308) |
+| [底稿对话 CEO 系列](https://www.geekpark.net/column/308)     | [308](https://rsshub.app/geekpark/308) |
 | [Geek Insight 特稿系列](https://www.geekpark.net/column/306) | [306](https://rsshub.app/geekpark/306) |
 | [心科技](https://www.geekpark.net/column/307)                | [307](https://rsshub.app/geekpark/307) |
-| [行业资讯](https://www.geekpark.net/column/2)                | [2](https://rsshub.app/geekpark/2)     |
-  `,
+| [行业资讯](https://www.geekpark.net/column/2)                | [2](https://rsshub.app/geekpark/2)     |`,
     categories: ['new-media'],
 
     features: {
@@ -166,12 +174,8 @@ export const route: Route = {
             target: '/',
         },
         {
-            source: ['geekpark.net/column/:column?'],
-            target: (params) => {
-                const column = params.column;
-
-                return column ? `/${column}` : '';
-            },
+            source: ['geekpark.net/column/:column'],
+            target: '/:column',
         },
         {
             title: '综合报道',

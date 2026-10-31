@@ -3,7 +3,7 @@ import { load } from 'cheerio';
 import type { Context } from 'hono';
 import { renderToString } from 'hono/jsx/dom/server';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
@@ -34,7 +34,8 @@ const filters = {
 
 export const handler = async (ctx: Context): Promise<Data> => {
     const { query = 's=2&d=1&n=true&dm=true&o=true' } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '50', 10);
+    const requestedLimit = Number(ctx.req.query('limit'));
+    const limit = Number.isFinite(requestedLimit) && requestedLimit >= 1 ? Math.floor(requestedLimit) : 50;
 
     const baseUrl = 'https://scoop.sh';
     const apiBaseUrl = 'https://scoopsearch.search.windows.net';
@@ -43,7 +44,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
     const targetResponse = await ofetch(targetUrl);
     const $: CheerioAPI = load(targetResponse);
-    const language = $('html').attr('lang') ?? 'en';
+    const language = ($('html').attr('lang') ?? 'en') as Language;
 
     const scriptRegExp = /<script type="module" crossorigin src="(.*?)"><\/script>/;
     const scriptUrl: string = scriptRegExp.test(targetResponse) ? new URL(targetResponse.match(scriptRegExp)?.[1], baseUrl).href : '';
@@ -56,7 +57,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
         parseResponse: (txt) => txt,
     });
 
-    const key: string = scriptResponse.match(/VITE_APP_AZURESEARCH_KEY:"(.*?)"/)?.[1];
+    const key = scriptResponse.match(/VITE_APP_AZURESEARCH_KEY\s*:\s*(["'`])([^"'`]+)\1/)?.[2];
 
     if (!key) {
         throw new Error('Key not found.');
@@ -92,15 +93,13 @@ export const handler = async (ctx: Context): Promise<Data> => {
         },
     });
 
-    let items: DataItem[] = [];
-
-    items = response.value.slice(0, limit).map((item): DataItem => {
+    const items: DataItem[] = response.value.slice(0, limit).map((item): DataItem => {
         const repositorySplits: string[] = item.Metadata.Repository.split(/\//);
         const repositoryName: string = repositorySplits.slice(-2).join('/');
         const title = `${item.Name} ${item.Version} in ${repositoryName}`;
         const description: string | undefined = renderToString(<ScoopDescription item={item} />);
         const pubDate: number | string = item.Metadata.Committed;
-        const linkUrl: string | undefined = item.Homepage;
+        const linkUrl = `${item.Metadata.Repository}/blob/${item.Metadata.Sha}/${item.Metadata.FilePath}`;
         const authors: DataItem['author'] = [
             {
                 name: repositoryName,
@@ -137,7 +136,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
         description: undefined,
         link: targetUrl,
         item: items,
-        allowEmpty: true,
         author,
         language,
         id: targetUrl,
@@ -176,7 +174,7 @@ const ScoopDescription = ({ item }: { item: any }) => {
                     <tr>
                         <th>Version</th>
                         <td>
-                            <a href={`${item.Metadata.Repository}/blob/${item.Metadata.FilePath}`}>v{item.Version}</a>
+                            <a href={`${item.Metadata.Repository}/blob/${item.Metadata.Sha}/${item.Metadata.FilePath}`}>v{item.Version}</a>
                         </td>
                     </tr>
                 ) : null}
@@ -200,10 +198,10 @@ const ScoopDescription = ({ item }: { item: any }) => {
                         <td>{item.License}</td>
                     </tr>
                 ) : null}
-                {item.Note ? (
+                {item.Notes ? (
                     <tr>
                         <th>Note</th>
-                        <td>{item.Note}</td>
+                        <td>{item.Notes}</td>
                     </tr>
                 ) : null}
             </tbody>
@@ -224,7 +222,7 @@ export const route: Route = {
         },
     },
     description: `::: tip
-To subscribe to [Apps](https://scoop.sh/#/apps?s=2&d=1&n=true&dm=true&o=true), where the source URL is \`https://scoop.sh/#/apps?s=2&d=1&n=true&dm=true&o=true\`, extract the certain parts from this URL to be used as parameters, resulting in the route as [\`/scoop/apps/s=2&d=1&n=true&dm=true&o=true\`](https://rsshub.app/scoop/apps/s=2&d=1&n=true&dm=true&o=true).
+To subscribe to [Apps](https://scoop.sh/#/apps?s=2\\&d=1\\&n=true\\&dm=true\\&o=true), where the source URL is \`https://scoop.sh/#/apps?s=2&d=1&n=true&dm=true&o=true\`, extract the certain parts from this URL to be used as parameters, resulting in the route as [\`/scoop/apps/s=2&d=1&n=true&dm=true&o=true\`](https://rsshub.app/scoop/apps/s=2\\&d=1\\&n=true\\&dm=true\\&o=true).
 :::`,
     categories: ['program-update'],
     features: {
@@ -236,16 +234,6 @@ To subscribe to [Apps](https://scoop.sh/#/apps?s=2&d=1&n=true&dm=true&o=true), w
         supportPodcast: false,
         supportScihub: false,
     },
-    radar: [
-        {
-            source: ['scoop.sh/#/apps', 'scoop.sh'],
-            target: (_, url) => {
-                const urlObj: URL = new URL(url);
-                const query: string | undefined = urlObj.searchParams.toString() ?? undefined;
-
-                return `/scoop/apps${query ? `/${query}` : ''}`;
-            },
-        },
-    ],
+    radar: [{ source: ['scoop.sh'], target: '/apps' }],
     view: ViewType.Notifications,
 };

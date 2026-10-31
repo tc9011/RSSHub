@@ -3,7 +3,7 @@ import { load } from 'cheerio';
 import type { Element } from 'domhandler';
 import type { Context } from 'hono';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
@@ -16,25 +16,27 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
     const response = await ofetch(targetUrl);
     const $: CheerioAPI = load(response);
-    const language = $('html').attr('lang') ?? 'en';
+    const language = ($('html').attr('lang') ?? 'en') as Language;
 
-    const title: string = $('meta[property="og:title"]').attr('content');
-    const description: string | undefined = $('div#description').html();
+    const title: string = $('meta[property="og:title"]').attr('content')!;
+    const description: string | undefined = $('div#description').html() ?? undefined;
     const pubDateStr: string | undefined = $('h3.mt-0.mb-3').last().text();
     const categoryEls: Element[] = $('a[data-package-tag]').toArray();
     const categories: string[] = [...new Set(categoryEls.map((el) => $(el).text()).filter(Boolean))];
     const authorEls: Element[] = $('img[alt="gravatar"]').toArray();
     const authors: DataItem['author'] = authorEls.map((authorEl) => {
         const $authorEl: Cheerio<Element> = $(authorEl).parent();
+        const authorHref = $authorEl.attr('href');
 
         return {
             name: $authorEl.find('span').text(),
-            url: $authorEl.attr('href') ? new URL($authorEl.attr('href') as string, baseUrl).href : undefined,
-            avatar: $authorEl.attr('src'),
+            url: authorHref ? new URL(authorHref, baseUrl).href : undefined,
+            avatar: $(authorEl).attr('src'),
         };
     });
     const guid = `chocolatey-${title}`;
-    const image: string | undefined = $('div.package-logo img').attr('src') ? new URL($('div.package-logo img').attr('src') as string, baseUrl).href : undefined;
+    const logoSrc = $('div.package-logo img').attr('src');
+    const image: string | undefined = logoSrc ? new URL(logoSrc, baseUrl).href : undefined;
     const upDatedStr: string | undefined = pubDateStr;
 
     const processedItem: DataItem = {
@@ -96,12 +98,8 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['community.chocolatey.org/packages'],
-            target: (params) => {
-                const id: string = params.id;
-
-                return `/chocolatey/package${id ? `/${id}` : ''}`;
-            },
+            source: ['community.chocolatey.org/packages/:id', 'community.chocolatey.org/packages/:id/:version'],
+            target: '/packages/:id',
         },
     ],
     view: ViewType.Notifications,
@@ -112,7 +110,7 @@ export const route: Route = {
         url: 'community.chocolatey.org',
         maintainers: ['nczitzk'],
         handler,
-        example: '/chocolatey/package/microsoft-edge',
+        example: '/chocolatey/packages/microsoft-edge',
         parameters: {
             id: {
                 description: '程序包 ID',

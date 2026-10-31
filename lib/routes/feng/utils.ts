@@ -41,7 +41,7 @@ const getCategory = (topicId) => {
 
 const getForumMeta = async (topicId) => {
     const categoryData = await getCategory(topicId);
-    return Object.values(categoryData.data.dataList).find((item) => item.dataList.find((i) => i.topicId === topicId));
+    return Object.values<any>(categoryData.data.dataList).find((item) => item.dataList.find((i) => i.topicId === topicId));
 };
 
 const getThreads = (topicId, type) => {
@@ -71,6 +71,9 @@ const getThread = (tid, topicId) => {
                 'X-Request-Id': getXRequestId(url),
             },
         });
+        if (response.data.status.code !== 0) {
+            throw new Error(`The forum did not provide thread ${tid}: ${response.data.status.message} (code ${response.data.status.code}). Check that ${baseUrl}/post/${tid} is public.`);
+        }
         return response.data;
     });
 };

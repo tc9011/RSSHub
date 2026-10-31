@@ -1,8 +1,10 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
+import { parseDate } from '@/utils/parse-date';
+import timezone from '@/utils/timezone';
 
 import { namespace } from './namespace';
 
@@ -23,22 +25,22 @@ export const route: Route = {
 
 async function handler() {
     const response = await ofetch('https://www.chongdiantou.com/nice-json/front-end/home-load-more');
-    let items = [];
+    let items: DataItem[];
 
     items = response.data.map((item) => ({
         title: item.title,
         link: item.link,
         image: item.cover,
-        pubDate: new Date(item.time),
+        pubDate: timezone(parseDate(item.time, 'YYYY-MM-DD HH:mm:ss'), 8),
         category: item.cat.name,
     }));
 
     items = await Promise.all(
         items.map(
             async (item) =>
-                await cache.tryGet(item.link, async () => {
+                await cache.tryGet(item.link!, async () => {
                     try {
-                        const response = await ofetch(item.link);
+                        const response = await ofetch(item.link!);
                         const $ = load(response);
                         item.description = $('.post-content').html() || 'No content found';
                     } catch {

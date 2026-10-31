@@ -4,6 +4,7 @@ import pMap from 'p-map';
 import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
+import { getRouteLimit } from '@/utils/route-limit';
 
 export const route: Route = {
     path: '/news',
@@ -25,20 +26,21 @@ async function handler(ctx) {
     const link = 'https://www.anthropic.com/news';
     const response = await ofetch(link);
     const $ = load(response);
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 20;
+    const limit = getRouteLimit(ctx, 10);
 
-    const list: DataItem[] = $('.contentFadeUp a')
+    const list: DataItem[] = $('[data-listing-row]')
         .toArray()
         .slice(0, limit)
         .map((el) => {
             const $el = $(el);
-            const title = $el.find('h3').text().trim();
-            const href = $el.attr('href') ?? '';
-            const pubDate = $el.find('p.detail-m.agate').text().trim() || $el.find('div[class^="PostList_post-date__"]').text().trim(); // legacy selector used roughly before Jan 2025
-            const fullLink = href.startsWith('http') ? href : `https://www.anthropic.com${href}`;
+            const $link = $el.find('a[class$="_title-link"]');
+            const title = $link.text().trim();
+            const href = $link.attr('href') ?? '';
+            const pubDate = $el.find('time').text().trim();
+            const link = href.startsWith('http') ? href : `https://www.anthropic.com${href}`;
             return {
                 title,
-                link: fullLink,
+                link,
                 pubDate,
             };
         });
@@ -52,15 +54,7 @@ async function handler(ctx) {
 
                 const content = $('#main-content');
 
-                // Remove meaningless information (heading, sidebar, quote carousel, footer and codeblock controls)
-                $(`
-                    [class^="PostDetail_post-heading"],
-                    [class^="ArticleDetail_sidebar-container"],
-                    [class^="QuoteCarousel_carousel-controls"],
-                    [class^="PostDetail_b-social-share"],
-                    [class^="LandingPageSection_root"],
-                    [class^="CodeBlock_controls"]
-                `).remove();
+                $('[class$="_Header"], [class$="_ConstellationPanelSlot"]').remove();
 
                 content.find('img').each((_, e) => {
                     const $e = $(e);
@@ -73,7 +67,7 @@ async function handler(ctx) {
                     }
                 });
 
-                item.description = content.html() ?? undefined;
+                item.description = content.html();
 
                 return item;
             }),

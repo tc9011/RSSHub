@@ -2,8 +2,9 @@ import type { CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
 import type { Context } from 'hono';
 import iconv from 'iconv-lite';
+import pMap from 'p-map';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
@@ -12,7 +13,8 @@ import timezone from '@/utils/timezone';
 
 export const handler = async (ctx: Context): Promise<Data> => {
     const { category = 23 } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '30', 10);
+    const requestedLimit = Number(ctx.req.query('limit'));
+    const limit = Number.isSafeInteger(requestedLimit) && requestedLimit > 0 ? requestedLimit : 30;
 
     const baseUrl = 'https://lol.qq.com';
     const apiBaseUrl = 'https://apps.game.qq.com';
@@ -32,11 +34,9 @@ export const handler = async (ctx: Context): Promise<Data> => {
     });
 
     const $: CheerioAPI = load(iconv.decode(Buffer.from(targetResponse), 'gbk'));
-    const language = $('html').attr('lang') ?? 'zh-CN';
+    const language = ($('html').attr('lang') ?? 'zh-CN') as Language;
 
-    let items: DataItem[] = [];
-
-    items = response.data.result.slice(0, limit).map((item): DataItem => {
+    let items: DataItem[] = response.data.result.slice(0, limit).map((item): DataItem => {
         const title: string = item.sTitle;
         const pubDate: number | string = item.sCreated;
         const linkUrl: string | undefined = item.iDocID ? `${item.iVideoId ? 'v/v2' : 'news'}/detail.shtml?docid=${item.iDocID}` : undefined;
@@ -54,14 +54,14 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
         const processedItem: DataItem = {
             title,
-            pubDate: pubDate ? timezone(parseDate(pubDate), +8) : undefined,
+            pubDate: pubDate ? timezone(parseDate(pubDate), 8) : undefined,
             link: linkUrl ? new URL(linkUrl, baseUrl).href : undefined,
             author: authors,
             guid,
             id: guid,
             image,
             banner: image,
-            updated: updated ? timezone(parseDate(updated), +8) : undefined,
+            updated: updated ? timezone(parseDate(updated), 8) : undefined,
             language,
         };
 
@@ -69,8 +69,9 @@ export const handler = async (ctx: Context): Promise<Data> => {
     });
 
     items = (
-        await Promise.all(
-            items.map((item) => {
+        await pMap(
+            items,
+            (item) => {
                 if (!item.link) {
                     return item;
                 }
@@ -108,7 +109,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
                     const processedItem: DataItem = {
                         title,
                         description,
-                        pubDate: pubDate ? timezone(parseDate(pubDate), +8) : undefined,
+                        pubDate: pubDate ? timezone(parseDate(pubDate), 8) : undefined,
                         link: linkUrl ? new URL(linkUrl, baseUrl).href : undefined,
                         author: authors,
                         guid,
@@ -119,7 +120,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
                         },
                         image,
                         banner: image,
-                        updated: updated ? timezone(parseDate(updated), +8) : undefined,
+                        updated: updated ? timezone(parseDate(updated), 8) : undefined,
                         language,
                     };
 
@@ -128,7 +129,8 @@ export const handler = async (ctx: Context): Promise<Data> => {
                         ...processedItem,
                     };
                 });
-            })
+            },
+            { concurrency: 3 }
         )
     ).filter((_): _ is DataItem => true);
 
@@ -140,7 +142,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
         description: $('meta[name="Description"]').attr('content'),
         link: targetUrl,
         item: items,
-        allowEmpty: true,
         image: `https:${$('a.logo img').attr('src')}`,
         author: $('meta[name="author"]').attr('content'),
         language,
@@ -164,8 +165,7 @@ export const route: Route = {
 
 | 综合 | 公告 | 赛事 | 攻略 | 社区 |
 | ---- | ---- | ---- | ---- | ---- |
-| 23   | 24   | 25   | 27   | 28   |
-`,
+| 23   | 24   | 25   | 27   | 28   |`,
     categories: ['game'],
     features: {
         requireConfig: false,

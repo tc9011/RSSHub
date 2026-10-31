@@ -4,7 +4,7 @@ import type { Element } from 'domhandler';
 import type { Context } from 'hono';
 import iconv from 'iconv-lite';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
@@ -16,7 +16,7 @@ const baseUrl = `https://${domain}`;
 
 export const handler = async (ctx: Context): Promise<Data> => {
     const { category = 'gndy/dyzz' } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '25', 10);
+    const limit = Number(ctx.req.query('limit') ?? '25');
 
     const targetUrl: string = new URL(`html/${category.replace(/^html\//, '')}`, baseUrl).href;
 
@@ -24,14 +24,12 @@ export const handler = async (ctx: Context): Promise<Data> => {
         responseType: 'arrayBuffer',
     });
     const $: CheerioAPI = load(iconv.decode(Buffer.from(response), 'gb2312'));
-    const language = $('html').attr('lang') ?? 'zh-CN';
+    const language = ($('html').attr('lang') ?? 'zh-CN') as Language;
 
-    let items: DataItem[] = [];
-
-    items = $('div.co_content8 ul table')
+    let items: DataItem[] = $('div.co_content8 ul table')
         .slice(0, limit)
         .toArray()
-        .map((el): Element => {
+        .map((el) => {
             const $el: Cheerio<Element> = $(el);
 
             const $aEl: Cheerio<Element> = $el.find('a.ulink');
@@ -45,14 +43,14 @@ export const handler = async (ctx: Context): Promise<Data> => {
             const processedItem: DataItem = {
                 title,
                 description,
-                pubDate: pubDateStr ? timezone(parseDate(pubDateStr), +8) : undefined,
+                pubDate: pubDateStr ? timezone(parseDate(pubDateStr), 8) : undefined,
                 link: linkUrl ? new URL(linkUrl, baseUrl).href : undefined,
                 doi: $el.find('meta[name="citation_doi"]').attr('content'),
                 content: {
                     html: description,
                     text: description,
                 },
-                updated: upDatedStr ? timezone(parseDate(upDatedStr), +8) : undefined,
+                updated: upDatedStr ? timezone(parseDate(upDatedStr), 8) : undefined,
                 language,
             };
 
@@ -67,7 +65,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
                 }
 
                 return cache.tryGet(item.link, async (): Promise<DataItem> => {
-                    const detailResponse = await ofetch(item.link, {
+                    const detailResponse = await ofetch(item.link!, {
                         responseType: 'arrayBuffer',
                     });
                     const $$: CheerioAPI = load(iconv.decode(Buffer.from(detailResponse), 'gb2312'));
@@ -242,76 +240,72 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['${domain}/index.htm', `${domain}/html/:category`],
-            target: (params) => {
-                const category: string = params.category;
-
-                return `/dytt/html${category ? `/${category}` : ''}`;
-            },
+            source: [`${domain}/`, `${domain}/index.htm`],
+            target: '/gndy/dyzz',
         },
         {
             title: '最新影片',
-            source: [`${baseUrl}/html/gndy/dyzz/index.html`],
+            source: [`${domain}/html/gndy/dyzz`, `${domain}/html/gndy/dyzz/index.html`],
             target: '/gndy/dyzz',
         },
         {
             title: '经典影片',
-            source: [`${baseUrl}/html/gndy/index.html`],
+            source: [`${domain}/html/gndy`, `${domain}/html/gndy/index.html`],
             target: '/gndy',
         },
         {
             title: '国内电影',
-            source: [`${baseUrl}/html/gndy/china/index.html`],
+            source: [`${domain}/html/gndy/china`, `${domain}/html/gndy/china/index.html`],
             target: '/gndy/china',
         },
         {
             title: '欧美电影',
-            source: [`${baseUrl}/html/gndy/oumei/index.html`],
+            source: [`${domain}/html/gndy/oumei`, `${domain}/html/gndy/oumei/index.html`],
             target: '/gndy/oumei',
         },
         {
             title: '其它电影',
-            source: [`${baseUrl}/html/gndy/rihan/index.html`],
+            source: [`${domain}/html/gndy/rihan`, `${domain}/html/gndy/rihan/index.html`],
             target: '/gndy/rihan',
         },
         {
             title: '华语电视',
-            source: [`${baseUrl}/html/tv/hytv/index.html`],
+            source: [`${domain}/html/tv/hytv`, `${domain}/html/tv/hytv/index.html`],
             target: '/tv/hytv',
         },
         {
             title: '欧美电视',
-            source: [`${baseUrl}/html/tv/oumeitv/index.html`],
+            source: [`${domain}/html/tv/oumeitv`, `${domain}/html/tv/oumeitv/index.html`],
             target: '/tv/oumeitv',
         },
         {
             title: '最新综艺',
-            source: [`${baseUrl}/html/zongyi2013/index.html`],
+            source: [`${domain}/html/zongyi2013`, `${domain}/html/zongyi2013/index.html`],
             target: '/zongyi2013',
         },
         {
             title: '旧版综艺',
-            source: [`${baseUrl}/html/2009zongyi/index.html`],
+            source: [`${domain}/html/2009zongyi`, `${domain}/html/2009zongyi/index.html`],
             target: '/2009zongyi',
         },
         {
             title: '动漫资源',
-            source: [`${baseUrl}/html/dongman/index.html`],
+            source: [`${domain}/html/dongman`, `${domain}/html/dongman/index.html`],
             target: '/dongman',
         },
         {
             title: '旧版游戏',
-            source: [`${baseUrl}/html/game/index.html`],
+            source: [`${domain}/html/game`, `${domain}/html/game/index.html`],
             target: '/game',
         },
         {
             title: '游戏下载',
-            source: [`${baseUrl}/html/newgame/index.html`],
+            source: [`${domain}/html/newgame`, `${domain}/html/newgame/index.html`],
             target: '/newgame',
         },
         {
             title: '日韩剧集专区',
-            source: [`${baseUrl}/html/tv/rihantv/index.html`],
+            source: [`${domain}/html/tv/rihantv`, `${domain}/html/tv/rihantv/index.html`],
             target: '/tv/rihantv',
         },
     ],

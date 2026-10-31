@@ -1,117 +1,113 @@
-import { load } from 'cheerio';
+import type { CheerioAPI } from 'cheerio';
 import dayjs from 'dayjs';
-import { JSDOM } from 'jsdom';
-import { JSONPath } from 'jsonpath-plus';
+import { escapeAttribute, escapeText } from 'entities';
 
-import NotFoundError from '@/errors/types/not-found';
-import cache from '@/utils/cache';
-import ofetch from '@/utils/ofetch';
+import { parseDate } from '@/utils/parse-date';
+import { queryToBoolean } from '@/utils/readable-social';
 
-const profileUrl = (user: string) => `https://www.threads.com/@${user}`;
-const threadUrl = (code: string) => `https://www.threads.com/t/${code}`;
+export const profileUrl = (user: string) => `https://www.threads.com/@${user}`;
+export const threadUrl = (code: string) => `https://www.threads.com/t/${code}`;
 
-const USER_AGENT = 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1';
-
-const extractTokens = async (user): Promise<{ lsd: string }> => {
-    const response = await ofetch(profileUrl(user), {
-        headers: {
-            'User-Agent': USER_AGENT,
-            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'Accept-Encoding': 'gzip, br',
-            'Accept-Language': 'zh-CN,zh;q=0.9',
-            'Cache-Control': 'no-cache',
-            Pragma: 'no-cache',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Upgrade-Insecure-Requests': '1',
-        },
-    });
-
-    const $ = load(response);
-    const data = $('script:contains("LSD"):first').text();
-    const lsd = data.match(/"LSD",\[],{"token":"([\w@-]+)"},/)?.[1];
-
-    if (!lsd) {
-        throw new NotFoundError('LSD token not found');
+export const getPubDate = (takenAt?: number | string): Date | undefined => {
+    if ((typeof takenAt !== 'number' && typeof takenAt !== 'string') || (typeof takenAt === 'string' && !takenAt.trim()) || !Number.isFinite(Number(takenAt))) {
+        return undefined;
     }
-
-    return { lsd };
+    const date = parseDate(takenAt, 'X');
+    return Number.isFinite(date.getTime()) ? date : undefined;
 };
 
-const getUserId = (user: string): Promise<string> =>
-    cache
-        .tryGet(`threads:userId:${user}`, async () => {
-            const response = await ofetch(profileUrl(user), {
-                headers: {
-                    'User-Agent': USER_AGENT,
-                    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                    'Accept-Encoding': 'gzip, br',
-                    'Accept-Language': 'zh-CN,zh;q=0.9',
-                    'Cache-Control': 'no-cache',
-                    Pragma: 'no-cache',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'none',
-                    'Sec-Fetch-User': '?1',
-                    'Upgrade-Insecure-Requests': '1',
-                },
-            });
+export interface ThreadItem {
+    post: {
+        user?: {
+            username: string;
+            full_name: string;
+            profile_pic_url: string;
+        };
+        taken_at?: number;
+        code: string;
+        caption?: {
+            text: string;
+        };
+    };
+}
 
-            const dom = new JSDOM(response);
+const findThreadItems = (node, acc: ThreadItem[] = []): ThreadItem[] => {
+    if (node instanceof Object) {
+        if (Array.isArray(node.thread_items)) {
+            acc.push(...node.thread_items);
+        }
+        for (const value of Object.values(node)) {
+            findThreadItems(value, acc);
+        }
+    }
+    return acc;
+};
 
-            for (const el of dom.window.document.querySelectorAll('script[data-sjs]')) {
-                try {
-                    const data = JSONPath({
-                        path: '$..user_id',
-                        json: JSON.parse(el.textContent || ''),
-                    });
+export const extractThreadItems = ($: CheerioAPI): ThreadItem[] => {
+    let threadsData: ThreadItem[] = [];
+    $('script[data-sjs]:contains("thread_items")').each((_, script) => {
+        threadsData = findThreadItems(JSON.parse($(script).text()));
+        return threadsData.length === 0;
+    });
+    return threadsData;
+};
 
-                    if (data?.[0]) {
-                        return data[0];
-                    }
-                } catch {
-                    // Skip invalid JSON
-                }
-            }
+interface Profile {
+    username: string;
+    full_name: string;
+    biography: string;
+    profile_pic_url: string;
+}
 
-            throw new NotFoundError('User ID not found');
-        })
-        .then((result): string => {
-            if (result) {
-                if (typeof result === 'string') {
-                    return result;
-                } else if (typeof result === 'number') {
-                    return result.toString();
-                }
-            }
-            throw new TypeError('Invalid user ID type');
-        });
+const findProfile = (node): Profile | undefined => {
+    if (!(node instanceof Object)) {
+        return;
+    }
+    if ('biography' in node) {
+        return node;
+    }
+    for (const value of Object.values(node)) {
+        const profile = findProfile(value);
+        if (profile) {
+            return profile;
+        }
+    }
+};
+
+export const extractProfile = ($: CheerioAPI): Profile | undefined => {
+    let profile: Profile | undefined;
+    $('script[data-sjs]:contains("biography")').each((_, script) => {
+        profile = findProfile(JSON.parse($(script).text()));
+        return !profile;
+    });
+    return profile;
+};
+
+export const parseRouteOptions = (params: URLSearchParams) => ({
+    showAuthorInTitle: queryToBoolean(params.get('showAuthorInTitle')) ?? true,
+    showAuthorInDesc: queryToBoolean(params.get('showAuthorInDesc')) ?? true,
+    showAuthorAvatarInDesc: queryToBoolean(params.get('showAuthorAvatarInDesc')) ?? false,
+    showQuotedInTitle: queryToBoolean(params.get('showQuotedInTitle')) ?? true,
+    showQuotedAuthorAvatarInDesc: queryToBoolean(params.get('showQuotedAuthorAvatarInDesc')) ?? false,
+    showEmojiForQuotesAndReply: queryToBoolean(params.get('showEmojiForQuotesAndReply')) ?? true,
+    replies: queryToBoolean(params.get('replies')) ?? false,
+});
 
 const hasMedia = (post) => post.image_versions2 || post.carousel_media || post.video_versions;
 
-const buildMedia = (post) => {
-    let html = '';
-
-    if (post.carousel_media) {
-        for (const media of post.carousel_media) {
-            const firstImage = media.image_versions2?.candidates[0];
-            const firstVideo = media.video_versions?.[0];
-            html += firstVideo ? `<video controls autoplay loop poster="${firstImage.url}"><source src="${firstVideo.url}"/></video>` : `<img src="${firstImage.url}"/>`;
-        }
-    } else {
-        const mainImage = post.image_versions2?.candidates?.[0];
-        const mainVideo = post.video_versions?.[0];
-        if (mainImage) {
-            html += mainVideo ? `<video controls autoplay loop poster="${mainImage.url}"><source src="${mainVideo.url}"/></video>` : `<img src="${mainImage.url}"/>`;
-        }
+const buildMediaItem = (media) => {
+    const image = media.image_versions2?.candidates?.[0];
+    const video = media.video_versions?.[0];
+    if (video?.url) {
+        const poster = image?.url ? ` poster="${escapeAttribute(image.url)}"` : '';
+        return `<video controls autoplay loop${poster}><source src="${escapeAttribute(video.url)}"/></video>`;
     }
-
-    return html;
+    return image?.url ? `<img src="${escapeAttribute(image.url)}"/>` : '';
 };
 
-const buildContent = (item, options) => {
+const buildMedia = (post) => (post.carousel_media ?? [post]).map((media) => buildMediaItem(media)).join('');
+
+export const buildContent = (item, options) => {
     let title = '';
     let description = '';
     const quotedPost = item.post.text_post_app_info?.share_info?.quoted_post;
@@ -126,9 +122,9 @@ const buildContent = (item, options) => {
     if (options.showAuthorInDesc) {
         description += '<p>';
         if (options.showAuthorAvatarInDesc) {
-            description += `<img src="${item.post.user?.profile_pic_url}" width="48px" height="48px"> `;
+            description += `<img src="${escapeAttribute(item.post.user?.profile_pic_url ?? '')}" width="48px" height="48px"> `;
         }
-        description += `<strong>@${item.post.user?.username}</strong>`;
+        description += `<strong>@${escapeText(item.post.user?.username ?? '')}</strong>`;
         if (embededPost) {
             description += options.showEmojiForQuotesAndReply ? ' 🔁' : ' quoted';
         } else if (isReply) {
@@ -139,7 +135,7 @@ const buildContent = (item, options) => {
 
     if (item.post.caption?.text) {
         title += item.post.caption?.text;
-        description += `<p>${item.post.caption?.text}</p>`;
+        description += `<p>${escapeText(item.post.caption.text)}</p>`;
     }
 
     if (hasMedia(item.post)) {
@@ -153,19 +149,20 @@ const buildContent = (item, options) => {
             title += `"${embededPost.caption?.text}"`;
         }
         description += '<blockquote>';
-        description += `<p>${embededPost.caption?.text}</p>`;
+        description += `<p>${escapeText(embededPost.caption?.text ?? '')}</p>`;
         if (hasMedia(embededPost)) {
             description += `<p>${buildMedia(embededPost)}</p>`;
         }
         description += '— ';
         if (options.showQuotedAuthorAvatarInDesc) {
-            description += `<img src="${embededPost.user?.profile_pic_url}" width="24px" height="24px"> `;
+            description += `<img src="${escapeAttribute(embededPost.user?.profile_pic_url ?? '')}" width="24px" height="24px"> `;
         }
-        description += `@${embededPost.user?.username} — `;
-        description += `<a href="${threadUrl(embededPost.code)}">${dayjs(embededPost.taken_at, 'X').toString()}</a>`;
+        description += `@${escapeText(embededPost.user?.username ?? '')}`;
+        const quotedDate = getPubDate(embededPost.taken_at);
+        if (quotedDate) {
+            description += ` — <a href="${escapeAttribute(threadUrl(embededPost.code))}">${escapeText(dayjs(quotedDate).toString())}</a>`;
+        }
         description += '</blockquote>';
     }
     return { title, description };
 };
-
-export { buildContent, extractTokens, getUserId, profileUrl, threadUrl };

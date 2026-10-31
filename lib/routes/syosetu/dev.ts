@@ -3,6 +3,7 @@ import { load } from 'cheerio';
 import type { Data, Route } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import timezone from '@/utils/timezone';
 
 export const route: Route = {
     path: '/dev',
@@ -40,17 +41,17 @@ async function handler(): Promise<Data> {
     const dates = logContainer
         .find('dt')
         .toArray()
-        .map((element) => $(element).text().trim());
+        .map((element) => $(element).text());
 
     const contents = logContainer
         .find('dd')
         .toArray()
-        .map((element) => $(element).text().trim());
+        .map((element) => $(element).html() ?? '');
 
     const updates = dates
         .map((date, index) => ({
             date,
-            content: contents[index]?.replaceAll('\n', '<br>') ?? '',
+            content: contents[index] ?? '',
         }))
         .filter((update) => update.content);
 
@@ -61,7 +62,7 @@ async function handler(): Promise<Data> {
         item: updates.map((update) => ({
             title: update.date,
             description: update.content,
-            pubDate: parseDate(update.date.replace('/', '-')),
+            pubDate: update.date ? timezone(parseDate(update.date, 'YYYY/MM/DD'), 9) : undefined,
             guid: `syosetu:dev:${update.date}`,
         })),
     };
