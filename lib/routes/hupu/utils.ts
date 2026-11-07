@@ -1,10 +1,38 @@
-import { load } from 'cheerio';
+import { type CheerioAPI, load } from 'cheerio';
 
 import type { DataItem } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate, parseRelativeDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/parse-date';
 import timezone from '@/utils/timezone';
+
+export function extractForumThreadDates($: CheerioAPI): Map<string, Date> {
+    const prefix = 'window.$$data=';
+    const script = $('script')
+        .toArray()
+        .map((element) => $(element).text().trim())
+        .find((content) => content.startsWith(prefix));
+    const dates = new Map<string, Date>();
+    if (!script) {
+        return dates;
+    }
+
+    const data = JSON.parse(script.slice(prefix.length).replace(/;\s*$/, '')) as {
+        topic?: { threads?: { list?: Array<{ url?: string; createdAt?: number }> } };
+    };
+    const threads = data.topic?.threads?.list ?? [];
+    for (const thread of threads) {
+        if (!(thread.url && typeof thread.createdAt === 'number' && Number.isFinite(thread.createdAt) && thread.createdAt > 0)) {
+            continue;
+        }
+
+        const date = parseDate(thread.createdAt);
+        if (Number.isFinite(date.getTime())) {
+            dates.set(thread.url, date);
+        }
+    }
+    return dates;
+}
 
 export function extractNextData<T = unknown>(html: string, url?: string): T {
     const scriptMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">(.*?)<\/script>/);
@@ -13,15 +41,16 @@ export function extractNextData<T = unknown>(html: string, url?: string): T {
     }
 
     try {
-        return JSON.parse(scriptMatch[1]) as T;
+        return JSON.parse(scriptMatch[1]);
     } catch (error) {
-        throw new Error(`Failed to parse __NEXT_DATA__ JSON: ${error instanceof Error ? error.message : String(error)}`);
+        throw new Error(`Failed to parse __NEXT_DATA__ JSON: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
     }
 }
 
 interface ThreadNextData {
     props: {
         pageProps: {
+            detail?: { thread?: { createdAt?: number } };
             threadData: {
                 data: {
                     moduleConfigList: {
@@ -149,7 +178,8 @@ function generateTeamPlayerTable(team: TeamPlayerStats): string {
     const playerDataRows = allPlayers.map((player) => generatePlayerDataRow(player)).join('');
     const teamColor = hexToRgb(team.teamColor);
 
-    const headerRow = `<tr><td><div class="body-cell cell">时间</div></td><td><div class="body-cell cell">得分</div></td><td><div class="body-cell cell">篮板</div></td><td><div class="body-cell cell">助攻</div></td><td><div class="body-cell cell">抢断</div></td><td><div class="body-cell cell">盖帽</div></td><td><div class="body-cell cell">投篮</div></td><td><div class="body-cell cell">投篮%</div></td><td><div class="body-cell cell">三分</div></td><td><div class="body-cell cell">三分%</div></td><td><div class="body-cell cell">罚球</div></td><td><div class="body-cell cell">罚球%</div></td><td><div class="body-cell cell">失误</div></td><td><div class="body-cell cell">前板</div></td><td><div class="body-cell cell">后板</div></td><td><div class="body-cell cell">被盖</div></td><td><div class="body-cell cell">犯规</div></td><td><div class="body-cell cell">被犯</div></td><td><div class="body-cell cell">+/-</div></td></tr>`;
+    const headerRow =
+        '<tr><td><div class="body-cell cell">时间</div></td><td><div class="body-cell cell">得分</div></td><td><div class="body-cell cell">篮板</div></td><td><div class="body-cell cell">助攻</div></td><td><div class="body-cell cell">抢断</div></td><td><div class="body-cell cell">盖帽</div></td><td><div class="body-cell cell">投篮</div></td><td><div class="body-cell cell">投篮%</div></td><td><div class="body-cell cell">三分</div></td><td><div class="body-cell cell">三分%</div></td><td><div class="body-cell cell">罚球</div></td><td><div class="body-cell cell">罚球%</div></td><td><div class="body-cell cell">失误</div></td><td><div class="body-cell cell">前板</div></td><td><div class="body-cell cell">后板</div></td><td><div class="body-cell cell">被盖</div></td><td><div class="body-cell cell">犯规</div></td><td><div class="body-cell cell">被犯</div></td><td><div class="body-cell cell">+/-</div></td></tr>';
 
     return `<div class="match-player-data"><div class="table-wrap-views"><div class="table-views table-views-body"><div class="table-body-left"><table cellspacing="0" cellpadding="0"><tbody><tr><td><div class="body-cell cell team" style="border-color: ${teamColor}"><span style="padding-left: 15px">${team.teamName}</span></div></td></tr>${playerNameRows}</tbody></table></div><div class="table-body-right"><table cellspacing="0" cellpadding="0"><tbody>${headerRow}${playerDataRows}</tbody></table></div></div></div></div>${team.dnpPlayerList.length > 0 ? `<div class="not-play mlr-15"><span>未出场队员：</span>${team.dnpPlayerList.join('、')}</div>` : ''}`;
 }
@@ -162,7 +192,7 @@ function generateTeamCompareItem(leftValue: number, rightValue: number, label: s
     return `<div class="team-compare"><div class="team-item-data"><span class="left">${leftValue}</span><span class="center">${label}</span><span class="right">${rightValue}</span></div><div class="compare-item"><div class="item left"><span class="" style="width: ${leftPercent.toFixed(4)}%; background-color: ${leftColor}"></span></div><div class="item right"><span class="gray" style="width: ${rightPercent.toFixed(4)}%"></span></div></div></div>`;
 }
 
-export function generateGameStatusHtml(result: GameStatusResult): string {
+function generateGameStatusHtml(result: GameStatusResult): string {
     const { playerStats, matchStats, teamStats } = result;
 
     // Player data section
@@ -189,7 +219,7 @@ export function generateGameStatusHtml(result: GameStatusResult): string {
     return `<div class="match-post">${playerDataHtml}${teamDataHtml}</div>`;
 }
 
-export async function getGameStatus(matchID: string): Promise<string | null> {
+async function getGameStatus(matchID: string): Promise<string | null> {
     const res = await got({
         method: 'get',
         url: 'https://games.mobileapi.hupu.com/1/7.4.4/basketballapi/matchCompletedAutoPostContent',
@@ -197,9 +227,9 @@ export async function getGameStatus(matchID: string): Promise<string | null> {
             matchId: matchID,
         },
     });
-    const data = res.data;
+    const data: { result?: GameStatusResult } | null = res.data;
     if (data?.result && data.result.playerStats && data.result.matchStats && data.result.teamStats) {
-        const html = generateGameStatusHtml(data.result as GameStatusResult);
+        const html = generateGameStatusHtml(data.result);
         return html;
     }
     return null;
@@ -221,8 +251,16 @@ export function getEntryDetails(item: DataItem): Promise<DataItem> {
 
             // Extract matchId from __NEXT_DATA__
             let matchId: string | null = null;
+            let detailPubDate: Date | undefined;
             try {
                 const nextData = extractNextData<ThreadNextData>(html, item.link);
+                const timestamp = nextData.props?.pageProps?.detail?.thread?.createdAt;
+                if (typeof timestamp === 'number' && Number.isFinite(timestamp) && timestamp > 0) {
+                    const date = parseDate(timestamp);
+                    if (Number.isFinite(date.getTime())) {
+                        detailPubDate = date;
+                    }
+                }
                 const contentStr = nextData.props?.pageProps?.threadData?.data?.moduleConfigList?.content?.moduleContent?.content;
                 if (contentStr) {
                     const matchContent: MatchContent = JSON.parse(contentStr);
@@ -234,43 +272,29 @@ export function getEntryDetails(item: DataItem): Promise<DataItem> {
 
             const author = content('.bbs-user-info-name, .bbs-user-wrapper-content-name-span').text();
             const pubDateString = content('.second-line-user-info span:not([class])').text();
-            // Possible formats: 10:21, 45分钟前, 09-15 19:57
-            const currentYear = new Date().getFullYear();
-            const currentDate = new Date();
-            const monthDayTimePattern = /^(\d{2})-(\d{2}) (\d{2}):(\d{2})$/;
-            const timeOnlyPattern = /^(\d{1,2}):(\d{2})$/;
-            let processedDateString = pubDateString;
-
-            if (monthDayTimePattern.test(pubDateString)) {
-                processedDateString = `${currentYear}-${pubDateString}`;
-            } else if (timeOnlyPattern.test(pubDateString)) {
-                const month = String(currentDate.getMonth() + 1).padStart(2, '0');
-                const day = String(currentDate.getDate()).padStart(2, '0');
-                processedDateString = `${currentYear}-${month}-${day} ${pubDateString}`;
-            }
-
-            const pubDate = [item.pubDate, timezone(parseDate(processedDateString), +8), timezone(parseRelativeDate(pubDateString), +8)].find((d) => d instanceof Date && !Number.isNaN(d.getTime()));
+            const fullDate = pubDateString ? parseDate(pubDateString, ['YYYY-MM-DD HH:mm:ss', 'YYYY-MM-DD HH:mm', 'YYYY-MM-DD'], true) : undefined;
+            const pubDate = [item.pubDate, detailPubDate, fullDate && Number.isFinite(fullDate.getTime()) ? timezone(fullDate, 8) : undefined].find((date) => date instanceof Date && Number.isFinite(date.getTime()));
             const categories = content('.basketballTobbs_tag > a, .tag-player-team')
                 .toArray()
                 .map((c) => content(c).text())
                 .filter(Boolean);
 
             content('.basketballTobbs_tag').remove();
-            content('.hupu-img').each(function () {
-                const imgSrc = content(this).attr('data-gif') || content(this).attr('data-origin') || content(this).attr('src');
-                content(this).parent().html(`<img src="${imgSrc}">`);
+            content('.hupu-img').each((_, el) => {
+                const imgSrc = content(el).attr('data-gif') || content(el).attr('data-origin') || content(el).attr('src');
+                content(el).parent().html(`<img src="${imgSrc}">`);
             });
 
-            // 分别获取内容元素
+            // Collect the content sections separately
             const descriptionParts: string[] = [];
 
-            // 获取主要内容
+            // Extract the main content
             const mainContent = content('#bbs-thread-content, .bbs-content-font').html();
             if (mainContent) {
                 descriptionParts.push(mainContent);
             }
 
-            // 单独处理视频部分
+            // Include videos from the separate wrapper
             const videoWrapper = content('.header-video-wrapper');
             if (videoWrapper.length > 0) {
                 const videoElement = videoWrapper.find('video');
@@ -284,7 +308,7 @@ export function getEntryDetails(item: DataItem): Promise<DataItem> {
 
             let description = descriptionParts.length > 0 ? descriptionParts.join('') : undefined;
 
-            // 如果有 matchId，获取比赛数据
+            // Fetch match data when a matchId is available
             if (matchId) {
                 const gameStatusHtml = await getGameStatus(matchId);
                 if (gameStatusHtml) {

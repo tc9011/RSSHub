@@ -3,25 +3,40 @@ import { load } from 'cheerio';
 import type { Element } from 'domhandler';
 import type { Context } from 'hono';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
 import { renderDescription } from './templates/description';
 
+const parseListDate = (value: string, link?: string) => {
+    let date = value;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        const monthDay = date.match(/^(\d{2})-\d{2}$/);
+        const articleDate = link?.match(/\/news\/html\/(\d{4})-(\d{1,2})\//);
+        if (!monthDay || !articleDate || Number(monthDay[1]) !== Number(articleDate[2])) {
+            return;
+        }
+        date = `${articleDate[1]}-${date}`;
+    }
+    const pubDate = timezone(parseDate(date, 'YYYY-MM-DD', true), 8);
+    return Number.isNaN(pubDate.getTime()) ? undefined : pubDate;
+};
+
 export const handler = async (ctx: Context): Promise<Data> => {
     const { category = 'new' } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '30', 10);
+    const limit = getRouteLimit(ctx, 30);
 
     const rootUrl = 'https://www.ali213.net';
     const targetUrl: string = new URL(`news/${category.endsWith('/') ? category : `${category}/`}`, rootUrl).href;
 
     const response = await ofetch(targetUrl);
     const $: CheerioAPI = load(response);
-    const language: string = $('html').prop('lang') ?? 'zh-CN';
+    const language = ($('html').prop('lang') ?? 'zh-CN') as Language;
 
     let items: DataItem[] = $('div.n_lone')
         .slice(0, limit)
@@ -57,7 +72,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
             return {
                 title,
                 description,
-                pubDate: parseDate($item.find('div.lone_f_r_f span').first().text()),
+                pubDate: parseListDate($item.find('div.lone_f_r_f span').first().text(), link),
                 link,
                 author,
                 content: {
@@ -73,17 +88,17 @@ export const handler = async (ctx: Context): Promise<Data> => {
     items = (
         await Promise.all(
             items.map((item) => {
-                if (!item.link && typeof item.link !== 'string') {
+                if (item.link === undefined) {
                     return item;
                 }
 
                 return cache.tryGet(item.link, async (): Promise<DataItem> => {
                     try {
-                        const detailResponse = await ofetch(item.link);
+                        const detailResponse = await ofetch(item.link!);
                         const $$: CheerioAPI = load(detailResponse);
 
                         const title: string = $$('h1.newstit').text();
-                        const image: string | undefined = $$('div#Content img').first().prop('src');
+                        const image: string | undefined = $$('div#Content img').prop('src');
 
                         const mediaContent: Cheerio<Element> = $$('div#Content p span img');
                         const media: Record<string, Record<string, string>> = {};
@@ -92,24 +107,26 @@ export const handler = async (ctx: Context): Promise<Data> => {
                             mediaContent.each((_, el) => {
                                 const $$el: Cheerio<Element> = $$(el);
 
-                                const pEl: Cheerio<Element> = $$el.closest('p');
+                                const pEl = $$el.closest('p');
 
                                 const mediaUrl: string | undefined = $$el.prop('src');
                                 const mediaType: string | undefined = mediaUrl?.split(/\./).pop();
 
-                                if (mediaType && mediaUrl) {
-                                    media[mediaType] = { url: mediaUrl };
-
-                                    pEl.replaceWith(
-                                        renderDescription({
-                                            images: [
-                                                {
-                                                    src: mediaUrl,
-                                                },
-                                            ],
-                                        })
-                                    );
+                                if (!(mediaType && mediaUrl)) {
+                                    return;
                                 }
+
+                                media[mediaType] = { url: mediaUrl };
+
+                                pEl.replaceWith(
+                                    renderDescription({
+                                        images: [
+                                            {
+                                                src: mediaUrl,
+                                            },
+                                        ],
+                                    })
+                                );
                             });
                         }
 
@@ -130,14 +147,18 @@ export const handler = async (ctx: Context): Promise<Data> => {
                             })
                             .filter((_): _ is { url: string; type: string; content_html: string } => true);
 
+                        const pubTime = $$('div.newstag_l')
+                            .text()
+                            .match(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/)?.[0];
+
                         return {
                             ...item,
                             title,
                             description,
-                            pubDate: timezone(parseDate($$('div.newstag_l').text().split(/\s/)[0]), +8),
+                            pubDate: pubTime ? timezone(parseDate(pubTime, 'YYYY-MM-DD HH:mm:ss'), 8) : undefined,
                             content: {
                                 html: description,
-                                text: $$('div#Content').html() ?? '',
+                                text: $$('div#Content').html(),
                             },
                             image,
                             banner: image,
@@ -196,8 +217,7 @@ export const route: Route = {
 | 科技     | tech    |
 | 电竞     | esports |
 | 娱乐     | amuse   |
-| 手游     | mobile  |
-`,
+| 手游     | mobile  |`,
     categories: ['game'],
     features: {
         requireConfig: false,
@@ -211,11 +231,7 @@ export const route: Route = {
     radar: [
         {
             source: ['www.ali213.net/news/:category'],
-            target: (params) => {
-                const category = params.category;
-
-                return `/news/${category ? `/${category}` : ''}`;
-            },
+            target: '/news/:category?',
         },
         {
             title: '最新资讯',

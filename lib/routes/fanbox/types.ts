@@ -25,11 +25,15 @@ export interface UserInfoResponse {
 }
 
 export interface PostListResponse {
-    body: PostItem[];
+    body: {
+        posts: PostItem[];
+    };
 }
 
 export interface PostDetailResponse {
-    body: PostDetail;
+    body: {
+        post: PostDetail;
+    };
 }
 
 export interface PostItem {
@@ -112,7 +116,11 @@ export interface ArticlePost extends BasicPost {
     body: {
         blocks: Block[];
         embedMap: {
-            [key: string]: unknown;
+            [key: string]: {
+                id: string;
+                serviceProvider: string;
+                contentId: string;
+            };
         };
         fileMap: {
             [key: string]: {
@@ -136,7 +144,7 @@ export interface ArticlePost extends BasicPost {
         urlEmbedMap: {
             [key: string]:
                 | {
-                      type: 'html';
+                      type: 'html' | 'html.card';
                       html: string;
                       id: string;
                   }
@@ -144,6 +152,17 @@ export interface ArticlePost extends BasicPost {
                       type: 'fanbox.post';
                       id: string;
                       postInfo: PostItem;
+                  }
+                | {
+                      type: 'default';
+                      id: string;
+                      url: string;
+                      host: string;
+                  }
+                | {
+                      type: 'fanbox.creator';
+                      id: string;
+                      profile: UserInfoResponse['body'];
                   };
         };
     };

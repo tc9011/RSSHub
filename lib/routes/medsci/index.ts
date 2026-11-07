@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate, parseRelativeDate } from '@/utils/parse-date';
@@ -22,9 +23,9 @@ export const route: Route = {
     maintainers: ['nczitzk'],
     handler,
     description: `::: tip
-  下表为科室对应的 sid，若想获得 tid，可以到对应科室页面 URL 中寻找 \`t_id\` 字段的值，下面是一个例子：
+下表为科室对应的 sid，若想获得 tid，可以到对应科室页面 URL 中寻找 \`t_id\` 字段的值，下面是一个例子：
 
-  如 [肿瘤 - NSCLC](https://www.medsci.cn/department/details?s_id=5&t_id=277) 的 URL 为 \`https://www.medsci.cn/department/details?s_id=5&t_id=277\`，可以看到此时 \`s_id\` 对应 \`sid\` 的值为 5， \`t_id\` 对应 \`tid\` 的值为 277，所以可以得到路由 [\`/medsci/5/277\`](https://rsshub.app/medsci/5/277)
+如 [肿瘤 - NSCLC](https://www.medsci.cn/department/details?s_id=5\\&t_id=277) 的 URL 为 \`https://www.medsci.cn/department/details?s_id=5&t_id=277\`，可以看到此时 \`s_id\` 对应 \`sid\` 的值为 5， \`t_id\` 对应 \`tid\` 的值为 277，所以可以得到路由 [\`/medsci/5/277\`](https://rsshub.app/medsci/5/277)
 :::
 
 | 心血管 | 内分泌 | 消化 | 呼吸 | 神经科 |
@@ -83,21 +84,22 @@ async function handler(ctx) {
     let items = $('#articleList')
         .find('.ms-link')
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem => {
+            const $item = $(item);
 
-            const pubDate = item.parent().parent().find('.item-meta-item').first().text();
+            const pubDate = $item.parent().parent().find('.item-meta-item').first().text();
 
             return {
-                title: item.text(),
-                link: `${rootUrl}${item.attr('href').replace(/;jsessionid=[\dA-Z]+/, '')}`,
-                pubDate: pubDate.indexOf('-') > 0 ? parseDate(pubDate) : parseRelativeDate(pubDate),
+                title: $item.text(),
+                link: `${rootUrl}${$item.attr('href')!.replace(/;jsessionid=[\dA-Z]+/, '')}`,
+                pubDate: pubDate ? (pubDate.indexOf('-') > 0 ? parseDate(pubDate) : parseRelativeDate(pubDate)) : undefined,
             };
         });
 
-    items = await Promise.all(
-        items.map((item) =>
-            cache.tryGet(item.link, async () => {
+    items = await pMap(
+        items,
+        async (item) => {
+            const detail = await cache.tryGet(`medsci:detail:${item.link}`, async () => {
                 const detailResponse = await got({
                     method: 'get',
                     url: item.link,
@@ -107,18 +109,20 @@ async function handler(ctx) {
 
                 const pubDateMatches = detailResponse.data.match(/"publishedTime":"(.*)","publishedTimeString"/);
 
-                item.author = content('.name').text();
-                item.description = content('#content').html();
-                item.pubDate = pubDateMatches ? parseDate(pubDateMatches[1]) : item.pubDate;
-                item.category =
-                    content('meta[name="keywords"]')
-                        .attr('content')
-                        ?.split(/,|，/)
-                        .filter((c) => c !== '' && c !== 'undefined') ?? [];
-
-                return item;
-            })
-        )
+                return {
+                    author: content('.name').text(),
+                    description: content('#content').html(),
+                    pubDate: pubDateMatches?.[1] ? parseDate(pubDateMatches[1]) : undefined,
+                    category:
+                        content('meta[name="keywords"]')
+                            .attr('content')
+                            ?.split(/,|，/)
+                            .filter((c) => c !== '' && c !== 'undefined') ?? [],
+                };
+            });
+            return { ...item, ...detail, pubDate: detail.pubDate ?? item.pubDate };
+        },
+        { concurrency: 3 }
     );
 
     return {

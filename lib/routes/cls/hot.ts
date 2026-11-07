@@ -2,8 +2,9 @@ import { load } from 'cheerio';
 
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
-import got from '@/utils/got';
+import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import { renderDepthDescription } from './templates/depth';
 import { getSearchParams, rootUrl } from './utils';
@@ -33,34 +34,31 @@ export const route: Route = {
 };
 
 async function handler(ctx) {
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit')) : 50;
+    const limit = getRouteLimit(ctx, 50);
 
     const apiUrl = `${rootUrl}/v2/article/hot/list`;
 
-    const response = await got({
-        method: 'get',
-        url: apiUrl,
-        searchParams: getSearchParams(),
+    const response = await ofetch(apiUrl, {
+        query: getSearchParams(),
     });
 
-    let items = response.data.data.slice(0, limit).map((item) => ({
+    const articles = ctx.req.query('sorted') === 'false' ? response.data : response.data.toSorted((a, b) => b.ctime - a.ctime);
+    let items = articles.slice(0, limit).map((item) => ({
         title: item.title || item.brief,
         link: `${rootUrl}/detail/${item.id}`,
-        pubDate: parseDate(item.ctime * 1000),
+        pubDate: parseDate(item.ctime, 'X'),
+        author: item.author,
     }));
 
     items = await Promise.all(
         items.map((item) =>
             cache.tryGet(item.link, async () => {
-                const detailResponse = await got({
-                    method: 'get',
-                    url: item.link,
-                });
+                const detailResponse = await ofetch(item.link);
 
-                const content = load(detailResponse.data);
+                const content = load(detailResponse);
 
                 const nextData = JSON.parse(content('script#__NEXT_DATA__').text());
-                const articleDetail = nextData.props.initialState.detail.articleDetail;
+                const articleDetail = nextData.props.pageProps.articleDetail;
 
                 item.author = articleDetail.author?.name ?? item.author ?? '';
                 item.description = renderDepthDescription(articleDetail);

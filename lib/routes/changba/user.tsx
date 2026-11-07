@@ -1,12 +1,13 @@
+import { createDecipheriv, createHash } from 'node:crypto';
+
 import { load } from 'cheerio';
 import { renderToString } from 'hono/jsx/dom/server';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-
-const headers = { 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 11_0 like Mac OS X) AppleWebKit/604.1.38 (KHTML, like Gecko) Version/11.0 Mobile/15A372 Safari/604.1' };
+import { PRESETS } from '@/utils/header-generator';
 
 export const route: Route = {
     path: '/:userid',
@@ -38,7 +39,7 @@ async function handler(ctx) {
     const response = await got({
         method: 'get',
         url,
-        headers,
+        headerGeneratorOptions: PRESETS.MODERN_IOS,
     });
     const data = response.data;
     const $ = load(data);
@@ -46,61 +47,84 @@ async function handler(ctx) {
     const author = $('div.user-main-info > span.txt-info > a.uname').text();
     const authorimg = $('div.user-main-info > .poster > img').attr('data-src');
 
-    let items = await Promise.all(
+    const items: Array<DataItem | null> = await Promise.all(
         list.map((item) => {
-            const $ = load(item);
-            const link = $('a').attr('href');
-            return cache.tryGet(link, async () => {
-                const result = await got({
-                    method: 'get',
-                    url: link,
-                    headers,
-                });
-
-                const re = /workid: '\d+'/;
-                let workid;
-                try {
-                    workid = result.data.match(re)[0];
-                } catch {
-                    // 没有找到该作品
-                    // 这可能是由下列原因造成的：
-                    // 该作品已经被原作者删除了
-                    // 该作品包含了视频，目前正在审核中，在审核没有通过前无法被播放
-                    // 目前服务器压力太大，刚刚上传成功的作品可能需要半个小时后才能被播放
-                    return null;
-                }
-
-                workid = workid.split("'")[1];
-
-                if (!workid) {
-                    return null;
-                }
-                const mp3 = `https://upscuw.changba.com/${workid}.mp3`;
-                const description = renderToString(<ChangbaWorkDescription desc={$('div.des').text()} mp3url={mp3} />);
-                const itunes_item_image = $('div.work-cover').attr('style').replace(')', '').split('url(')[1];
-                return {
-                    title: $('.work-title').text(),
-                    description,
-                    link,
-                    author,
-                    itunes_item_image,
-                    enclosure_url: mp3,
-                    enclosure_type: 'audio/mpeg',
-                };
-            });
+            const href = $(item).attr('href') ?? $(item).find('a').attr('href');
+            const link = new URL(href!, url).href;
+            return cache.tryGet<DataItem | null>(link, () => getWork(link, author));
         })
     );
-
-    items = items.filter(Boolean);
 
     return {
         title: author + ' - 唱吧',
         link: url,
         description: $('meta[name="description"]').attr('content') || author + ' - 唱吧',
-        item: items,
+        item: items.filter((item) => item !== null),
         image: authorimg,
         itunes_author: author,
         itunes_category: '唱吧',
+    };
+}
+
+interface ChangbaWork {
+    enc_workpath?: string;
+    enc_duetpath?: string;
+    song?: { name: string };
+    title?: string;
+    headcontent?: string;
+}
+
+interface ChangbaResponse {
+    code: number;
+    message: string;
+    data_type: string;
+    data?: {
+        userwork?: ChangbaWork;
+        newuserwork?: ChangbaWork;
+        enc_workpath?: string;
+        enc_duetpath?: string;
+        isduet?: boolean;
+        workCover?: string;
+        jsSecret: string;
+    };
+}
+
+function decodeMedia(value: string, secret: string): string {
+    const digest = createHash('md5').update(secret).digest('hex');
+    const decipher = createDecipheriv('aes-128-cbc', Buffer.from(digest.slice(16)), Buffer.from(digest.slice(0, 16)));
+    return decipher.update(value, 'base64', 'utf8') + decipher.final('utf8');
+}
+
+async function getWork(link: string, author: string): Promise<DataItem | null> {
+    const workUrl = new URL(link);
+    const encodedId = workUrl.pathname.match(/^\/s\/([^/]+)$/)?.[1];
+    const workId = workUrl.pathname.match(/^\/s(\d+)$/)?.[1];
+    const result = await got('https://changba.com/redirect_song_main.php', {
+        searchParams: { ...Object.fromEntries(workUrl.searchParams), ...(encodedId ? { enc_workid: encodedId } : { workid: workId }), is_mobile: 1 },
+        headerGeneratorOptions: PRESETS.MODERN_IOS,
+    });
+    const response = result.data as ChangbaResponse;
+    if (response.data_type === 'redirect') {
+        throw new Error(`Changba redirected the work request: ${response.message}`);
+    }
+    const data = response.data;
+    const work = data?.userwork;
+    if (response.code !== 0 || !data || !work) {
+        return null;
+    }
+    const encryptedMedia = data.isduet ? (data.enc_duetpath ?? work.enc_duetpath) : (data.enc_workpath ?? work.enc_workpath);
+    if (!encryptedMedia) {
+        return null;
+    }
+    const mp3 = decodeMedia(encryptedMedia, data.jsSecret);
+    return {
+        title: work.song?.name || data.newuserwork?.song?.name || work.title || link,
+        description: renderToString(<ChangbaWorkDescription desc={`${work.headcontent ? `「${work.headcontent}」` : ''}${work.title ?? ''}`} mp3url={mp3} />),
+        link,
+        author,
+        itunes_item_image: data.workCover,
+        enclosure_url: mp3,
+        enclosure_type: 'audio/mpeg',
     };
 }
 

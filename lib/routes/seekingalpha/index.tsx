@@ -4,6 +4,7 @@ import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 const baseUrl = 'https://seekingalpha.com';
 
@@ -32,7 +33,7 @@ export const route: Route = {
 const getMachineCookie = () =>
     cache.tryGet('seekingalpha:machine_cookie', async () => {
         const response = await ofetch.raw(baseUrl);
-        return response.headers.getSetCookie().map((c) => c.split(';')[0]);
+        return response.headers.getSetCookie().map((c) => c.split(';', 1)[0]);
     });
 
 const apiParams = {
@@ -54,6 +55,7 @@ async function handler(ctx) {
     const { category = 'news', symbol } = ctx.req.param();
     const pageUrl = `${baseUrl}/symbol/${symbol.toUpperCase()}/${category === 'transcripts' ? `earnings/${category}` : category}`;
 
+    const limit = getRouteLimit(ctx, category === 'news' ? 40 : 20);
     const machineCookie = await getMachineCookie();
     const response = await ofetch(`${baseUrl}/api/v3/symbols/${symbol.toUpperCase()}/${category}`, {
         headers: {
@@ -64,7 +66,7 @@ async function handler(ctx) {
             'filter[until]': 0,
             id: symbol.toLowerCase(),
             include: 'author,primaryTickers,secondaryTickers,sentiments',
-            'page[size]': ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : category === 'news' ? 40 : 20,
+            'page[size]': limit,
             'page[number]': 1,
         },
     });
@@ -75,7 +77,7 @@ async function handler(ctx) {
         pubDate: parseDate(item.attributes.publishOn),
         author: response.included.find((i) => i.id === item.relationships.author.data.id).attributes.nick,
         id: item.id,
-        articleType: item.links.self.split('/')[1],
+        articleType: item.links.self.split('/', 2)[1],
     }));
 
     const items = list
@@ -120,7 +122,6 @@ async function handler(ctx) {
         link: pageUrl,
         image: 'https://seekingalpha.com/samw/static/images/favicon.svg',
         item: items,
-        allowEmpty: true,
-        language: 'en-US',
+        language: 'en-us' as const,
     };
 }

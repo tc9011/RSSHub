@@ -5,17 +5,22 @@ import type { Route } from '@/types';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
 
-import { countReplies, viewThread } from './query';
+import { viewThread } from './query';
 import { renderContent } from './templates/content';
 
 export const route: Route = {
     path: '/thread/:id',
+    categories: ['bbs'],
+    example: '/lkong/thread/3100275',
+    parameters: {
+        id: '帖子 id, 可在帖子的URL里找到',
+    },
     radar: [
         {
             source: ['lkong.com/thread/:id', 'lkong.com/'],
         },
     ],
-    name: 'Unknown',
+    name: '帖子',
     maintainers: ['nczitzk', 'ma6254'],
     handler,
 };
@@ -27,21 +32,15 @@ async function handler(ctx) {
     const apiUrl = 'https://api.lkong.com/api';
     const currentUrl = `${rootUrl}/thread/${id}`;
 
-    const countResponse = await got({
-        method: 'post',
-        url: apiUrl,
-        json: countReplies(id),
-    });
-
-    if (countResponse.data.errors) {
-        throw new Error(countResponse.data.errors[0].message);
-    }
-
     const response = await got({
         method: 'post',
         url: apiUrl,
-        json: viewThread(id, Math.ceil(countResponse.data.data.thread.replies / 20)),
+        json: viewThread(id, 1),
     });
+
+    if (response.data.errors) {
+        throw new Error(response.data.errors[0].message);
+    }
 
     const items = response.data.data.posts.map((item) => ({
         guid: item.pid,

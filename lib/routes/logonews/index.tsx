@@ -1,33 +1,37 @@
 import { load } from 'cheerio';
 import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import { getSubPath } from '@/utils/common-utils';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 export const route: Route = {
-    path: ['/work/tags/:tag', '/tag/:tag', '*'],
+    path: '/',
+    categories: ['design'],
+    example: '/logonews',
     radar: [
         {
-            source: ['logonews.cn/work/tags/:tag'],
+            source: ['logonews.cn/'],
+            target: '/',
         },
     ],
-    name: 'Unknown',
+    name: '首页',
     maintainers: ['nczitzk'],
     handler,
     url: 'logonews.cn/',
-    description: `如 [中国 - 标志情报局](https://www.logonews.cn/tag/china) 的 URL 为 \`https://www.logonews.cn/tag/china\`，可得路由为 [\`/logonews/tag/china\`](https://rsshub.app/logonews/tag/china)。`,
 };
 
-async function handler(ctx) {
-    const params = getSubPath(ctx);
-    const isWork = params.indexOf('/work') === 0;
+export async function handler(ctx) {
+    const subPath = getSubPath(ctx);
+    const isWork = subPath.startsWith('/work');
 
     const rootUrl = 'https://www.logonews.cn';
-    const currentUrl = `${rootUrl}${params === '/' ? '' : params}`;
+    const currentUrl = subPath === '/' ? rootUrl : `${rootUrl}${subPath}`;
 
     const response = await got({
         method: 'get',
@@ -37,19 +41,21 @@ async function handler(ctx) {
     const $ = load(response.data);
 
     let items = $(isWork ? 'h2 a' : 'a.article-link')
-        .slice(0, ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit')) : 25)
+        .slice(0, getRouteLimit(ctx, 25))
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem => {
+            const $item = $(item);
 
             return {
-                link: item.attr('href'),
+                link: $item.attr('href'),
+                title: '',
             };
         });
 
-    items = await Promise.all(
-        items.map((item) =>
-            cache.tryGet(item.link, async () => {
+    items = await pMap(
+        items,
+        (item) =>
+            cache.tryGet(item.link!, async () => {
                 const detailResponse = await got({
                     method: 'get',
                     url: item.link,
@@ -59,18 +65,19 @@ async function handler(ctx) {
 
                 content('.iconfont').remove();
 
-                content('img[data-src]').each(function () {
-                    content(this).attr(
+                content('img[data-src]').each((_, el) => {
+                    content(el).attr(
                         'src',
-                        content(this)
-                            .attr('data-src')
+                        content(el)
+                            .attr('data-src')!
                             .replace(/_logonews/, '')
                     );
                 });
 
                 item.title = content('title').text();
                 item.author = content('.author-links').text();
-                item.pubDate = parseDate(content('meta[property="og:release_date"]').attr('content'));
+                const publicationDate = content('meta[property="og:release_date"]').attr('content');
+                item.pubDate = publicationDate ? parseDate(publicationDate) : undefined;
                 item.category = content('a.category_link, a[rel="tag"]')
                     .toArray()
                     .map((c) => content(c).text().replaceAll(' · ', ''));
@@ -78,8 +85,8 @@ async function handler(ctx) {
                 item.description = renderDescription(isWork, content('meta[property="og:image"]').attr('content'), content('.This_Article_content, .w_info').html());
 
                 return item;
-            })
-        )
+            }),
+        { concurrency: 3 }
     );
 
     return {

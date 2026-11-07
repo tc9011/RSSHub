@@ -1,5 +1,6 @@
 import { load } from 'cheerio';
 
+import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Route } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
@@ -25,12 +26,11 @@ export const route: Route = {
         },
         // Innovation, Science and Economic Development Canada
         {
-            source: [
-                'ised-isde.canada.ca/site/ised/:lang',
-                'ised-isde.canada.ca/site/isde/:lang',
-                'www.canada.ca/:lang/innovation-science-economic-development/news/*',
-                'www.canada.ca/:lang/innovation-sciences-developpement-economique/nouvelles/*',
-            ],
+            source: ['ised-isde.canada.ca/site/ised/:lang', 'ised-isde.canada.ca/site/isde/:lang'],
+            target: '/news/:lang/departmentofindustry',
+        },
+        {
+            source: ['www.canada.ca/:lang/innovation-science-economic-development/news/*', 'www.canada.ca/:lang/innovation-sciences-developpement-economique/nouvelles/*'],
             target: '/news/:lang/departmentofindustry',
         },
         // All news
@@ -55,6 +55,9 @@ async function handler(ctx) {
         fr: '/fr/nouvelles/recherche-avancee-de-nouvelles/resultats-de-nouvelles.html',
     };
     const path = pathMap[lang];
+    if (!Object.hasOwn(pathMap, lang)) {
+        throw new InvalidParameterError('Supported languages are en and fr.');
+    }
 
     const currentUrl = department ? `${baseUrl}${path}?dprtmnt=${department}` : `${baseUrl}${path}`;
 

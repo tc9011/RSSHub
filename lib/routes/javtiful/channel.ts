@@ -1,6 +1,6 @@
 import { load } from 'cheerio';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import ofetch from '@/utils/ofetch';
 
 import { parseItems } from './utils';
@@ -26,17 +26,16 @@ export const route: Route = {
 
 async function handler(ctx): Promise<Data> {
     const { id } = ctx.req.param();
-    const html = await ofetch(`https://javtiful.com/channel/${id}`);
-    const $ = load(html as string);
-    const items: DataItem[] = $('section .card:not(:has(.bg-danger))')
+    const html = await ofetch<string>(`https://javtiful.com/channel/${id}`);
+    const $ = load(html);
+    const items: DataItem[] = $('article.video-card:not(.video-card--partner)')
         .toArray()
-        .map((item) => parseItems($(item)));
+        .map((item) => parseItems($(item), `https://javtiful.com/channel/${id}`));
     return {
-        title: $('.channel-item__name_details a').text(),
+        title: $('.profile-summary__copy h2').text(),
         link: `https://javtiful.com/channel/${id}`,
-        allowEmpty: true,
         item: items,
-        image: $('.content-section-title img').attr('src'),
-        language: $('html').attr('lang'),
+        image: $('.profile-avatar img').attr('src'),
+        language: $('html').attr('lang') as Language,
     };
 }

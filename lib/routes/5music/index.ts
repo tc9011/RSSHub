@@ -1,6 +1,6 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { Language, Route } from '@/types';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
 
@@ -8,7 +8,7 @@ export const route: Route = {
     path: '/new-releases/:category?',
     categories: ['shopping'],
     example: '/5music/new-releases',
-    parameters: { category: 'Category, see below, defaults to all' },
+    parameters: { category: 'Category, see below, defaults to A (華語)' },
     features: {
         requireConfig: false,
         requirePuppeteer: false,
@@ -27,9 +27,10 @@ export const route: Route = {
     maintainers: ['gideonsenku'],
     handler,
     description: `Categories:
+
 | 華語 | 西洋 | 東洋 | 韓語 | 古典 |
 | ---- | ---- | ---- | ---- | ---- |
-| A | B | F | M | D |`,
+| A    | B    | F    | M    | D    |`,
     url: 'www.5music.com.tw/New_releases.asp',
 };
 
@@ -66,11 +67,7 @@ async function handler(ctx) {
             return {
                 title: `${artist} - ${album}`,
                 description: `
-                    <p>艺人: ${artist}</p>
-                    <p>专辑: ${album}</p>
                     <p>发行公司: ${company}</p>
-                    <p>格式: ${format}</p>
-                    <p>发行日期: ${releaseDate}</p>
                 `,
                 link: albumLink ? `https://www.5music.com.tw/${albumLink}` : url,
                 pubDate: parseDate(releaseDate),
@@ -83,6 +80,6 @@ async function handler(ctx) {
         title: '五大唱片 - 新货上架',
         link: url,
         item: items,
-        language: 'zh-tw',
+        language: 'zh-TW' as const satisfies Language,
     };
 }

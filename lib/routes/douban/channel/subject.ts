@@ -25,7 +25,7 @@ export const route: Route = {
 async function handler(ctx) {
     const id = ctx.req.param('id');
     const nav = ctx.req.param('nav');
-    const link = `https://www.douban.com/subject/${id}`;
+    const link = `https://m.douban.com/channel/${id}`;
 
     const channel_info_response = await got({
         method: 'get',
@@ -45,7 +45,7 @@ async function handler(ctx) {
 
     const channel_name = channel_info_response.data.title;
     const data = response.data.modules[nav].payload.subjects;
-    let nav_name = '';
+    let nav_name: string;
 
     switch (nav) {
         case '0':
@@ -72,7 +72,7 @@ async function handler(ctx) {
         item: data.map(({ title, extra, cover_img, url }) => {
             const rate = extra.rating_group.rating ? `${extra.rating_group.rating.value.toFixed(1)}分` : extra.rating_group.null_rating_reason;
 
-            const description = `标题：${title} <br> 信息：${extra.short_info} <br> 评分：${rate} <br> <img src="${cover_img.url}">`;
+            const description = `信息：${extra.short_info} <br> 评分：${rate} <br> <img src="${cover_img.url}">`;
 
             return {
                 title,

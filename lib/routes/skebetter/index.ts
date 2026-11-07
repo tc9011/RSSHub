@@ -1,5 +1,5 @@
 import { config } from '@/config';
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, Route } from '@/types';
 import cache from '@/utils/cache';
 
 import { fetchData, processItems } from './utils';
@@ -19,7 +19,7 @@ export const route: Route = {
         nsfw: true,
     },
     name: 'Hot',
-    maintainers: ['SnowAgar25'],
+    maintainers: ['Tsuyumi25'],
     handler,
     radar: [
         {
@@ -43,10 +43,9 @@ export const route: Route = {
             target: '/latest',
         },
     ],
-    description: `
-| 急上昇 | 週間 | 月間 | 新着 |
-| ----- | ---- | ---- | ---- |
-| hot | week | month| latest |`,
+    description: `| 急上昇 | 週間 | 月間  | 新着   |
+| ------ | ---- | ----- | ------ |
+| hot    | week | month | latest |`,
 };
 
 async function handler(ctx): Promise<Data> {
@@ -68,7 +67,7 @@ async function handler(ctx): Promise<Data> {
     const url = `${baseUrl}?type=${type}`;
 
     const items = await cache.tryGet(
-        url,
+        `skebetter:titles:v3:${url}`,
         async () => {
             const data = await fetchData(url);
             return processItems(data, 'index');
@@ -80,6 +79,6 @@ async function handler(ctx): Promise<Data> {
     return {
         title: `Skebetter - ${typeMap[type]}`,
         link: `https://skebetter.com/${linkMap[type]}`,
-        item: items as DataItem[],
+        item: items,
     };
 }

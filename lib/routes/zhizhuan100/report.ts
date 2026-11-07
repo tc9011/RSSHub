@@ -1,4 +1,4 @@
-import * as cheerio from 'cheerio';
+import { load } from 'cheerio';
 
 import type { Route } from '@/types';
 import { ViewType } from '@/types';
@@ -23,7 +23,7 @@ export const route: Route = {
 async function handler() {
     const urlData = await ofetch('https://www.zhizhuan100.com.cn/analysis');
 
-    const $ = cheerio.load(urlData);
+    const $ = load(urlData);
 
     const bodyJsUrl: string | undefined = $('script[src*="Body.js"]').attr('src');
 
@@ -41,7 +41,7 @@ async function handler() {
     }
 
     const htmlContent = JSON.parse(`"${htmlMatch[1]}"`);
-    const $content = cheerio.load(htmlContent);
+    const $content = load(htmlContent);
 
     const listItems = $content('.w-list-item');
 
@@ -54,8 +54,8 @@ async function handler() {
             const linkElement = $item.find('.w-list-link');
             const imgElement = $item.find('.w-listpic-in');
 
-            const title = titleElement.text().trim() || '';
-            const dateText = dateElement.text().trim() || '';
+            const title = titleElement.text() || '';
+            const dateText = dateElement.text() || '';
             const href = linkElement.attr('href') || '';
             const imgSrc = imgElement.attr('src') || '';
 
@@ -64,7 +64,7 @@ async function handler() {
 
             return {
                 title,
-                pubDate: parseRelativeDate(dateText),
+                pubDate: dateText ? parseRelativeDate(dateText) : undefined,
                 link: href.startsWith('http') ? href : `https://www.zhizhuan100.com.cn${href}`,
                 description: `<img src="${imgSrc.startsWith('//') ? 'https:' + imgSrc : imgSrc}" alt="${title}">`,
                 guid: id,
@@ -75,7 +75,6 @@ async function handler() {
     return {
         title: '智篆商业-消费报告',
         link: 'https://www.zhizhuan100.com.cn/analysis',
-        allowEmpty: true,
         item: items,
     };
 }

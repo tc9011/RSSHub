@@ -1,4 +1,4 @@
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, Route } from '@/types';
 import got from '@/utils/got';
 
 import type { ContentsResponse } from './types';
@@ -9,12 +9,6 @@ export const route: Route = {
     parameters: { id: '南方周末频道 id, 可在该频道的 URL 中找到（即 https://www.infzm.com/contents?term_id=:id)' },
     categories: ['traditional-media'],
     example: '/infzm/1',
-    radar: [
-        {
-            source: ['infzm.com/contents'],
-            target: (_, url) => (url ? `/infzm/${url.match(/contents\?term_id=(\d*)/)?.[1]}` : ''),
-        },
-    ],
     name: '频道',
     maintainers: ['KarasuShin', 'ranpox', 'xyqfer'],
     handler,
@@ -30,13 +24,14 @@ export const baseUrl = 'https://www.infzm.com/contents';
 async function handler(ctx): Promise<Data> {
     const id = ctx.req.param('id');
     const link = `${baseUrl}?term_id=${id}`;
-    const { data } = await got<ContentsResponse>({
+    const response = await got({
         method: 'get',
         url: `${baseUrl}?term_id=${id}&page=1&format=json`,
         headers: {
             Referer: link,
         },
     });
+    const data: ContentsResponse = response.data;
 
     const resultItem = await fetchArticles(data.data.contents);
 
@@ -44,6 +39,6 @@ async function handler(ctx): Promise<Data> {
         title: `南方周末-${data.data.current_term.title}`,
         link,
         image: 'https://www.infzm.com/favicon.ico',
-        item: resultItem as DataItem[],
+        item: resultItem,
     };
 }

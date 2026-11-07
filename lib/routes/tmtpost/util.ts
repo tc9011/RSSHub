@@ -1,7 +1,8 @@
 import type { CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Data, DataItem } from '@/types';
+import type { Data, DataItem, Language } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
@@ -16,7 +17,7 @@ const headers = {
     'app-version': 'web1.0',
 };
 
-const processItems = async (limit: number, query: Record<string, any>, apiUrl: string, targetUrl: string): Promise<Data> => {
+const processItems = async (limit: number, query: Record<string, string>, apiUrl: string, targetUrl: string): Promise<Data> => {
     const response = await ofetch(apiUrl, {
         query: {
             limit,
@@ -27,11 +28,9 @@ const processItems = async (limit: number, query: Record<string, any>, apiUrl: s
 
     const targetResponse = await ofetch(targetUrl);
     const $: CheerioAPI = load(targetResponse);
-    const language = $('html').attr('lang') ?? 'zh-CN';
+    const language = ($('html').attr('lang') ?? 'zh-CN') as Language;
 
-    let items: DataItem[] = [];
-
-    items = response.data.slice(0, limit).map((item): DataItem => {
+    let items: DataItem[] = response.data.slice(0, limit).map((item): DataItem => {
         const title: string = item.title;
         const description: string = renderDescription({
             intro: item.summary,
@@ -40,7 +39,7 @@ const processItems = async (limit: number, query: Record<string, any>, apiUrl: s
         const linkUrl: string | undefined = item.share_link;
         const guid: string = item.guid;
         const image: string | undefined = item.thumb_image?.original?.url;
-        const updated: number | string = item.updated ?? pubDate;
+        const updated: number | string = item.time_updated ?? pubDate;
 
         const processedItem: DataItem = {
             title,
@@ -51,7 +50,6 @@ const processItems = async (limit: number, query: Record<string, any>, apiUrl: s
             id: guid,
             content: {
                 html: description,
-                text: item.content ?? description,
             },
             image,
             banner: image,
@@ -63,14 +61,16 @@ const processItems = async (limit: number, query: Record<string, any>, apiUrl: s
     });
 
     items = (
-        await Promise.all(
-            items.map((item) => {
-                if (!item.link) {
+        await pMap(
+            items,
+            async (item): Promise<DataItem> => {
+                const itemGuid = item.guid;
+                if (!item.link || !itemGuid) {
                     return item;
                 }
 
-                return cache.tryGet(item.link, async (): Promise<DataItem> => {
-                    const detailApiUrl: string = new URL(item.guid as string, postApiUrl).href;
+                const article = await cache.tryGet(`tmtpost:article:${item.link}`, async (): Promise<Partial<DataItem>> => {
+                    const detailApiUrl: string = new URL(itemGuid, postApiUrl).href;
 
                     const detailResponse = await ofetch(detailApiUrl, {
                         query: {
@@ -81,7 +81,7 @@ const processItems = async (limit: number, query: Record<string, any>, apiUrl: s
                     const data = detailResponse.data;
 
                     if (!data) {
-                        return item;
+                        return {};
                     }
 
                     const title: string = data.title;
@@ -93,11 +93,9 @@ const processItems = async (limit: number, query: Record<string, any>, apiUrl: s
                     const linkUrl: string | undefined = data.share_link;
                     const categories: string[] = [
                         ...new Set(
-                            (
-                                [...(data.categories ?? []), ...(data.stock_list ?? []), ...(data.big_plate ?? []), ...(data.concept_plate ?? []), ...(data.plate ?? []), ...(data.plate_list ?? []), ...(data.tags ?? [])].map(
-                                    (c) => c.title ?? c.name ?? c.tag
-                                ) as string[]
-                            ).filter(Boolean)
+                            [...(data.categories ?? []), ...(data.stock_list ?? []), ...(data.big_plate ?? []), ...(data.concept_plate ?? []), ...(data.plate ?? []), ...(data.plate_list ?? []), ...(data.tags ?? [])]
+                                .map((c) => c.title ?? c.name ?? c.tag)
+                                .filter(Boolean)
                         ),
                     ];
                     const authors: DataItem['author'] = data.authors?.map((author) => ({
@@ -120,7 +118,6 @@ const processItems = async (limit: number, query: Record<string, any>, apiUrl: s
                         id: guid,
                         content: {
                             html: description,
-                            text: description,
                         },
                         image,
                         banner: image,
@@ -174,12 +171,12 @@ const processItems = async (limit: number, query: Record<string, any>, apiUrl: s
                         media: medias,
                     };
 
-                    return {
-                        ...item,
-                        ...processedItem,
-                    };
+                    return processedItem;
                 });
-            })
+
+                return { ...item, ...article, title: item.title, pubDate: item.pubDate, updated: item.updated };
+            },
+            { concurrency: 3 }
         )
     ).filter((_): _ is DataItem => true);
 

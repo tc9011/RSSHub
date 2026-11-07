@@ -3,30 +3,29 @@ import { load } from 'cheerio';
 import type { Element } from 'domhandler';
 import type { Context } from 'hono';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
 export const handler = async (ctx: Context): Promise<Data> => {
     const { category = 'association-news' } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '10', 10);
+    const limit = getRouteLimit(ctx, 10);
 
     const baseUrl = 'http://www.ccagm.org.cn';
-    const targetUrl: string = new URL(category, baseUrl).href;
+    const targetUrl = `${baseUrl}/${category}`;
 
     const response = await ofetch(targetUrl);
     const $: CheerioAPI = load(response);
-    const language = $('html').attr('lang') ?? 'zh';
+    const language = ($('html').attr('lang') ?? 'zh') as Language;
 
-    let items: DataItem[] = [];
-
-    items = $('ul.news_list li a')
+    let items: DataItem[] = $('ul.news_list li a')
         .slice(0, limit)
         .toArray()
-        .map((el): Element => {
+        .map((el) => {
             const $el: Cheerio<Element> = $(el);
 
             const title: string = $el.attr('title') ?? $el.find('span.fl').text();
@@ -36,9 +35,9 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
             const processedItem: DataItem = {
                 title,
-                pubDate: pubDateStr ? timezone(parseDate(pubDateStr), +8) : undefined,
+                pubDate: pubDateStr ? timezone(parseDate(pubDateStr), 8) : undefined,
                 link: linkUrl,
-                updated: upDatedStr ? timezone(parseDate(upDatedStr), +8) : undefined,
+                updated: upDatedStr ? timezone(parseDate(upDatedStr), 8) : undefined,
                 language,
             };
 
@@ -52,23 +51,23 @@ export const handler = async (ctx: Context): Promise<Data> => {
             }
 
             return cache.tryGet(item.link, async (): Promise<DataItem> => {
-                const detailResponse = await ofetch(item.link);
+                const detailResponse = await ofetch(item.link!);
                 const $$: CheerioAPI = load(detailResponse);
 
                 const title: string = $$('h2.center').text();
-                const description: string | undefined = $$('div.newsview').html() ?? undefined;
+                const description = $$('div.newsview').html();
                 const pubDateStr: string | undefined = $$('p.title_s').text().trim().split(/：/).pop();
                 const upDatedStr: string | undefined = pubDateStr;
 
                 const processedItem: DataItem = {
                     title,
                     description,
-                    pubDate: pubDateStr ? timezone(parseDate(pubDateStr), +8) : item.pubDate,
+                    pubDate: pubDateStr ? timezone(parseDate(pubDateStr), 8) : item.pubDate,
                     content: {
                         html: description,
-                        text: description,
+                        text: $$('div.newsview').text(),
                     },
-                    updated: upDatedStr ? timezone(parseDate(upDatedStr), +8) : item.updated,
+                    updated: upDatedStr ? timezone(parseDate(upDatedStr), 8) : item.updated,
                     language,
                 };
 
@@ -85,7 +84,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
         description: $('meta[name="description"]').attr('content'),
         link: targetUrl,
         item: items,
-        allowEmpty: true,
         image: $('a.logo img').attr('src'),
         author: $('meta[name="keywords"]').attr('content'),
         language,
@@ -147,28 +145,27 @@ export const route: Route = {
             ],
         },
     },
-    description: `:::tip
+    description: `::: tip
 订阅 [协会动态](http://www.ccagm.org.cn/association-news)，其源网址为 \`http://www.ccagm.org.cn/association-news\`，请参考该 URL 指定部分构成参数，此时路由为 [\`/ccagm/association-news\`](https://rsshub.app/ccagm/association-news)。
 :::
 
 <details>
   <summary>更多分类</summary>
 
-  | 栏目                                                                                         | ID                                                                                                                      |
-  | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-  | [协会动态](http://www.ccagm.org.cn/association-news.html)                                    | [association-news](https://rsshub.app/ccagm/association-news)                                                           |
-  | [会议活动](http://www.ccagm.org.cn/xh-activity/activities-huiyi.html)                        | [xh-activity/activities-huiyi](https://rsshub.app/ccagm/xh-activity/activities-huiyi)                                   |
-  | [调研与报告](http://www.ccagm.org.cn/xh-activity/bg-yj.html)                                 | [xh-activity/bg-yj](https://rsshub.app/ccagm/xh-activity/bg-yj)                                                         |
-  | [协会党建](http://www.ccagm.org.cn/xie-hui-dang-jian.html)                                   | [xie-hui-dang-jian](https://rsshub.app/ccagm/xie-hui-dang-jian)                                                         |
-  | [行业新闻](http://www.ccagm.org.cn/members-info.html)                                        | [members-info](https://rsshub.app/ccagm/members-info)                                                                   |
-  | [行业研究](http://www.ccagm.org.cn/bg-yj.html)                                               | [bg-yj](https://rsshub.app/ccagm/bg-yj)                                                                                 |
-  | [行业标准](http://www.ccagm.org.cn/industry-policy/industry-standard.html)                   | [industry-policy/industry-standard](https://rsshub.app/ccagm/industry-policy/industry-standard)                         |
-  | [法律法规](http://www.ccagm.org.cn/industry-policy/policies-regulations.html)                | [industry-policy/policies-regulations](https://rsshub.app/ccagm/industry-policy/policies-regulations)                   |
-  | [资料下载](http://www.ccagm.org.cn/download.html)                                            | [download](https://rsshub.app/ccagm/download)                                                                           |
-  | [工作总结与计划](http://www.ccagm.org.cn/about-association/gong-zuo-zong-jie-yu-ji-hua.html) | [about-association/gong-zuo-zong-jie-yu-ji-hua](https://rsshub.app/ccagm/about-association/gong-zuo-zong-jie-yu-ji-hua) |
+| 栏目                                                                                         | ID                                                                                                                      |
+| -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| [协会动态](http://www.ccagm.org.cn/association-news.html)                                    | [association-news](https://rsshub.app/ccagm/association-news)                                                           |
+| [会议活动](http://www.ccagm.org.cn/xh-activity/activities-huiyi.html)                        | [xh-activity/activities-huiyi](https://rsshub.app/ccagm/xh-activity/activities-huiyi)                                   |
+| [调研与报告](http://www.ccagm.org.cn/xh-activity/bg-yj.html)                                 | [xh-activity/bg-yj](https://rsshub.app/ccagm/xh-activity/bg-yj)                                                         |
+| [协会党建](http://www.ccagm.org.cn/xie-hui-dang-jian.html)                                   | [xie-hui-dang-jian](https://rsshub.app/ccagm/xie-hui-dang-jian)                                                         |
+| [行业新闻](http://www.ccagm.org.cn/members-info.html)                                        | [members-info](https://rsshub.app/ccagm/members-info)                                                                   |
+| [行业研究](http://www.ccagm.org.cn/bg-yj.html)                                               | [bg-yj](https://rsshub.app/ccagm/bg-yj)                                                                                 |
+| [行业标准](http://www.ccagm.org.cn/industry-policy/industry-standard.html)                   | [industry-policy/industry-standard](https://rsshub.app/ccagm/industry-policy/industry-standard)                         |
+| [法律法规](http://www.ccagm.org.cn/industry-policy/policies-regulations.html)                | [industry-policy/policies-regulations](https://rsshub.app/ccagm/industry-policy/policies-regulations)                   |
+| [资料下载](http://www.ccagm.org.cn/download.html)                                            | [download](https://rsshub.app/ccagm/download)                                                                           |
+| [工作总结与计划](http://www.ccagm.org.cn/about-association/gong-zuo-zong-jie-yu-ji-hua.html) | [about-association/gong-zuo-zong-jie-yu-ji-hua](https://rsshub.app/ccagm/about-association/gong-zuo-zong-jie-yu-ji-hua) |
 
-</details>
-`,
+</details>`,
     categories: ['new-media'],
     features: {
         requireConfig: false,
@@ -181,57 +178,57 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['www.ccagm.org.cn/category?'],
-            target: '/:category',
+            source: ['www.ccagm.org.cn/'],
+            target: '/association-news',
         },
         {
             title: '协会动态',
-            source: ['www.ccagm.org.cn/association-news.html'],
+            source: ['www.ccagm.org.cn/association-news', 'www.ccagm.org.cn/association-news.html'],
             target: '/association-news',
         },
         {
             title: '会议活动',
-            source: ['www.ccagm.org.cn/xh-activity/activities-huiyi.html'],
+            source: ['www.ccagm.org.cn/xh-activity/activities-huiyi', 'www.ccagm.org.cn/xh-activity/activities-huiyi.html'],
             target: '/xh-activity/activities-huiyi',
         },
         {
             title: '调研与报告',
-            source: ['www.ccagm.org.cn/xh-activity/bg-yj.html'],
+            source: ['www.ccagm.org.cn/xh-activity/bg-yj', 'www.ccagm.org.cn/xh-activity/bg-yj.html'],
             target: '/xh-activity/bg-yj',
         },
         {
             title: '协会党建',
-            source: ['www.ccagm.org.cn/xie-hui-dang-jian.html'],
+            source: ['www.ccagm.org.cn/xie-hui-dang-jian', 'www.ccagm.org.cn/xie-hui-dang-jian.html'],
             target: '/xie-hui-dang-jian',
         },
         {
             title: '行业新闻',
-            source: ['www.ccagm.org.cn/members-info.html'],
+            source: ['www.ccagm.org.cn/members-info', 'www.ccagm.org.cn/members-info.html'],
             target: '/members-info',
         },
         {
             title: '行业研究',
-            source: ['www.ccagm.org.cn/bg-yj.html'],
+            source: ['www.ccagm.org.cn/bg-yj', 'www.ccagm.org.cn/bg-yj.html'],
             target: '/bg-yj',
         },
         {
             title: '行业标准',
-            source: ['www.ccagm.org.cn/industry-policy/industry-standard.html'],
+            source: ['www.ccagm.org.cn/industry-policy/industry-standard', 'www.ccagm.org.cn/industry-policy/industry-standard.html'],
             target: '/industry-policy/industry-standard',
         },
         {
             title: '法律法规',
-            source: ['www.ccagm.org.cn/industry-policy/policies-regulations.html'],
+            source: ['www.ccagm.org.cn/industry-policy/policies-regulations', 'www.ccagm.org.cn/industry-policy/policies-regulations.html'],
             target: '/industry-policy/policies-regulations',
         },
         {
             title: '资料下载',
-            source: ['www.ccagm.org.cn/download.html'],
+            source: ['www.ccagm.org.cn/download', 'www.ccagm.org.cn/download.html'],
             target: '/download',
         },
         {
             title: '工作总结与计划',
-            source: ['www.ccagm.org.cn/about-association/gong-zuo-zong-jie-yu-ji-hua.html'],
+            source: ['www.ccagm.org.cn/about-association/gong-zuo-zong-jie-yu-ji-hua', 'www.ccagm.org.cn/about-association/gong-zuo-zong-jie-yu-ji-hua.html'],
             target: '/about-association/gong-zuo-zong-jie-yu-ji-hua',
         },
     ],

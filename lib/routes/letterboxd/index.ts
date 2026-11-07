@@ -1,5 +1,6 @@
 import { load } from 'cheerio';
 import type { Context } from 'hono';
+import pMap from 'p-map';
 
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
@@ -8,6 +9,11 @@ import ofetch from '@/utils/ofetch';
 import { namespace } from './namespace';
 
 const baseUrl = `https://${namespace.url}`;
+
+type PosterData = {
+    url?: string;
+    url2x?: string;
+};
 
 export const route: Route = {
     path: '/:username/watchlist',
@@ -36,17 +42,18 @@ async function handler(ctx: Context) {
 
     const wrappers = $('div.react-component[data-component-class*="LazyPoster"]').toArray();
 
-    const items = await Promise.all(
-        wrappers.map(async (el) => {
+    const items = await pMap(
+        wrappers,
+        async (el) => {
             const wrapper = $(el);
             const linkPath = wrapper.attr('data-item-link') || wrapper.attr('data-target-link') || '';
             const link = linkPath ? new URL(linkPath, baseUrl).href : undefined;
-            const title = (wrapper.attr('data-item-full-display-name') || wrapper.attr('data-item-name') || '') as string;
+            const title = wrapper.attr('data-item-full-display-name') || wrapper.attr('data-item-name') || '';
             let image: string | undefined;
             if (link) {
                 const posterApiUrl = `${link}poster/std/125/`;
                 const cacheKey = `letterboxd:poster:${posterApiUrl}`;
-                const posterData = await cache.tryGet<Record<string, any>>(cacheKey, () => ofetch(posterApiUrl, { responseType: 'json' }));
+                const posterData = await cache.tryGet<PosterData>(cacheKey, () => ofetch<PosterData>(posterApiUrl, { responseType: 'json' }));
                 image = posterData.url2x || posterData.url;
             }
 
@@ -55,11 +62,12 @@ async function handler(ctx: Context) {
                 link,
                 image,
             };
-        })
+        },
+        { concurrency: 3 }
     );
 
     return {
-        title: $('title').text().trim().replaceAll('\u200E', '') || `${username}'s Watchlist • Letterboxd`,
+        title: $('title').text().trim().replaceAll('\u{200E}', '') || `${username}'s Watchlist • Letterboxd`,
         link: currentUrl,
         item: items,
         allowEmpty: true,

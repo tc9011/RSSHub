@@ -1,8 +1,9 @@
-import { load } from 'cheerio'; // 类似 jQuery 的 API HTML 解析器
+import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
-import ofetch from '@/utils/ofetch'; // 统一使用的请求库
+import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
 
 export const route: Route = {
@@ -13,9 +14,22 @@ export const route: Route = {
     radar: [
         {
             source: ['blog.logrocket.com'],
+            target: '/dev',
+        },
+        {
+            source: ['blog.logrocket.com/dev'],
+            target: '/dev',
+        },
+        {
+            source: ['blog.logrocket.com/product-management'],
+            target: '/product-management',
+        },
+        {
+            source: ['blog.logrocket.com/ux-design'],
+            target: '/ux-design',
         },
     ],
-    name: 'blog.logrocket',
+    name: 'Blog',
     maintainers: ['findwei'],
     handler,
     url: 'blog.logrocket.com/',
@@ -33,28 +47,35 @@ async function handler(ctx) {
     const $ = load(response);
     const list = $('div.post-list .post-card')
         .toArray()
-        .map((item) => {
-            item = $(item);
-            const a = item.find('a').first();
-            const title = item.find('.post-card-title').first();
+        .map((item): DataItem => {
+            const $item = $(item);
+            const a = $item.find('a').first();
+            const title = $item.find('.post-card-title');
             return {
                 title: title.text(),
                 link: a.attr('href'),
-                pubDate: parseDate(item.find('.post-card-author-name').next().text().split(' ⋅ ')[0], 'MMM D, YYYY'),
-                author: item.find('.post-card-author-name').text(),
+                pubDate: parseDate($item.find('.post-card-author-name').next().text().split(' ⋅ ', 1)[0], 'MMM D, YYYY'),
+                author: $item.find('.post-card-author-name').text(),
             };
         });
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
-                const response = await ofetch(item.link);
+    const items = await pMap(
+        list,
+        async (item) => ({
+            ...item,
+            ...(await cache.tryGet('logrocket:article:' + item.link, async () => {
+                const response = await ofetch(item.link!);
                 const $ = load(response);
-                //
-                $('div.content-max-width .sidebar-container div.code-block').remove();
-                item.description = $('div.content-max-width .sidebar-container').html();
-                return item;
-            })
-        )
+                const content = $('#the-content-container .lr-content');
+                content.find('div.code-block').remove();
+                return {
+                    description: content.html(),
+                    category: $('#post-tags a[rel="tag"]')
+                        .toArray()
+                        .map((tag) => $(tag).text()),
+                };
+            })),
+        }),
+        { concurrency: 3 }
     );
     return {
         title: `logrocket-${title}`,

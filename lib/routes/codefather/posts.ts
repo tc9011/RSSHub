@@ -1,21 +1,57 @@
+import MarkdownIt from 'markdown-it';
+
+import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Route } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
 
+const markdown = new MarkdownIt({ breaks: true, linkify: true });
+
 const validCategories = new Set(['交流', '学习', '项目', '资源', '经验']);
 
-const sortFieldMap: Record<string, { field: string; name: string }> = {
+const sortFieldMap = {
     hot: { field: 'thumbNum', name: '热门' },
     new: { field: 'createTime', name: '最新' },
     recommend: { field: 'recommendTime', name: '推荐' },
 };
+
+interface PostListRequest {
+    current: number;
+    pageSize: number;
+    sortField: string;
+    sortOrder: string;
+    category?: string;
+}
+
+interface CodefatherPost {
+    id: number;
+    title?: string;
+    content?: string;
+    pictureList?: string[];
+    user?: {
+        userName?: string;
+    };
+    tags?: Array<{ tagName: string }>;
+    category?: string;
+    createTime: number;
+    thumbNum?: number;
+    commentNum?: number;
+}
+
+interface PostListResponse {
+    code: number;
+    message: string;
+    data?: {
+        records?: CodefatherPost[];
+    };
+}
 
 export const route: Route = {
     path: '/posts/:category?/:sort?',
     categories: ['programming'],
     example: '/codefather/posts',
     parameters: {
-        category: '分类，可选 `交流`、`学习`、`项目`、`资源`、`经验`，默认为全部',
+        category: '分类，可选 `all`（全部）、`交流`、`学习`、`项目`、`资源`、`经验`，默认为全部',
         sort: '排序方式，可选 `new`（最新）、`hot`（热门）、`recommend`（推荐），默认为 `new`',
     },
     features: {
@@ -39,12 +75,20 @@ export const route: Route = {
 };
 
 async function handler(ctx) {
-    const category = ctx.req.param('category');
+    const rawCategory = ctx.req.param('category');
+    const category = rawCategory === 'all' ? undefined : rawCategory;
     const sort = ctx.req.param('sort') || 'new';
 
-    const sortConfig = sortFieldMap[sort] || sortFieldMap.new;
+    if (category && !validCategories.has(category)) {
+        throw new InvalidParameterError('Invalid category. Use all, 交流, 学习, 项目, 资源 or 经验.');
+    }
+    if (!Object.hasOwn(sortFieldMap, sort)) {
+        throw new InvalidParameterError('Invalid sort. Use new, hot or recommend.');
+    }
 
-    const requestBody: Record<string, unknown> = {
+    const sortConfig = sortFieldMap[sort];
+
+    const requestBody: PostListRequest = {
         current: 1,
         pageSize: 20,
         sortField: sortConfig.field,
@@ -55,7 +99,7 @@ async function handler(ctx) {
         requestBody.category = category;
     }
 
-    const response = await ofetch('https://api.codefather.cn/api/post/list/page/vo', {
+    const response = await ofetch<PostListResponse>('https://api.codefather.cn/api/post/list/page/vo', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -69,14 +113,13 @@ async function handler(ctx) {
 
     const records = response.data?.records || [];
 
-    const items = records.map((item: Record<string, unknown>) => {
-        const content = (item.content as string) || '';
-        const pictureList = (item.pictureList as string[]) || [];
-        const user = (item.user as Record<string, unknown>) || {};
-        const tags = (item.tags as Array<{ tagName: string }>) || [];
+    const items = records.map((item) => {
+        const content = item.content || '';
+        const pictureList = item.pictureList || [];
+        const tags = item.tags || [];
 
         // Build description content
-        let description = `<p>${content.replaceAll('\n', '<br>')}</p>`;
+        let description = markdown.render(content);
 
         // Add images
         if (pictureList.length > 0) {
@@ -88,14 +131,14 @@ async function handler(ctx) {
         }
 
         return {
-            title: content.split('\n')[0] || '无标题',
+            title: item.title || content.split('\n', 1)[0] || '无标题',
             link: `https://www.codefather.cn/post/${item.id}`,
             description,
-            pubDate: parseDate(item.createTime as number),
-            author: user.userName as string,
-            category: [item.category as string, ...tags.map((t) => t.tagName)].filter(Boolean),
-            upvotes: item.thumbNum as number,
-            comments: item.commentNum as number,
+            pubDate: parseDate(item.createTime),
+            author: item.user?.userName,
+            category: [item.category, ...tags.map((t) => t.tagName)].filter((c): c is string => Boolean(c)),
+            upvotes: item.thumbNum,
+            comments: item.commentNum,
         };
     });
 

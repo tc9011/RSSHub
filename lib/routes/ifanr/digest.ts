@@ -2,13 +2,19 @@ import type { CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
 import type { Context } from 'hono';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
+
+function parseTimestamp(value: number | string) {
+    const date = value ? parseDate(value, 'X') : undefined;
+    return date && Number.isFinite(date.getTime()) ? date : undefined;
+}
 
 export const handler = async (ctx: Context): Promise<Data> => {
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '20', 10);
+    const limit = getRouteLimit(ctx, 20);
 
     const baseUrl = 'https://www.ifanr.com';
     const apiBaseUrl = 'https://sso.ifanr.com';
@@ -24,7 +30,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
     const targetResponse = await ofetch(targetUrl);
     const $: CheerioAPI = load(targetResponse);
-    const language: string = $('html').attr('lang') ?? 'zh-CN';
+    const language = ($('html').attr('lang') ?? 'zh-CN') as Language;
 
     const items: DataItem[] = response.objects.slice(0, limit).map((item): DataItem => {
         const title: string = item.post_title;
@@ -37,15 +43,14 @@ export const handler = async (ctx: Context): Promise<Data> => {
         const processedItem: DataItem = {
             title,
             description,
-            pubDate: pubDate ? parseDate(pubDate, 'X') : undefined,
+            pubDate: parseTimestamp(pubDate),
             link: new URL(linkUrl, baseUrl).href,
             guid,
             id: guid,
             content: {
                 html: description,
-                text: item.post_content ?? description,
             },
-            updated: updated ? parseDate(updated) : undefined,
+            updated: parseTimestamp(updated),
             language,
             _extra: {
                 links: [
@@ -68,7 +73,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
         description: title,
         link: targetUrl,
         item: items,
-        allowEmpty: true,
         image: $('img.c-header-navbar__logo').attr('src'),
         author: $('meta[property="og:site_name"]').attr('content'),
         language,
@@ -97,7 +101,7 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['www.ifanr.comdigest'],
+            source: ['www.ifanr.com/digest'],
             target: '/digest',
         },
     ],

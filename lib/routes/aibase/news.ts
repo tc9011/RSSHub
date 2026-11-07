@@ -3,6 +3,7 @@ import { load } from 'cheerio';
 import type { Route } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import { buildApiUrl, rootUrl } from './util';
 
@@ -13,7 +14,7 @@ export const route: Route = {
     maintainers: ['zreo0'],
     handler: async (ctx) => {
         // 每页数量限制
-        const limit = Number.parseInt(ctx.req.query('limit') ?? '30', 10);
+        const limit = getRouteLimit(ctx, 30);
         // 用项目中已有的获取页面方法，获取页面以及 Token
         const currentUrl = new URL('discover', rootUrl).href;
         const currentHtml = await ofetch(currentUrl);
@@ -50,7 +51,7 @@ export const route: Route = {
         return {
             title: 'AI新闻资讯',
             description: 'AI新闻资讯 - 不错过全球AI革新的每一个时刻',
-            language: 'zh-cn',
+            language: 'zh-CN',
             link: 'https://www.aibase.com/zh/news',
             item: items,
             allowEmpty: true,

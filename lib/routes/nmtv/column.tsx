@@ -3,6 +3,7 @@ import { renderToString } from 'hono/jsx/dom/server';
 import type { Route } from '@/types';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
 export const route: Route = {
@@ -22,13 +23,13 @@ export const route: Route = {
     maintainers: ['nczitzk'],
     handler,
     description: `::: tip
-  如 [蒙古语卫视新闻联播](http://www.nmtv.cn/folder292/folder663/folder301/folder830/folder877) 的 URL 为 \`http://www.nmtv.cn/folder292/folder663/folder301/folder830/folder877\`，其栏目 id 为末尾数字编号，即 \`877\`。可以得到其对应路由为 [\`/nmtv/column/877\`](https://rsshub.app/nmtv/column/877)
+如 [蒙古语卫视新闻联播](http://www.nmtv.cn/folder292/folder663/folder301/folder830/folder877) 的 URL 为 \`http://www.nmtv.cn/folder292/folder663/folder301/folder830/folder877\`，其栏目 id 为末尾数字编号，即 \`877\`。可以得到其对应路由为 [\`/nmtv/column/877\`](https://rsshub.app/nmtv/column/877)
 :::`,
 };
 
 async function handler(ctx) {
     const id = ctx.req.param('id') ?? '877';
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit')) : 100;
+    const limit = getRouteLimit(ctx, 100);
 
     const hostUrl = 'https://vod.m2oplus.nmtv.cn';
     const apiRootUrl = 'https://mapi.m2oplus.nmtv.cn';
@@ -43,27 +44,28 @@ async function handler(ctx) {
 
     const items = data.map((item) => {
         const enclosure_url = `${hostUrl}/${item.target_path}${item.target_filename}`;
-        const enclosure_type = `${item.type}/${enclosure_url.match(/\.(\w+)$/)[1]}`;
+        const extension = new URL(enclosure_url).pathname.split('.').pop()?.toLowerCase();
+        const enclosure_type = extension ? (item.type === 'audio' && extension === 'mp3' ? 'audio/mpeg' : `${item.type}/${extension}`) : undefined;
 
         return {
             title: item.title,
             link: item.content_url,
             author: item.column_name,
-            pubDate: timezone(parseDate(item.publish_time), +8),
+            pubDate: timezone(parseDate(item.publish_time), 8),
             description: renderToString(
                 item.type === 'audio' ? (
-                    <audio controls="controls">
-                        <source src={enclosure_url} type="audio/mp3" />
+                    <audio controls>
+                        <source src={enclosure_url} type={enclosure_type} />
                     </audio>
                 ) : item.type === 'video' ? (
                     <video controls poster={item.index_pic}>
-                        <source src={enclosure_url} type="video/mp4" />
+                        <source src={enclosure_url} type={enclosure_type} />
                     </video>
                 ) : null
             ),
             enclosure_url,
             enclosure_type,
-            itunes_duration: item.video.duration,
+            itunes_duration: item.video?.duration,
             itunes_item_image: item.index_pic,
         };
     });
@@ -73,7 +75,7 @@ async function handler(ctx) {
 
     return {
         title: `内蒙古广播电视台 - ${author}`,
-        link: items[0].link.split(/\/\d{4}-\d{2}-\d{2}\//)[0],
+        link: items[0].link.split(/\/\d{4}-\d{2}-\d{2}\//, 1)[0],
         item: items,
         image: `${imageUrl.host}${imageUrl.filepath}${imageUrl.filename}`,
         itunes_author: author,

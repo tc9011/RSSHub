@@ -1,9 +1,10 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDateInTimezone } from '@/utils/parse-date-in-timezone';
 import { finishArticleItem } from '@/utils/wechat-mp';
 
 const host = 'https://www.cs.sdu.edu.cn/';
@@ -60,8 +61,8 @@ export const route: Route = {
     name: '计算机科学与技术学院通知',
     maintainers: ['Ji4n1ng', 'wiketool'],
     handler,
-    description: `| 学院公告 | 学术报告 | 科技简讯 | 本科教育 | 研究生教育 |
-| -------- | -------- | -------- | -------- | -------- |
+    description: `| 学院公告     | 学术报告 | 科技简讯   | 本科教育      | 研究生教育   |
+| ------------ | -------- | ---------- | ------------- | ------------ |
 | announcement | academic | technology | undergraduate | postgraduate |`,
 };
 
@@ -75,23 +76,26 @@ async function handler(ctx) {
 
     let item = $('.dqlb ul li')
         .toArray()
-        .map((e) => {
-            e = $(e);
-            const a = e.find('a');
+        .map((e): DataItem => {
+            const $e = $(e);
+            const a = $e.find('a');
             return {
                 title: a.text().trim(),
-                link: a.attr('href').startsWith('info/') ? host + a.attr('href') : a.attr('href'),
-                pubDate: parseDate(e.find('.fr').text().trim(), 'YYYY-MM-DD'),
+                link: a.attr('href')!.startsWith('info/') ? host + a.attr('href') : a.attr('href'),
+                pubDate: parseDateInTimezone($e.find('.fr').text().trim(), 8),
             };
         });
 
-    item = await Promise.all(
-        item.map((item) =>
-            cache.tryGet(item.link, async () => {
-                if (new URL(item.link).hostname === 'mp.weixin.qq.com') {
+    item = await pMap(
+        item,
+        async (item) => ({
+            ...item,
+            ...(await cache.tryGet(`cs-index:article-v2:${item.link}`, async () => {
+                if (new URL(item.link!).hostname === 'mp.weixin.qq.com') {
                     return finishArticleItem(item);
-                } else if (new URL(item.link).hostname !== 'www.cs.sdu.edu.cn') {
-                    return item;
+                }
+                if (new URL(item.link!).hostname !== 'www.cs.sdu.edu.cn') {
+                    return {};
                 }
                 const response = await got(item.link);
                 const $ = load(response.data);
@@ -101,9 +105,10 @@ async function handler(ctx) {
                 $('.xqnr_tit').remove();
                 item.description = $('form[name=_newscontent_fromname]').html();
 
-                return item;
-            })
-        )
+                return { title: item.title, author: item.author, description: item.description };
+            })),
+        }),
+        { concurrency: 3 }
     );
 
     return {

@@ -3,6 +3,7 @@ import { load } from 'cheerio';
 import type { Route } from '@/types';
 import got from '@/utils/got';
 import ofetch from '@/utils/ofetch';
+import { parseDateInTimezone } from '@/utils/parse-date-in-timezone';
 
 const baseUrl = 'https://nosec.org/home/ajaxindexdata';
 const keykinds = {
@@ -34,9 +35,13 @@ export const route: Route = {
     handler,
     radar: [
         {
-            source: ['nosec.org/home/index/:keykind', 'nosec.org/home/index'],
-            target: (params) => `/nosec${params.keykind ? `/${params.keybind.replace('.html', '')}` : ''}`,
+            source: ['nosec.org/home/index'],
+            target: '/',
         },
+        ...Object.keys(keykinds).map((keykind) => ({
+            source: [`nosec.org/home/index/${keykind}.html`],
+            target: `/${keykind}`,
+        })),
     ],
 };
 
@@ -45,8 +50,8 @@ async function handler(ctx) {
     const $ = load(csrfresponse._data);
     const token = $('meta[name="csrf-token"]').attr('content');
     const cookies = csrfresponse.headers.getSetCookie().toString();
-    const xsrf_token = cookies.match(/XSRF-TOKEN=[^\s;]+/)[0];
-    const laravel_session = cookies.match(/laravel_session[^\s;]+/)[0];
+    const xsrf_token = cookies.match(/XSRF-TOKEN=[^\s;]+/)![0];
+    const laravel_session = cookies.match(/laravel_session[^\s;]+/)![0];
 
     const keykind = ctx.req.param('keykind') || '';
     let formdata;
@@ -59,9 +64,9 @@ async function handler(ctx) {
         link = `https://nosec.org/home/index/${keykind}.html`;
     } else {
         // keykind 未知时则获取全部
-        formdata = `keykind=&page=1`;
-        title = `NOSEC 安全讯息平台`;
-        link = `https://nosec.org/home/index`;
+        formdata = 'keykind=&page=1';
+        title = 'NOSEC 安全讯息平台';
+        link = 'https://nosec.org/home/index';
     }
 
     const response = await got({
@@ -92,7 +97,7 @@ async function handler(ctx) {
             // 文章正文
             description: item.summary,
             // 文章发布时间
-            pubDate: new Date(item.publiced_at).toUTCString(),
+            pubDate: item.publiced_at ? parseDateInTimezone(item.publiced_at, 8) : undefined,
             // 文章链接
             link: `https://nosec.org/home/detail/${item.id}.html`,
             author: item.username,

@@ -1,9 +1,12 @@
 import type { Route } from '@/types';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 export const route: Route = {
     path: '/nsfw',
+    categories: ['multimedia'],
+    example: '/abskoop/nsfw',
     radar: [
         {
             source: ['ahhhhfs.com/'],
@@ -24,7 +27,7 @@ async function handler(ctx) {
         method: 'get',
         url: 'https://nsfw.abskoop.com/wp-json/wp/v2/posts',
         searchParams: {
-            per_page: ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit')) : 10,
+            per_page: getRouteLimit(ctx, 10),
             _embed: '',
         },
     });

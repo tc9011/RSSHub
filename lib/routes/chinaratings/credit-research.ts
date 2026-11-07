@@ -8,10 +8,12 @@ import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
+import timezone from '@/utils/timezone';
 
 export const handler = async (ctx: Context): Promise<Data> => {
     const { category = 'Industry/Comment' } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '15', 10);
+    const limit = getRouteLimit(ctx, 15);
 
     const baseUrl = 'https://www.chinaratings.com.cn';
     const targetUrl: string = new URL(`CreditResearch/${category.endsWith('/') ? category : `${category}/`}`, baseUrl).href;
@@ -20,12 +22,10 @@ export const handler = async (ctx: Context): Promise<Data> => {
     const $: CheerioAPI = load(response);
     const language = 'zh-CN';
 
-    let items: DataItem[] = [];
-
-    items = $('div.contRight ul.list li')
+    let items: DataItem[] = $('div.contRight ul.list li')
         .slice(0, limit)
         .toArray()
-        .map((el): Element => {
+        .map((el) => {
             const $el: Cheerio<Element> = $(el);
             const $aEl: Cheerio<Element> = $el.find('a');
 
@@ -36,9 +36,9 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
             const processedItem: DataItem = {
                 title,
-                pubDate: pubDateStr ? parseDate(pubDateStr) : undefined,
+                pubDate: pubDateStr ? timezone(parseDate(pubDateStr, 'YYYY-MM-DD'), 8) : undefined,
                 link: linkUrl ? new URL(linkUrl, targetUrl).href : undefined,
-                updated: upDatedStr ? parseDate(upDatedStr) : undefined,
+                updated: upDatedStr ? timezone(parseDate(upDatedStr, 'YYYY-MM-DD'), 8) : undefined,
                 language,
             };
 
@@ -53,27 +53,27 @@ export const handler = async (ctx: Context): Promise<Data> => {
                 }
 
                 return cache.tryGet(item.link, async (): Promise<DataItem> => {
-                    const detailResponse = await ofetch(item.link);
+                    const detailResponse = await ofetch(item.link!);
                     const $$: CheerioAPI = load(detailResponse);
 
                     const title: string = $$('div.newshead h2, div.title h3').text();
-                    const description: string = $$('div.news div.content').html() ?? '';
+                    const description = $$('div.news div.content').html();
 
                     const metaStr: string = $$('div.newshead p span, div.title p span').text();
                     const pubDateStr: string | undefined = metaStr?.match(/(\d{4}-\d{2}-\d{2})/)?.[1];
-                    const authors: DataItem['author'] = metaStr?.match(/来源：(.*?)/)?.[1];
+                    const authors: DataItem['author'] = metaStr?.match(/来源：(.*)/)?.[1];
                     const upDatedStr: string | undefined = pubDateStr;
 
                     let processedItem: DataItem = {
                         title,
                         description,
-                        pubDate: pubDateStr ? parseDate(pubDateStr) : item.pubDate,
+                        pubDate: pubDateStr ? timezone(parseDate(pubDateStr, 'YYYY-MM-DD'), 8) : item.pubDate,
                         author: authors,
                         content: {
                             html: description,
-                            text: description,
+                            text: $$('div.news div.content').text(),
                         },
-                        updated: upDatedStr ? parseDate(upDatedStr) : item.updated,
+                        updated: upDatedStr ? timezone(parseDate(upDatedStr, 'YYYY-MM-DD'), 8) : item.updated,
                         language,
                     };
 
@@ -104,8 +104,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
         title,
         link: targetUrl,
         item: items,
-        allowEmpty: true,
-        image: $('a.logo_c').attr('href') ? new URL($('a.logo_c').attr('href') as string, targetUrl).href : undefined,
+        image: new URL('img/logo.png', baseUrl).href,
         author: title.split(/-/).pop(),
         language,
         id: targetUrl,
@@ -124,8 +123,7 @@ export const route: Route = {
     },
     description: `::: tip
 若订阅 [行业评论](https://www.chinaratings.com.cn/CreditResearch/Industry/Comment/)，网址为 \`https://www.chinaratings.com.cn/CreditResearch/Industry/Comment/\`，请截取 \`https://www.chinaratings.com.cn/CreditResearch/\` 到末尾 \`/\` 的部分 \`Industry/Comment\` 作为 \`category\` 参数填入，此时目标路由为 [\`/chinaratings/CreditResearch/Industry/Comment\`](https://rsshub.app/chinaratings/CreditResearch/Industry/Comment)。
-:::
-`,
+:::`,
     categories: ['finance'],
     features: {
         requireConfig: false,
@@ -138,12 +136,16 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['www.chinaratings.com.cn/CreditResearch/:category'],
-            target: (params) => {
-                const category: string = params.category;
-
-                return `/chinaratings/CreditResearch${category ? `/${category}` : ''}`;
-            },
+            source: ['www.chinaratings.com.cn/CreditResearch/:category', 'www.chinaratings.com.cn/CreditResearch/:category/index.html'],
+            target: '/CreditResearch/:category',
+        },
+        {
+            source: ['www.chinaratings.com.cn/CreditResearch/Industry/:category', 'www.chinaratings.com.cn/CreditResearch/Industry/:category/index.html'],
+            target: '/CreditResearch/Industry/:category',
+        },
+        {
+            source: ['www.chinaratings.com.cn/CreditResearch/StructuredFinancial/:category', 'www.chinaratings.com.cn/CreditResearch/StructuredFinancial/:category/index.html'],
+            target: '/CreditResearch/StructuredFinancial/:category',
         },
     ],
     view: ViewType.Articles,

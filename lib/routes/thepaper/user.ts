@@ -1,9 +1,11 @@
-import * as cheerio from 'cheerio';
+import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+
+import { parseSourceDate } from './utils';
 
 export const route: Route = {
     path: '/user/:pphId',
@@ -108,14 +110,14 @@ interface VoiceInfo {
 async function handler(ctx) {
     const { pphId } = ctx.req.param();
 
-    const mobileBuildId = (await cache.tryGet('thepaper:m:buildId', async () => {
+    const mobileBuildId = await cache.tryGet<string>('thepaper:m:buildId', async () => {
         const response = await ofetch('https://m.thepaper.cn');
-        const $ = cheerio.load(response);
+        const $ = load(response);
         const nextData = JSON.parse($('script#__NEXT_DATA__').text());
         return nextData.buildId;
-    })) as string;
+    });
 
-    const userInfo = (await cache.tryGet(`thepaper:user:${pphId}`, async () => {
+    const userInfo = await cache.tryGet<AuthorInfo>(`thepaper:user:${pphId}`, async () => {
         const response = await ofetch(`https://api.thepaper.cn/userservice/user/homePage/${pphId}`, {
             headers: {
                 'Client-Type': '2',
@@ -124,7 +126,7 @@ async function handler(ctx) {
             },
         });
         return response.userInfo;
-    })) as AuthorInfo;
+    });
 
     const response = await ofetch<PPHContentResponse>('https://api.thepaper.cn/contentapi/cont/pph/user', {
         method: 'POST',
@@ -138,30 +140,34 @@ async function handler(ctx) {
         },
     });
 
-    const list = response.data.list.map((item) => ({
+    const list = response.data.list.map((item): DataItem & { contId: string } => ({
         title: item.name,
         link: `https://www.thepaper.cn/newsDetail_forward_${item.contId}`,
-        pubDate: parseDate(item.pubTimeLong),
+        pubDate: parseSourceDate(item.pubTimeLong),
         author: item.authorInfo.sname,
         contId: item.contId,
         image: item.pic,
     }));
 
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
+    const items = await pMap(
+        list,
+        async (item) => ({
+            ...item,
+            ...(await cache.tryGet(item.link!, async () => {
                 const response = await ofetch(`https://m.thepaper.cn/_next/data/${mobileBuildId}/detail/${item.contId}.json`, {
                     query: {
                         id: item.contId,
                     },
                 });
 
-                item.description = response.pageProps.detailData.contentDetail.content;
-                item.updated = parseDate(response.pageProps.detailData.contentDetail.updateTime);
-
-                return item;
-            })
-        )
+                const contentDetail = response.pageProps.detailData.contentDetail;
+                return {
+                    description: contentDetail.content,
+                    updated: parseSourceDate(contentDetail.updateTime),
+                };
+            })),
+        }),
+        { concurrency: 3 }
     );
 
     return {

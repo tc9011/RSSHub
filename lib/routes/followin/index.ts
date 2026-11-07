@@ -1,9 +1,7 @@
 import type { Route } from '@/types';
 import { ViewType } from '@/types';
-import cache from '@/utils/cache';
-import got from '@/utils/got';
 
-import { apiUrl, favicon, getBParam, getBuildId, getGToken, parseItem, parseList } from './utils';
+import { favicon, getApi, getPoolSize, processList } from './utils';
 
 export const route: Route = {
     path: '/:categoryId?/:lang?',
@@ -54,7 +52,7 @@ export const route: Route = {
 | ------- | ------ | ---- | ----- | --- | ------ | -------- | --------- | ------ |
 | 1       | 9      | 13   | 14    | 3   | 5      | 6        | 8         | 11     |
 
-  Language
+Language
 
 | English | 简体中文 | 繁體中文 | Tiếng Việt |
 | ------- | -------- | -------- | ---------- |
@@ -63,28 +61,12 @@ export const route: Route = {
 
 async function handler(ctx) {
     const { categoryId = '1', lang = 'en' } = ctx.req.param();
-    const { limit = 20 } = ctx.req.query();
-    const gToken = await getGToken(cache.tryGet);
-    const bParam = getBParam(lang);
-
-    const { data: response } = await got.post(`${apiUrl}/feed/list/recommended`, {
-        headers: {
-            'x-bparam': JSON.stringify(bParam),
-            'x-gtoken': gToken,
-        },
-        json: {
-            category_id: Number.parseInt(categoryId),
-            count: Number.parseInt(limit),
-        },
+    const poolSize = getPoolSize(ctx, 20);
+    const response = await getApi('/feed/list/recommended', lang, {
+        category_id: Number.parseInt(categoryId),
+        count: poolSize,
     });
-    if (response.code !== 2000) {
-        throw new Error(response.msg);
-    }
-
-    const buildId = await getBuildId(cache.tryGet);
-
-    const list = parseList(response.data.list, lang, buildId);
-    const items = await Promise.all(list.map((item) => parseItem(item, cache.tryGet)));
+    const items = await processList(response.list, lang, ctx, 20);
 
     return {
         title: 'Followin',

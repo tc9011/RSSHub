@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 
 import type { Context } from 'hono';
 import { renderToString } from 'hono/jsx/dom/server';
+import pMap from 'p-map';
 
 import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Data, DataItem, Route } from '@/types';
@@ -12,14 +13,14 @@ import { parseDate } from '@/utils/parse-date';
 
 import type { DetailResponse, SearchResultItem } from './types';
 
-const renderBilingual = (zh, en) =>
+const renderBilingual = (zh: string[] = [], en: string[]) =>
     renderToString(
         <>
-            {en.map((enText, index) => (
+            {Array.from({ length: Math.max(zh.length, en.length) }, (_, index) => (
                 <>
                     {index === 0 ? null : <br />}
-                    <p>{enText}</p>
-                    <p>{zh[index]}</p>
+                    {en[index] !== undefined && <p>{en[index]}</p>}
+                    {zh[index] !== undefined && <p>{zh[index]}</p>}
                 </>
             ))}
         </>
@@ -27,6 +28,9 @@ const renderBilingual = (zh, en) =>
 
 const baseURL = 'https://www.linkresearcher.com';
 const apiURL = `${baseURL}/api`;
+
+const categoryMap = { theses: '论文', information: '新闻', careers: '职业' } as const;
+const isCategory = (value: string): value is keyof typeof categoryMap => Object.hasOwn(categoryMap, value);
 
 export const route: Route = {
     name: 'Articles',
@@ -50,38 +54,35 @@ export const route: Route = {
 };
 
 async function handler(ctx: Context): Promise<Data> {
-    const categoryMap = { theses: '论文', information: '新闻', careers: '职业' } as const;
     const params = ctx.req.param('params');
     const filters = new URLSearchParams(params);
 
     const subject = filters.get('subject');
     const columns = filters.get('columns');
     const query = filters.get('query') ?? '';
-    const category = filters.get('category') ?? ('theses' as keyof typeof categoryMap);
+    const category = filters.get('category') ?? 'theses';
 
-    if (!(category in categoryMap)) {
+    if (!isCategory(category)) {
         throw new InvalidParameterError('Invalid category');
     }
-    let title = categoryMap[category] as string;
+    let title: string = categoryMap[category];
 
     const token = crypto.randomUUID();
 
-    const data: {
+    const data = {
         filters: {
-            status: boolean;
-            subject?: string;
-            columns?: string;
-        };
-    } = { filters: { status: true } };
+            status: true,
+            subject: subject || undefined,
+            columns: columns || undefined,
+        },
+    };
 
     if (subject) {
-        data.filters.subject = subject;
-        title = `${title}「${subject}」`;
+        title += `「${subject}」`;
     }
 
     if (columns) {
-        data.filters.columns = columns;
-        title = `${title}「${columns}」`;
+        title += `「${columns}」`;
     }
 
     const dataURL = `${baseURL}/api/${category === 'careers' ? 'articles' : category}/search`;
@@ -105,8 +106,9 @@ async function handler(ctx: Context): Promise<Data> {
         },
     });
 
-    const items = await Promise.all(
-        pageResponse.hits.map((item) => {
+    const items = await pMap(
+        pageResponse.hits,
+        (item) => {
             const link = `${baseURL}/${category}/${item.id}`;
             return cache.tryGet(link, async () => {
                 const response = await ofetch<DetailResponse>(`${apiURL}/${category === 'theses' ? 'theses' : 'information'}/${item.id}`, {
@@ -118,18 +120,20 @@ async function handler(ctx: Context): Promise<Data> {
                     pubDate: parseDate(response.onlineTime),
                     link,
                     image: response.cover,
+                    category: response.tags,
                     description: 'zhTextList' in response && 'enTextList' in response ? renderBilingual(response.zhTextList, response.enTextList) : response.content,
                 };
 
-                if ('paperList' in response) {
+                if ('paperList' in response && response.paperList[0]) {
                     const { doi, authors } = response.paperList[0];
                     dataItem.doi = doi;
                     dataItem.author = authors.map((author) => ({ name: author }));
                 }
 
                 return dataItem;
-            }) as unknown as DataItem;
-        })
+            });
+        },
+        { concurrency: 3 }
     );
 
     return {

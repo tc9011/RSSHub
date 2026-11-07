@@ -1,16 +1,18 @@
 import { load } from 'cheerio';
 import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
 export const handler = async (ctx) => {
     const { category = '' } = ctx.req.param();
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 20;
+    const limit = getRouteLimit(ctx, 20);
 
     const rootUrl = 'https://chinese.joins.com';
     const currentUrl = new URL(`news/articleList.html?view_type=s${category ? `&sc_section_code=${category}` : ''}`, rootUrl).href;
@@ -19,26 +21,27 @@ export const handler = async (ctx) => {
 
     const $ = load(response);
 
-    const language = $('html').prop('lang');
+    const language = 'zh-CN' as const;
 
     let items = $('section.article-list-content div.table-row')
-        .slice(0, limit)
+        .slice(0, ctx.req.query('sorted') === 'false' ? limit : Math.max(20, limit))
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem => {
+            const $item = $(item);
 
             return {
-                title: item.find('strong').text(),
-                pubDate: timezone(parseDate(item.find('div.list-dated').text().split(/\|/).pop()), +8),
-                link: new URL(item.find('a.links').prop('href'), rootUrl).href,
-                author: item.find('div.list-dated').text().split(/\|/)[0],
+                title: $item.find('strong').text(),
+                pubDate: $item.find('div.list-dated').text().split(/\|/).pop()?.trim() ? timezone(parseDate($item.find('div.list-dated').text().split(/\|/).pop()!), 9) : undefined,
+                link: new URL($item.find('a.links').prop('href')!, rootUrl).href,
+                author: $item.find('div.list-dated').text().split(/\|/, 1)[0],
                 language,
             };
         });
 
-    items = await Promise.all(
-        items.map((item) =>
-            cache.tryGet(item.link, async () => {
+    items = await pMap(
+        items,
+        (item) =>
+            cache.tryGet(item.link!, async () => {
                 const { data: detailResponse } = await got(item.link);
 
                 const $$ = load(detailResponse);
@@ -68,11 +71,12 @@ export const handler = async (ctx) => {
                 );
                 const image = $$('meta[property="og:image"]').prop('content');
 
-                item.title = title;
+                item.title = title || item.title;
                 item.description = description;
-                item.pubDate = parseDate($$('meta[property="article:published_time"]').prop('content'));
+                const publishedTime = $$('meta[property="article:published_time"]').prop('content');
+                item.pubDate = publishedTime ? parseDate(publishedTime) : item.pubDate;
                 item.category = $$('meta[name="keywords"]').prop('content')?.split(/,/) ?? $$('meta[name="news_keywords"]').prop('content')?.split(/,/) ?? [];
-                item.author = $$('meta[property="og:article:author"]').prop('content');
+                item.author = $$('meta[property="og:article:author"]').prop('content') || item.author;
                 item.content = {
                     html: description,
                     text: $$('div#article-view-content-div').text(),
@@ -82,18 +86,17 @@ export const handler = async (ctx) => {
                 item.language = language;
 
                 return item;
-            })
-        )
+            }),
+        { concurrency: 3 }
     );
 
-    const image = new URL($('div.user-logo img').prop('src'), rootUrl).href;
+    const image = new URL($('div.user-logo img').prop('src')!, rootUrl).href;
 
     return {
         title: `${$(`a[data-code="${category}"]`)?.text() || $('ul#user-menu a').first().text()} - ${$('title').text()}`,
         description: $('meta[property="og:description"]').prop('content'),
         link: currentUrl,
         item: items,
-        allowEmpty: true,
         image,
         author: $('meta[property="og:site_name"]').prop('content'),
         language,
@@ -102,33 +105,31 @@ export const handler = async (ctx) => {
 
 export const route: Route = {
     path: '/chinese/:category?',
-    name: '中央日报中文版',
+    name: '中文版',
     url: 'chinese.joins.com',
     maintainers: ['nczitzk'],
     handler,
-    example: '/chinese',
+    example: '/joins/chinese',
     parameters: { category: '分类，默认为空，可在对应分类页 URL 中找到 `sc_section_code`' },
     description: `::: tip
-  若订阅 [财经](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N1)，网址为 \`https://chinese.joins.com/news/articleList.html?sc_section_code=S1N1\`。截取 \`sc_section_code\` 的值作为参数填入，此时路由为 [\`/joins/chinese/S1N1\`](https://rsshub.app/joins/chinese/S1N1)。
+若订阅 [财经](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N1)，网址为 \`https://chinese.joins.com/news/articleList.html?sc_section_code=S1N1\`。截取 \`sc_section_code\` 的值作为参数填入，此时路由为 [\`/joins/chinese/S1N1\`](https://rsshub.app/joins/chinese/S1N1)。
 :::
 
-| 分类                                                                                       | \`sc_section_code\`                             |
-| ------------------------------------------------------------------------------------------ | ----------------------------------------------- |
-| [财经](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N1)               | [S1N1](https://rsshub.app/joins/chinese/S1N1)   |
-| [国际](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N2)               | [S1N2](https://rsshub.app/joins/chinese/S1N2)   |
-| [北韩](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N3)               | [S1N3](https://rsshub.app/joins/chinese/S1N3)   |
-| [政治·社会](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N4)          | [S1N4](https://rsshub.app/joins/chinese/S1N4)   |
-| [中国观察](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N5)           | [S1N5](https://rsshub.app/joins/chinese/S1N5)   |
-| [社论](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N26)              | [S1N26](https://rsshub.app/joins/chinese/S1N26) |
-| [专栏·观点](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N11)         | [S1N11](https://rsshub.app/joins/chinese/S1N11) |
-| [军事·科技](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N6)          | [S1N6](https://rsshub.app/joins/chinese/S1N6)   |
-| [娱乐体育](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N7)           | [S1N7](https://rsshub.app/joins/chinese/S1N7)   |
-| [教育](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N8)               | [S1N8](https://rsshub.app/joins/chinese/S1N8)   |
-| [旅游美食](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N9)           | [S1N9](https://rsshub.app/joins/chinese/S1N9)   |
-| [时尚](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N10)              | [S1N10](https://rsshub.app/joins/chinese/S1N10) |
-| [图集](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N12&view_type=tm) | [S1N12](https://rsshub.app/joins/chinese/S1N12) |
-
-  `,
+| 分类                                                                                        | \`sc_section_code\`                               |
+| ------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| [财经](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N1)                | [S1N1](https://rsshub.app/joins/chinese/S1N1)   |
+| [国际](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N2)                | [S1N2](https://rsshub.app/joins/chinese/S1N2)   |
+| [北韩](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N3)                | [S1N3](https://rsshub.app/joins/chinese/S1N3)   |
+| [政治・社会](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N4)          | [S1N4](https://rsshub.app/joins/chinese/S1N4)   |
+| [中国观察](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N5)            | [S1N5](https://rsshub.app/joins/chinese/S1N5)   |
+| [社论](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N26)               | [S1N26](https://rsshub.app/joins/chinese/S1N26) |
+| [专栏・观点](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N11)         | [S1N11](https://rsshub.app/joins/chinese/S1N11) |
+| [军事・科技](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N6)          | [S1N6](https://rsshub.app/joins/chinese/S1N6)   |
+| [娱乐体育](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N7)            | [S1N7](https://rsshub.app/joins/chinese/S1N7)   |
+| [教育](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N8)                | [S1N8](https://rsshub.app/joins/chinese/S1N8)   |
+| [旅游美食](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N9)            | [S1N9](https://rsshub.app/joins/chinese/S1N9)   |
+| [时尚](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N10)               | [S1N10](https://rsshub.app/joins/chinese/S1N10) |
+| [图集](https://chinese.joins.com/news/articleList.html?sc_section_code=S1N12\\&view_type=tm) | [S1N12](https://rsshub.app/joins/chinese/S1N12) |`,
     categories: ['traditional-media'],
 
     features: {
@@ -143,11 +144,7 @@ export const route: Route = {
     radar: [
         {
             source: ['chinese.joins.com/news/articleList.html'],
-            target: (url) => {
-                const category = url.searchParams.get('sc_section_code');
-
-                return `/joins/chinese${category ? `/${category}` : ''}`;
-            },
+            target: '/chinese',
         },
         {
             title: '财经',

@@ -45,7 +45,7 @@ async function handler(ctx) {
             Authorization: `bearer ${config.github.access_token}`,
         },
         json: {
-            query: `
+            query: /* GraphQL */ `
             {
                 repository(owner: "${user}", name: "${repo}") {
                   stargazers(last: 10) {
@@ -65,7 +65,6 @@ async function handler(ctx) {
     const data = response.data.data.repository.stargazers.edges.toReversed();
 
     return {
-        allowEmpty: true,
         title: `${user}/${repo}’s stargazers`,
         link: host,
         item: data.map((follower) => ({

@@ -5,8 +5,12 @@ import { renderToString } from 'hono/jsx/dom/server';
 import type { Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
+import { PRESETS } from '@/utils/header-generator';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
+
+const HEADING_TAGS = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'] as const;
 
 type ReutersContent = {
     result: {
@@ -98,7 +102,7 @@ const renderDescription = ({ result }: ReutersContent): string => {
                 }
 
                 if (element.type === 'header') {
-                    const HeaderTag = `h${element.level ?? 1}` as keyof JSX.IntrinsicElements;
+                    const HeaderTag = HEADING_TAGS.find((tag) => tag === `h${element.level ?? 1}`) ?? 'h6';
                     return <HeaderTag key={`header-${index}`}>{element.content ? raw(element.content) : null}</HeaderTag>;
                 }
 
@@ -149,37 +153,37 @@ export const route: Route = {
     name: 'Category/Topic/Author',
     maintainers: ['LyleLee', 'HenryQW', 'proletarius101', 'black-desk', 'nczitzk', 'pseudoyu'],
     handler,
-    description: `-   \`:category\`:
+    description: `- \`:category\`:
 
-      | World | Business | Legal | Markets | Breakingviews | Technology | Graphics |
-      | ----- | -------- | ----- | ------- | ------------- | ---------- | -------- |
-      | world | business | legal | markets | breakingviews | technology | graphics |
+  | World | Business | Legal | Markets | Breakingviews | Technology | Graphics |
+  | ----- | -------- | ----- | ------- | ------------- | ---------- | -------- |
+  | world | business | legal | markets | breakingviews | technology | graphics |
 
-  -   \`world/:topic\`:
+- \`world/:topic\`:
 
-      | All | Africa | Americas | Asia Pacific | China | Europe | India | Middle East | United Kingdom | United States | The Great Reboot | Reuters Next |
-      | --- | ------ | -------- | ------------ | ----- | ------ | ----- | ----------- | -------------- | ------------- | ---------------- | ------------ |
-      |     | africa | americas | asia-pacific | china | europe | india | middle-east | uk             | us            | the-great-reboot | reuters-next |
+  | All | Africa | Americas | Asia Pacific | China | Europe | India | Middle East | United Kingdom | United States | The Great Reboot | Reuters Next |
+  | --- | ------ | -------- | ------------ | ----- | ------ | ----- | ----------- | -------------- | ------------- | ---------------- | ------------ |
+  |     | africa | americas | asia-pacific | china | europe | india | middle-east | uk             | us            | the-great-reboot | reuters-next |
 
-  -   \`business/:topic\`:
+- \`business/:topic\`:
 
-      | All | Aerospace & Defense | Autos & Transportation | Energy | Environment | Finance | Healthcare & Pharmaceuticals | Media & Telecom | Retail & Consumer | Sustainable Business | Charged | Future of Health | Future of Money | Take Five | Reuters Impact |
-      | --- | ------------------- | ---------------------- | ------ | ----------- | ------- | ---------------------------- | --------------- | ----------------- | -------------------- | ------- | ---------------- | --------------- | --------- | -------------- |
-      |     | aerospace-defense   | autos-transportation   | energy | environment | finance | healthcare-pharmaceuticals   | media-telecom   | retail-consumer   | sustainable-business | charged | future-of-health | future-of-money | take-five | reuters-impact |
+  | All | Aerospace & Defense | Autos & Transportation | Energy | Environment | Finance | Healthcare & Pharmaceuticals | Media & Telecom | Retail & Consumer | Sustainable Business | Charged | Future of Health | Future of Money | Take Five | Reuters Impact |
+  | --- | ------------------- | ---------------------- | ------ | ----------- | ------- | ---------------------------- | --------------- | ----------------- | -------------------- | ------- | ---------------- | --------------- | --------- | -------------- |
+  |     | aerospace-defense   | autos-transportation   | energy | environment | finance | healthcare-pharmaceuticals   | media-telecom   | retail-consumer   | sustainable-business | charged | future-of-health | future-of-money | take-five | reuters-impact |
 
-  -   \`legal/:topic\`:
+- \`legal/:topic\`:
 
-      | All | Government | Legal Industry | Litigation | Transactional |
-      | --- | ---------- | -------------- | ---------- | ------------- |
-      |     | government | legalindustry  | litigation | transactional |
+  | All | Government | Legal Industry | Litigation | Transactional |
+  | --- | ---------- | -------------- | ---------- | ------------- |
+  |     | government | legalindustry  | litigation | transactional |
 
-  -   \`authors/:topic\`:
+- \`authors/:topic\`:
 
-      | Default | Jonathan Landay | any other authors |
-      | ------- | --------------- | ----------------- |
-      | reuters | jonathan-landay | their name in URL |
+  | Default | Jonathan Landay | any other authors |
+  | ------- | --------------- | ----------------- |
+  | reuters | jonathan-landay | their name in URL |
 
-  More could be found in the URL of the category/topic page.`,
+More could be found in the URL of the category/topic page.`,
 };
 
 async function handler(ctx) {
@@ -188,15 +192,15 @@ async function handler(ctx) {
 
     const category = ctx.req.param('category');
     const topic = ctx.req.param('topic') ?? (category === 'authors' ? 'reuters' : '');
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit')) : 20;
+    const limit = getRouteLimit(ctx, 20);
     const useSophi = ctx.req.query('sophi') === 'true' && topic !== '' && CAN_USE_SOPHI.includes(category);
 
     const section_id = `/${category}/${topic ? `${topic}/` : ''}`;
 
+    // DataDome answers the default macOS Chrome header preset with a 401 captcha, but lets the iOS preset through
     const browserHeaders = {
         Accept: 'application/json, text/plain, */*',
         'Accept-Language': 'en-US,en;q=0.9',
-        Referer: 'https://www.reuters.com/',
     };
 
     try {
@@ -213,41 +217,40 @@ async function handler(ctx) {
                         }),
                     },
                     headers: browserHeaders,
+                    headerGeneratorOptions: PRESETS.MODERN_IOS,
                 });
 
+                // The topic API no longer returns the topic itself, so name the feed after the topic in the URL
                 return {
-                    title: `${response.result.topics[0].name} | Reuters`,
-                    description: response.result.topics[0].entity_id,
-                    rootUrl,
-                    response,
-                };
-            } else {
-                const rootUrl = 'https://www.reuters.com/pf/api/v3/content/fetch/articles-by-section-alias-or-id-v1';
-                const response = await ofetch(rootUrl, {
-                    query: {
-                        query: JSON.stringify({
-                            offset: 0,
-                            size: limit,
-                            section_id,
-                            website: 'reuters',
-                            ...(useSophi
-                                ? {
-                                      fetch_type: 'sophi',
-                                      sophi_page: '*',
-                                      sophi_widget: 'topic',
-                                  }
-                                : {}),
-                        }),
-                    },
-                    headers: browserHeaders,
-                });
-                return {
-                    title: response.result.section.title,
-                    description: response.result.section.section_about,
+                    title: `${topic} | Reuters`,
                     rootUrl,
                     response,
                 };
             }
+            const rootUrl = 'https://www.reuters.com/pf/api/v3/content/fetch/articles-by-section-alias-or-id-v1';
+            const response = await ofetch(rootUrl, {
+                query: {
+                    query: JSON.stringify({
+                        offset: 0,
+                        size: limit,
+                        section_id,
+                        website: 'reuters',
+                        ...(useSophi && {
+                            fetch_type: 'sophi',
+                            sophi_page: '*',
+                            sophi_widget: 'topic',
+                        }),
+                    }),
+                },
+                headers: browserHeaders,
+                headerGeneratorOptions: PRESETS.MODERN_IOS,
+            });
+            return {
+                title: response.result.section.title,
+                description: response.result.section.section_about,
+                rootUrl,
+                response,
+            };
         })();
 
         let items = response.result.articles.map((e) => ({
@@ -256,7 +259,7 @@ async function handler(ctx) {
             guid: e.id,
             pubDate: parseDate(e.published_time),
             updated: parseDate(e.updated_time),
-            author: e.authors.map((e) => e.name).join(', '),
+            author: e.authors?.map((e) => e.name).join(', '),
             category: e.kicker.names,
             description: e.description,
         }));
@@ -267,10 +270,12 @@ async function handler(ctx) {
             items.map((item) =>
                 ctx.req.query('fulltext') === 'true'
                     ? cache.tryGet(item.link, async () => {
-                          const detailResponse = await ofetch(item.link, {
+                          const detailResponse = await ofetch.raw<string>(item.link, {
                               headers: browserHeaders,
+                              headerGeneratorOptions: PRESETS.MODERN_IOS,
                           });
-                          const content = load(detailResponse.data);
+                          const detailHtml = detailResponse._data ?? '';
+                          const content = load(detailHtml);
 
                           if (detailResponse.url.startsWith('https://www.reuters.com/investigates/')) {
                               const ldJson = JSON.parse(content('script[type="application/ld+json"]').text());
@@ -287,7 +292,7 @@ async function handler(ctx) {
 
                           const matches = content('script#fusion-metadata')
                               .text()
-                              .match(/Fusion.globalContent=({[\S\s]*?});/);
+                              .match(/Fusion.globalContent=(\{[\s\S]*?\});/);
 
                           if (matches) {
                               const data = JSON.parse(matches[1]);
@@ -306,13 +311,17 @@ async function handler(ctx) {
                           content('.title').remove();
                           content('.article-metadata').remove();
 
-                          item.title = content('meta[property="og:title"]').attr('content');
-                          item.pubDate = parseDate(detailResponse.data.match(/"datePublished":"(.*?)","dateModified/)[1]);
-                          item.author = detailResponse.data
-                              .match(/{"@type":"Person","name":"(.*?)"}/g)
-                              .map((p) => p.match(/"name":"(.*?)"/)[1])
-                              .join(', ');
-                          item.description = content('article').html();
+                          item.title = content('meta[property="og:title"]').attr('content') || item.title;
+                          const publishedTime = detailHtml.match(/"datePublished":"(.*?)","dateModified/)?.[1];
+                          if (publishedTime) {
+                              item.pubDate = parseDate(publishedTime);
+                          }
+                          const authors = (detailHtml.match(/\{"@type":"Person","name":"(.*?)"\}/g) ?? []).flatMap((person) => {
+                              const name = person.match(/"name":"(.*?)"/)?.[1];
+                              return name ? [name] : [];
+                          });
+                          item.author = authors.join(', ') || item.author;
+                          item.description = content('article').html() || item.description;
 
                           return item;
                       })
@@ -328,7 +337,10 @@ async function handler(ctx) {
             link: `https://www.reuters.com${section_id}`,
             item: items,
         };
-    } catch {
+    } catch (error: any) {
+        if (error?.name !== 'FetchError') {
+            throw error;
+        }
         // Fallback to arc outboundfeeds if API fails
         const arcUrl = topic ? `https://www.reuters.com/arc/outboundfeeds/v4/mobile/section${section_id}?outputType=json` : `https://www.reuters.com/arc/outboundfeeds/v4/mobile/section/${category}/?outputType=json`;
 
@@ -365,5 +377,6 @@ async function handler(ctx) {
                 item: items.slice(0, limit),
             };
         }
+        return null;
     }
 }

@@ -1,4 +1,4 @@
-import type { Route } from '@/types';
+import type { Data, Route } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
 
@@ -19,7 +19,7 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['unusualwhales.com/news', 'unusualwhales.com/'],
+            source: ['unusualwhales.com/news', 'unusualwhales.com/news-feed', 'unusualwhales.com/'],
         },
     ],
     name: 'News Feed',
@@ -28,7 +28,7 @@ export const route: Route = {
     url: 'unusualwhales.com/news',
 };
 
-async function handler() {
+async function handler(): Promise<Data> {
     const response = await ofetch(`${apiBase}/api/news/headlines-feed?limit=100`);
 
     const items = response.data.map((item) => ({
@@ -36,7 +36,7 @@ async function handler() {
         link: item.url,
         guid: item.id,
         author: item.source,
-        pubDate: parseDate(item.created_at),
+        pubDate: item.created_at ? parseDate(item.created_at) : undefined,
         category: item.tickers,
     }));
 
@@ -45,7 +45,7 @@ async function handler() {
         description: 'Explore unusual options, options flow, dark pools, short activity, and stock activity on unusualwhales.com. Unusual whales has a full news service available!',
         link: 'https://unusualwhales.com/news-feed',
         image: 'https://unusualwhales.com/android-icon-192x192.png',
-        language: 'en-US',
+        language: 'en-us',
         item: items,
     };
 }

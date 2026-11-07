@@ -6,6 +6,7 @@ import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 export const route: Route = {
     path: '/:category?',
@@ -22,12 +23,20 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['secretsanfrancisco.com/:category'],
-            target: '/:category',
+            source: ['secretsanfrancisco.com/top-news'],
+            target: '/top-news',
+        },
+        {
+            source: ['secretsanfrancisco.com/things-to-do'],
+            target: '/things-to-do',
+        },
+        {
+            source: ['secretsanfrancisco.com/culture'],
+            target: '/culture',
         },
     ],
     name: 'Category',
-    maintainers: ['EthanWng97'],
+    maintainers: ['IvanWng97'],
     handler,
 };
 
@@ -41,9 +50,10 @@ async function handler(ctx) {
 
     let category;
     if (categorySlug) {
-        category = await cache.tryGet(`${baseUrl}${categoryApiPath}`, async () => {
+        category = await cache.tryGet(`${baseUrl}${categoryApiPath}:${categorySlug}`, async () => {
             const { data } = await got(`${baseUrl}${categoryApiPath}`, {
                 searchParams: { slug: categorySlug },
+                headers: { accept: 'application/json' },
             });
             if (!data || data.length === 0) {
                 throw new Error(`Category "${categorySlug}" not found`);
@@ -58,12 +68,14 @@ async function handler(ctx) {
 
     // get posts
     const postsUrl = `${baseUrl}${postApiPath}`;
+    const limit = Math.min(getRouteLimit(ctx, 10), 100);
     const postsResponse = await got(postsUrl, {
         searchParams: {
-            per_page: ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit')) : 10,
+            per_page: limit,
             _embed: '',
             ...(categoryId && { categories: categoryId }),
         },
+        headers: { accept: 'application/json' },
     });
 
     const items = postsResponse.data
@@ -91,10 +103,19 @@ async function handler(ctx) {
                     </>
                 ),
                 link: item.link,
-                pubDate: parseDate(item.date_gmt),
-                updated: parseDate(item.modified_gmt),
+                // WordPress returns *_gmt without a timezone designator
+                pubDate: parseDate(`${item.date_gmt}Z`),
+                updated: parseDate(`${item.modified_gmt}Z`),
                 image,
                 author: item._embedded.author[0].name,
+                category: [
+                    ...new Set<string>(
+                        item._embedded?.['wp:term']
+                            ?.flat()
+                            .map((term) => term.name)
+                            .filter(Boolean)
+                    ),
+                ],
             };
             return single;
         });

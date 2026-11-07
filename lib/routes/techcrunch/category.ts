@@ -2,7 +2,7 @@ import { load } from 'cheerio';
 
 import type { Route } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDateInTimezone } from '@/utils/parse-date-in-timezone';
 
 import { renderDescription } from './templates/description';
 
@@ -17,9 +17,9 @@ export const route: Route = {
     name: 'Category',
     maintainers: ['MilliumOrion'],
     handler,
-    description: `Use the category ID to retrieve a list of articles, category ID.  
-From the page source of \`https://techcrunch.com/category/***\`, locate the \`{category_id}\`  
-Example:  
+    description: `Use the category ID to retrieve a list of articles, category ID.\\
+From the page source of \`https://techcrunch.com/category/***\`, locate the \`{category_id}\`\\
+Example:\\
 \`html\` -> \`head\` -> \`<link rel="alternate" title="JSON" type="application/json" href="https://techcrunch.com/wp-json/wp/v2/categories/{category_id}">\``,
 };
 
@@ -28,6 +28,8 @@ async function handler(ctx) {
     const { data } = await got(`${host}/wp-json/wp/v2/posts?categories=${categoryId}`);
     const items = data.map((item) => {
         const head = item.yoast_head_json;
+        const article = head.schema?.['@graph']?.find((node) => node['@type'] === 'NewsArticle');
+        const date = item.date_gmt || head.article_published_time;
         const $ = load(item.content.rendered, null, false);
         return {
             title: item.title.rendered,
@@ -36,7 +38,9 @@ async function handler(ctx) {
                 rendered: $.html(),
             }),
             link: item.link,
-            pubDate: parseDate(item.date_gmt),
+            pubDate: date ? parseDateInTimezone(date, 0) : undefined,
+            author: head.author,
+            category: [...new Set<string>([...(article?.articleSection ?? []), ...(article?.keywords ?? [])])].map((category) => $('<span>').html(category).text()),
         };
     });
 

@@ -1,9 +1,9 @@
 import { load } from 'cheerio';
 
 import type { Route } from '@/types';
-import ofetch from '@/utils/ofetch';
+import { getPlaywrightPage } from '@/utils/playwright';
 
-import { BASE_URL, enhanceItemsWithSummaries, parseArticles } from './utils';
+import { BASE_URL, enhanceItemsWithSummaries, fetchPageHtml, parseArticles } from './utils';
 
 export const route: Route = {
     path: '/tag/:tag/:sort?',
@@ -22,16 +22,24 @@ export const route: Route = {
     },
     features: {
         requireConfig: false,
-        requirePuppeteer: false,
-        antiCrawler: false,
+        requirePuppeteer: true,
+        antiCrawler: true,
         supportBT: false,
         supportPodcast: false,
         supportScihub: false,
     },
     radar: [
         {
-            source: ['dailypush.dev/:tag/trending', 'dailypush.dev/:tag/latest', 'dailypush.dev/:tag'],
-            target: '/tag/:tag/:sort?',
+            source: ['dailypush.dev/backend'],
+            target: '/tag/backend/trending',
+        },
+        {
+            source: ['dailypush.dev/:tag/trending'],
+            target: '/tag/:tag/trending',
+        },
+        {
+            source: ['dailypush.dev/:tag/latest'],
+            target: '/tag/:tag/latest',
         },
     ],
     name: 'Tag',
@@ -43,17 +51,23 @@ async function handler(ctx) {
     const { tag, sort = 'trending' } = ctx.req.param();
     const url = `${BASE_URL}/${tag}/${sort}`;
 
-    const response = await ofetch(url);
-    const $ = load(response);
+    const { context, destroy } = await getPlaywrightPage(url, { noGoto: true, closeTimeout: 0 });
+    try {
+        const html = await fetchPageHtml(context, url, 'article');
+        const $ = load(html);
+        const list = parseArticles($, BASE_URL);
+        const orderedList = list;
+        const candidates = orderedList;
+        const items = await enhanceItemsWithSummaries(context, candidates);
 
-    const list = parseArticles($, BASE_URL);
-    const items = await enhanceItemsWithSummaries(list);
+        const pageTitle = $('title').text() || `DailyPush - ${tag.charAt(0).toUpperCase() + tag.slice(1)}`;
 
-    const pageTitle = $('title').text() || `DailyPush - ${tag.charAt(0).toUpperCase() + tag.slice(1)}`;
-
-    return {
-        title: pageTitle,
-        link: url,
-        item: items,
-    };
+        return {
+            title: pageTitle,
+            link: url,
+            item: items,
+        };
+    } finally {
+        await destroy();
+    }
 }

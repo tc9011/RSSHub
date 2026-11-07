@@ -1,4 +1,5 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
@@ -29,29 +30,29 @@ export const route: Route = {
     maintainers: ['ladeng07'],
     description: `| 最新动态 | 综合信息 | 招生工作 | 培养管理 | 国际交流 | 学科建设 | 学位管理 |
 | -------- | -------- | -------- | -------- | -------- | -------- | -------- |
-| zxdt     | 82       | 83       | 84       | 85       | 86       | 87       |`,
+| zxdt     | 82       | 83       | 72       | 73       | xkjs     | xwgl     |`,
     url: 'graduate.nankai.edu.cn',
     handler: async (ctx) => {
-        // 从 URL 参数中获取通知分类
+        // Read the notice category from the route path.
         const { type = 'zxdt' } = ctx.req.param();
         const baseUrl = 'https://graduate.nankai.edu.cn';
         const { data: response } = await got(`${baseUrl}/${type}/list.htm`);
         const $ = load(response);
 
-        // 获取分类名称映射
-        const categoryMap: Record<string, string> = {
+        // Map the category identifier to its name.
+        const categoryMap = {
             zxdt: '最新动态',
             '82': '综合信息',
             '83': '招生工作',
-            '84': '培养管理',
-            '85': '国际交流',
-            '86': '学科建设',
-            '87': '学位管理',
+            '72': '培养管理',
+            '73': '国际交流',
+            xkjs: '学科建设',
+            xwgl: '学位管理',
         };
 
         const categoryName = categoryMap[type] || '最新动态';
 
-        // 解析新闻列表
+        // Parse the notice list.
         const list = $('.newslist li')
             .not('#wp_paging_w6 li')
             .toArray()
@@ -62,101 +63,71 @@ export const route: Route = {
                 const $timeDiv = $li.find('.time');
 
                 const title = $link.attr('title');
-                let link = $link.attr('href') || '';
+                const href = $link.attr('href');
+                const link = href ? new URL(href, `${baseUrl}/${type}/list.htm`).href : undefined;
 
-                // 处理相对链接
-                link = link && !link.startsWith('http') ? `${baseUrl}${link}` : link;
-
-                // 提取日期
+                // Extract the publication date.
                 const dateStr = $timeDiv.text().trim();
-                const pubDate = timezone(parseDate(dateStr, 'YYYY-MM-DD'), +8);
+                const pubDate = dateStr ? timezone(parseDate(dateStr, 'YYYY-MM-DD'), 8) : undefined;
 
                 return {
-                    title,
+                    title: title!,
                     link,
                     pubDate,
                     author: '研究生院',
-                    description: '', // 初始化description属性
+                    description: '', // Initialize the description.
                 };
             })
-            .filter((item) => item && item.link && item.title); // 过滤掉空项目和没有链接的项目
+            .filter((item) => item && item.link && item.title); // Discard entries without a link.
 
-        // 获取每篇文章的详细内容
-        const items = await Promise.all(
-            list.map((item) =>
-                cache.tryGet(item.link, async () => {
-                    try {
-                        const { data: response } = await got(item.link);
-                        const $ = load(response);
+        // Fetch the article details.
+        const items = await pMap(
+            list,
+            async (item) => {
+                const detail = await cache.tryGet(`nankai:graduate:article:v3:${item.link}`, async () => {
+                    const { data: response } = await got(item.link);
+                    const $ = load(response);
 
-                        // 尝试多种内容选择器
-                        const $description = $('.wp_articlecontent');
+                    // Support the available article layouts.
+                    const $description = $('.wp_articlecontent').length ? $('.wp_articlecontent') : $('#txt, #js_content').first();
 
-                        // 处理相对链接，转换为绝对链接
-                        if ($description.length > 0) {
-                            // 处理链接
-                            $description.find('a').each((i, el) => {
-                                const $el = $(el);
-                                const href = $el.attr('href');
-                                if (href && !href.startsWith('http')) {
-                                    if (href.startsWith('/')) {
-                                        $el.attr('href', `${baseUrl}${href}`);
-                                    } else {
-                                        $el.attr('href', `${baseUrl}/${href}`);
-                                    }
-                                }
-                            });
+                    if ($description.length > 0) {
+                        // Replace the PDF player with a download link.
+                        $description.find('.wp_pdf_player').each((i, el) => {
+                            const $el = $(el);
+                            const pdfSrc = $el.attr('pdfsrc');
+                            const sudyfileAttr = ($el.attr('sudyfile-attr') || '{}').replaceAll("'", '"');
+                            const sudyfileAttrJson = JSON.parse(sudyfileAttr);
+                            const fileName = sudyfileAttrJson.title || '未命名文件.pdf';
+                            if (!pdfSrc) {
+                                return;
+                            }
 
-                            // 处理图片
-                            $description.find('img').each((i, el) => {
-                                const $el = $(el);
-                                let src = $el.attr('src');
-
-                                if (src && !src.startsWith('http')) {
-                                    src = src.startsWith('/') ? `${baseUrl}${src}` : `${baseUrl}/${src}`;
-                                    $el.attr('src', src);
-                                }
-                            });
-
-                            // 处理PDF播放器div，提取PDF链接
-                            $description.find('.wp_pdf_player').each((i, el) => {
-                                const $el = $(el);
-                                const pdfSrc = $el.attr('pdfsrc');
-                                const sudyfileAttr = ($el.attr('sudyfile-attr') || '{}').replaceAll("'", '"');
-
-                                try {
-                                    const sudyfileAttrJson = JSON.parse(sudyfileAttr);
-                                    const fileName = sudyfileAttrJson.title || '未命名文件.pdf';
-                                    if (pdfSrc) {
-                                        let pdfUrl = pdfSrc;
-                                        if (!pdfUrl.startsWith('http')) {
-                                            pdfUrl = `${baseUrl}${pdfUrl}`;
-                                        }
-                                        // 替换PDF播放器为下载链接
-                                        $el.replaceWith(`<p><a href="${pdfUrl}" target="_blank">📄 ${fileName}</a></p>`);
-                                    }
-                                } catch {
-                                    // 如果解析失败，保留原始内容
-                                }
-                            });
-                        }
-
-                        item.description = $description.html() || item.title;
-                    } catch {
-                        // 如果获取详细内容失败，返回基本信息
-                        item.description = item.title + ' (获取详细内容失败)';
+                            let pdfUrl = pdfSrc;
+                            if (!pdfUrl.startsWith('http')) {
+                                pdfUrl = `${baseUrl}${pdfUrl}`;
+                            }
+                            // Replace the player with the download link.
+                            $el.replaceWith(`<p><a href="${pdfUrl}" target="_blank">📄 ${fileName}</a></p>`);
+                        });
                     }
-                    return item;
-                })
-            )
+
+                    if (!$description.length) {
+                        throw new Error(`Could not find the graduate notice content: ${item.link}`);
+                    }
+                    return { description: $description.html() };
+                });
+                return { ...item, ...detail };
+            },
+            { concurrency: 3 }
         );
 
         return {
-            // 源标题
+            // Feed title.
             title: `南开大学研究生院-${categoryName}`,
-            // 源链接
+            // Feed link.
             link: `${baseUrl}/${type}/list.htm`,
-            // 源文章
+            // Feed items.
             item: items,
         };
     },

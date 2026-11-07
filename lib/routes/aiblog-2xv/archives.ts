@@ -4,6 +4,7 @@ import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 export const route: Route = {
     path: '/archives',
@@ -29,7 +30,7 @@ export const route: Route = {
     handler,
 };
 
-async function handler() {
+async function handler(ctx) {
     const baseUrl = 'https://aiblog-2xv.pages.dev';
     const response = await ofetch(`${baseUrl}/archives`);
     const $ = load(response);
@@ -43,32 +44,32 @@ async function handler() {
                 .toArray()
                 .map((postItem) => {
                     const $post = $(postItem);
-                    const $link = $post.find('a').first();
-                    const $title = $post.find('h3').first();
+                    const $link = $post.find('a');
+                    const $title = $post.find('h3');
                     const $dateMeta = $post.find('.archive-meta span');
 
                     return {
-                        title: $title.text().trim(), // 去除首尾空格
+                        title: $title.text(),
                         link: $link.attr('href') || '',
                         // 解析发布时间和更新时间（根据页面结构调整选择器，若存在则启用）
                         pubDate: parseDate($dateMeta.eq(0).attr('title') || ''),
-                        author: $post.find('.archive-meta span').last().text().trim() || '',
+                        author: $post.find('.archive-meta span').last().text(),
                         description: '',
                     };
                 })
         );
 
     const items = await Promise.all(
-        list.map((item) =>
+        list.slice(0, getRouteLimit(ctx, 20)).map((item) =>
             cache.tryGet(item.link, async () => {
                 const response = await ofetch(item.link);
                 const $ = load(response);
 
-                const $main = $('main').first();
+                const $main = $('main');
                 item.description = `<article>
                     <header>
                         <div class="post-description">
-                        ${$main.find('header .post-description').first().html()}
+                        ${$main.find('header .post-description').html()}
                         </div>
                     </header>
 
@@ -77,7 +78,7 @@ async function handler() {
                     </figure>
                     
                     <div class="post-content">
-                        ${$main.find('.post-content').first().html()}
+                        ${$main.find('.post-content').html()}
                     </div>
                     </article>`;
                 return item;

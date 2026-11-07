@@ -1,9 +1,16 @@
-import { load } from 'cheerio';
+import MarkdownIt from 'markdown-it';
+import pMap from 'p-map';
 
 import type { Data, DataItem, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
+import { parseDate } from '@/utils/parse-date';
+
+const md = MarkdownIt({
+    html: true,
+    linkify: true,
+});
 
 export const route: Route = {
     path: '/blog',
@@ -21,7 +28,11 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['www.manus.im'],
+            source: ['manus.im/', 'manus.im/blog', 'manus.im/blog/:slug'],
+            target: '/blog',
+        },
+        {
+            source: ['www.manus.im/', 'www.manus.im/blog', 'www.manus.im/blog/:slug'],
             target: '/blog',
         },
     ],
@@ -32,46 +43,89 @@ export const route: Route = {
     view: ViewType.Notifications,
 };
 
+const parseTimestamp = (timestamp?: { seconds?: string | number; nanos?: number }) => {
+    const value = timestamp?.seconds;
+    if (value === undefined || value === '') {
+        return;
+    }
+    const seconds = Number(typeof value === 'string' && value.startsWith('$n') ? value.slice(2) : value);
+    if (!Number.isFinite(seconds)) {
+        return;
+    }
+    return parseDate(seconds * 1000 + Math.floor((timestamp?.nanos ?? 0) / 1_000_000));
+};
+
 async function handler() {
     const rootUrl = 'https://manus.im/blog';
 
-    const response = await ofetch(rootUrl);
-    const $ = load(response);
+    const renderData = await ofetch(rootUrl, {
+        headers: {
+            RSC: '1',
+        },
+        responseType: 'text',
+    });
 
-    const list: DataItem[] = $('div.mt-10.px-6 > a')
-        .toArray()
-        .map((item) => {
-            const element = $(item);
-            const link = new URL(String(element.attr('href')), rootUrl).href;
-            const title = String(element.find('h2').attr('title'));
+    let blogList;
+    const lines = renderData.split('\n');
+    for (const line of lines) {
+        if (!line.includes('{"blogList":{"$typeName"')) {
+            continue;
+        }
 
-            return {
-                link,
-                title,
-            };
-        });
+        const jsonStr = line.slice(Math.max(0, line.indexOf('{"blogList":{"$typeName"')));
+        const lastBrace = jsonStr.lastIndexOf('}');
+        try {
+            const parsed = JSON.parse(jsonStr.slice(0, Math.max(0, lastBrace + 1)));
+            blogList = parsed.blogList;
+            break;
+        } catch {
+            // Ignore parse errors and try next line if any
+        }
+    }
 
-    const items: DataItem[] = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(String(item.link), async () => {
-                const response = await ofetch(String(item.link));
-                const $ = load(response);
-                const description: string = $('div.relative:nth-child(3)').html() ?? '';
-                const pubDateText: string = $('div.gap-3:nth-child(1) > span:nth-child(2)').text().trim();
-                const currentYear: number = new Date().getFullYear();
-                const pubDate: Date = new Date(`${pubDateText} ${currentYear}`);
+    if (!blogList || !blogList.groups) {
+        throw new Error('Failed to parse blogList from RSC data');
+    }
 
-                return {
-                    ...item,
-                    description,
-                    pubDate,
-                };
-            })
-        )
+    const list: Array<DataItem & { _contentUrl?: string }> = blogList.groups.flatMap(
+        (group) =>
+            group.blogs?.map((blog) => ({
+                title: blog.title,
+                link: `https://manus.im/blog/${blog.recordUid}`,
+                pubDate: parseTimestamp(blog.createdAt),
+                description: blog.desc,
+                category: [group.kindName],
+                _contentUrl: blog.contentUrl,
+            })) ?? []
+    );
+
+    const items: DataItem[] = await pMap(
+        list,
+        async ({ _contentUrl: contentUrl, ...item }) => {
+            let description = item.description ?? '';
+            if (typeof description !== 'string') {
+                description = String(description);
+            }
+            if (contentUrl) {
+                try {
+                    const body = await cache.tryGet<{ description: string }>(`manus:article-body:v2:${item.link}`, async () => {
+                        let contentText = await ofetch(contentUrl, { responseType: 'text' });
+                        // Manus video embeds need a video element instead of an image.
+                        contentText = contentText.replaceAll(/!\[.*?\]\((.+?\.(mp4|mov|webm))\)/gi, '<video controls preload="metadata"><source src="$1"></video>');
+                        return { description: md.render(contentText) };
+                    });
+                    description = body.description;
+                } catch {
+                    // Keep the source's summary without caching a failed article request.
+                }
+            }
+            return { ...item, description };
+        },
+        { concurrency: 3 }
     );
 
     return {
-        title: 'Manus',
+        title: 'Manus Blog',
         link: rootUrl,
         item: items,
         language: 'en',

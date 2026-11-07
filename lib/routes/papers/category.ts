@@ -3,29 +3,43 @@ import { load } from 'cheerio';
 import type { Element } from 'domhandler';
 import type { Context } from 'hono';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
 import { renderDescription } from './templates/description';
 
+const getPdfUrl = (element: Cheerio<Element>): string | undefined => {
+    const pdfUrl = element.attr('data') || element.attr('onclick')?.match(/togglePdf\('.*?',\s'(.*?)',\sthis\)/)?.[1];
+    if (!pdfUrl) {
+        return undefined;
+    }
+    try {
+        const url = new URL(pdfUrl, 'https://papers.cool');
+        return ['http:', 'https:'].includes(url.protocol) ? url.href : undefined;
+    } catch {
+        return undefined;
+    }
+};
+
 export const handler = async (ctx: Context): Promise<Data> => {
     const { id } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '50', 10);
+    const limit = getRouteLimit(ctx, 50);
 
     const baseUrl = 'https://papers.cool';
-    const targetUrl: string = new URL(`${id}?show=${limit}`, baseUrl).href;
+    const targetUrl = `${baseUrl}/${id}?show=${limit}`;
 
     const response = await ofetch(targetUrl);
     const $: CheerioAPI = load(response);
-    const language = $('html').attr('lang') ?? 'en';
+    const language = ($('html').attr('lang') ?? 'en') as Language;
 
     const items: DataItem[] = $('div.paper')
         .slice(0, limit)
         .toArray()
-        .map((el): Element => {
+        .map((el) => {
             const $el: Cheerio<Element> = $(el);
 
             const title: string = $el.find('a.title-link').text();
@@ -34,7 +48,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
                 .contents()
                 .last()
                 .text()
-                ?.trim()
                 ?.match(/(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})/)?.[1];
             const linkUrl: string | undefined = $el.find('a.title-link').attr('href');
             const categoryEls: Element[] = $el.find('p.subjects a').toArray();
@@ -49,25 +62,27 @@ export const handler = async (ctx: Context): Promise<Data> => {
                     avatar: undefined,
                 };
             });
-            const doi: string = $el.attr('id') as string;
-            const guid = `papers.cool-${doi}`;
+            const paperId = $el.attr('id');
+            const doi = paperId && /^10\.\d{4,9}\/\S+$/.test(paperId) ? paperId : undefined;
+            const link = linkUrl ? new URL(linkUrl, baseUrl).href : undefined;
+            const guid = paperId ? `papers.cool-${paperId}` : link;
             const upDatedStr: string | undefined = pubDateStr;
 
             let processedItem: DataItem = {
                 title,
-                pubDate: pubDateStr ? timezone(parseDate(pubDateStr), +0) : undefined,
-                link: linkUrl ? new URL(linkUrl, baseUrl).href : undefined,
+                pubDate: pubDateStr ? timezone(parseDate(pubDateStr), 0) : undefined,
+                link,
                 category: categories,
                 author: authors,
                 doi,
                 guid,
                 id: guid,
-                updated: upDatedStr ? timezone(parseDate(upDatedStr), +0) : undefined,
+                updated: upDatedStr ? timezone(parseDate(upDatedStr), 0) : undefined,
                 language,
             };
 
-            const $enclosureEl: Cheerio<Element> = $el.find('a.title-pdf').first();
-            const enclosureUrl: string | undefined = $enclosureEl.attr('onclick')?.match(/togglePdf\('.*?',\s'(.*?)',\sthis\)/)?.[1];
+            const $enclosureEl: Cheerio<Element> = $el.find('a.title-pdf');
+            const enclosureUrl = getPdfUrl($enclosureEl);
 
             if (enclosureUrl) {
                 processedItem = {
@@ -79,11 +94,12 @@ export const handler = async (ctx: Context): Promise<Data> => {
                 };
             }
 
+            const summary = $el.find('p.summary').text();
+            const kimiId = $el.find('a.title-kimi').attr('id');
             const description: string = renderDescription({
                 pdfUrl: enclosureUrl,
-                kimiUrl: `${targetUrl.replace(/[a-zA-Z0-9.]+$/, 'kimi')}?paper=${doi}`,
-                authors,
-                summary: $el.find('p.summary').text(),
+                kimiUrl: kimiId ? new URL(`#${kimiId}`, targetUrl).href : undefined,
+                summary,
             });
 
             processedItem = {
@@ -91,23 +107,21 @@ export const handler = async (ctx: Context): Promise<Data> => {
                 description,
                 content: {
                     html: description,
-                    text: description,
+                    text: summary,
                 },
             };
 
             return processedItem;
         })
-        .filter((_): _ is DataItem => true);
+        .filter((item) => item.guid);
 
     return {
         title: $('title').text(),
         description: $('meta[name="description"]').attr('content'),
         link: targetUrl,
         item: items,
-        allowEmpty: true,
         image: $('meta[property="og:image"]').attr('content'),
         language,
-        feedLink: `${targetUrl}/feed`,
         id: targetUrl,
     };
 };
@@ -351,8 +365,7 @@ To subscribe to [Artificial Intelligence (cs.AI)](https://papers.cool/arxiv/cs.A
 | ----------------------------------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------- |
 | [arxiv/econ](https://rsshub.app/papers/category/arxiv/econ) | [arxiv/econ.EM](https://rsshub.app/papers/category/arxiv/econ.EM) | [arxiv/econ.GN](https://rsshub.app/papers/category/arxiv/econ.GN) | [arxiv/econ.TH](https://rsshub.app/papers/category/arxiv/econ.TH)    |
 
-</details>
-`,
+</details>`,
     categories: ['journal'],
     features: {
         requireConfig: false,
@@ -1207,7 +1220,7 @@ To subscribe to [Artificial Intelligence (cs.AI)](https://papers.cool/arxiv/cs.A
         url: 'papers.cool',
         maintainers: ['nczitzk'],
         handler,
-        example: '/papers/arxiv/cs.AI',
+        example: '/papers/category/arxiv/cs.AI',
         parameters: {
             id: {
                 description: '分类 id，可在对应分类页 URL 中找到',

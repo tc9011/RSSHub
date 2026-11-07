@@ -4,24 +4,30 @@ import { HeaderGenerator, PRESETS } from 'header-generator';
 export { PRESETS } from 'header-generator';
 
 /**
- * Checks if a generated user agent is valid (doesn't contain unwanted strings)
+ * Checks if the generated headers are valid (no unwanted UA strings, required headers present)
  *
- * @param {string} userAgent The user agent string to validate
+ * @param {Record<string, string>} headers The generated headers to validate
  * @param {string} browser The browser type (used to determine which filters to apply)
- * @returns {boolean} True if the user agent is valid, false if it contains unwanted strings
+ * @returns {boolean} True if the headers are valid
  */
-const isValidUserAgent = (userAgent: string, browser: string): boolean => {
+const isValidHeader = (headers: Record<string, string>, browser: string): boolean => {
     browser = browser.toLowerCase();
+    const userAgent = headers['user-agent'];
 
-    if (browser === 'chrome') {
-        return !(userAgent.includes('Chrome-Lighthouse') || userAgent.includes('Gener8') || userAgent.includes('HeadlessChrome') || userAgent.includes('SMTBot') || userAgent.includes('Electron') || userAgent.includes('Code'));
+    if (
+        browser === 'chrome' &&
+        (userAgent.includes('Chrome-Lighthouse') ||
+            userAgent.includes('Gener8') ||
+            userAgent.includes('HeadlessChrome') ||
+            userAgent.includes('SMTBot') ||
+            userAgent.includes('Electron') ||
+            userAgent.includes('Code') ||
+            !(headers['sec-ch-ua'] && headers['sec-ch-ua-mobile'] && headers['sec-ch-ua-platform']))
+    ) {
+        return false;
     }
 
-    if (browser === 'safari') {
-        return !userAgent.includes('Applebot');
-    }
-
-    return true;
+    return !(browser === 'safari' && userAgent.includes('Applebot'));
 };
 
 /**
@@ -31,6 +37,21 @@ const isValidUserAgent = (userAgent: string, browser: string): boolean => {
 // Cache for HeaderGenerator instances per preset
 const generatorCache = new Map<string, HeaderGenerator>();
 
+// The browsers header-generator has data for, as browserslist names them
+const browserNames = ['chrome', 'edge', 'firefox', 'safari'] as const;
+
+/**
+ * A generator for the browsers of a preset's `browserListQuery`, in any version header-generator knows.
+ * browserslist resolves the query from caniuse-lite, which can name newer versions than header-generator's
+ * data has (when neither is pinned to the other, as in an install of the npm package), and a generator
+ * for those makes no headers at all.
+ */
+const relaxedGenerator = ({ browserListQuery = '', ...preset }: Partial<HeaderGeneratorOptions>) => {
+    const query = browserListQuery.toLowerCase();
+    const browsers = browserNames.filter((name) => query.includes(name));
+    return new HeaderGenerator(browsers.length ? { ...preset, browsers: [...browsers] } : preset);
+};
+
 export const generateHeaders = (preset: Partial<HeaderGeneratorOptions> = PRESETS.MODERN_MACOS_CHROME) => {
     const cacheKey = JSON.stringify(preset);
     let generator = generatorCache.get(cacheKey);
@@ -38,7 +59,17 @@ export const generateHeaders = (preset: Partial<HeaderGeneratorOptions> = PRESET
         generator = new HeaderGenerator(preset);
         generatorCache.set(cacheKey, generator);
     }
-    let headers = generator.getHeaders();
+    let headers: ReturnType<HeaderGenerator['getHeaders']>;
+    try {
+        headers = generator.getHeaders();
+    } catch (error) {
+        if (!preset.browserListQuery) {
+            throw error;
+        }
+        generator = relaxedGenerator(preset);
+        generatorCache.set(cacheKey, generator);
+        headers = generator.getHeaders();
+    }
 
     const userAgent = headers['user-agent'];
     let detectedBrowser: string;
@@ -51,7 +82,7 @@ export const generateHeaders = (preset: Partial<HeaderGeneratorOptions> = PRESET
     }
 
     let attempts = 0;
-    while (!isValidUserAgent(headers['user-agent'], detectedBrowser) && attempts < 10) {
+    while (!isValidHeader(headers, detectedBrowser) && attempts < 10) {
         headers = generator.getHeaders();
         attempts++;
     }

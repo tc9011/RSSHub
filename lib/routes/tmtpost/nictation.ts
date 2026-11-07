@@ -5,7 +5,7 @@ import { parseDate } from '@/utils/parse-date';
 export const route: Route = {
     path: '/nictation',
     categories: ['new-media'],
-    example: '/tmtpost/word',
+    example: '/tmtpost/nictation',
     parameters: {},
     features: {
         requireConfig: false,
@@ -15,9 +15,11 @@ export const route: Route = {
         supportPodcast: false,
         supportScihub: false,
     },
-    radar: {
-        source: ['www.tmtpost.com'],
-    },
+    radar: [
+        {
+            source: ['www.tmtpost.com'],
+        },
+    ],
     name: '快报',
     maintainers: ['defp'],
     handler,

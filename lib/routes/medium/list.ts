@@ -1,3 +1,5 @@
+import pMap from 'p-map';
+
 import { config } from '@/config';
 import ConfigNotFoundError from '@/errors/types/config-not-found.js';
 import InvalidParameterError from '@/errors/types/invalid-parameter.js';
@@ -22,10 +24,10 @@ export const route: Route = {
     name: 'List',
     maintainers: ['ImSingee'],
     handler,
-    description: `The List ID is the last part of the URL after \`-\`, for example, the username in [https://medium.com/@imsingee/list/collection-7e67004f23f9](https://medium.com/@imsingee/list/collection-7e67004f23f9) is \`imsingee\`, and the ID is \`7e67004f23f9\`.
+    description: `The List ID is the last part of the URL after \`-\`, for example, the username in <https://medium.com/@imsingee/list/collection-7e67004f23f9> is \`imsingee\`, and the ID is \`7e67004f23f9\`.
 
 ::: warning
-  To access private lists, only self-hosting is supported.
+To access private lists, only self-hosting is supported.
 :::`,
 };
 
@@ -46,9 +48,9 @@ async function handler(ctx) {
     }
 
     const name = catalog.name;
-    const urls = catalog.itemsConnection.items.map((item) => item.entity.mediumUrl);
+    const urls: string[] = catalog.itemsConnection.items.map((item) => item.entity.mediumUrl);
 
-    const parsedArticles = await Promise.all(urls.map((url) => parseArticle(ctx, url)));
+    const parsedArticles = await pMap(urls, (url) => parseArticle(ctx, url), { concurrency: 3 });
 
     return {
         title: `List: ${name}`,

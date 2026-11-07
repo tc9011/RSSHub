@@ -1,10 +1,21 @@
+import { load } from 'cheerio';
 import type { Context } from 'hono';
+import MarkdownIt from 'markdown-it';
 
 import type { Data, DataItem, Route } from '@/types';
 import { ViewType } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
+
+const markdown = new MarkdownIt({ html: true, linkify: true });
+
+type Racer = {
+    mainId?: string;
+    name?: string;
+    nextList?: Racer[];
+};
 
 type MainIdsResult = {
     name: string | undefined;
@@ -12,22 +23,26 @@ type MainIdsResult = {
     racer3: string | undefined;
 };
 
-const findMainIds = (data: readonly any[], searchKey: string): MainIdsResult => {
-    const recurse = (currentList: readonly any[], parentMainId: string | undefined = undefined, grandParentMainId: string | undefined = undefined): MainIdsResult => {
+const findMainIds = (data: readonly Racer[], searchKey?: string): MainIdsResult => {
+    if (!searchKey) {
+        return { name: undefined, racer2: undefined, racer3: undefined };
+    }
+    const recurse = (currentList: readonly Racer[], parentMainId: string | undefined = undefined, grandParentMainId: string | undefined = undefined): MainIdsResult => {
         for (const item of currentList) {
             const isMatch = item.mainId === searchKey || item.name === searchKey;
 
             if (isMatch) {
                 if (grandParentMainId !== undefined) {
                     return {
-                        name: item.name as string,
+                        name: item.name,
                         racer2: grandParentMainId,
-                        racer3: item.mainId as string,
+                        racer3: item.mainId,
                     };
-                } else if (parentMainId !== undefined) {
+                }
+                if (parentMainId !== undefined) {
                     return {
-                        name: item.name as string,
-                        racer2: item.mainId as string,
+                        name: item.name,
+                        racer2: item.mainId,
                         racer3: undefined,
                     };
                 }
@@ -35,9 +50,11 @@ const findMainIds = (data: readonly any[], searchKey: string): MainIdsResult => 
 
             const nextList = item.nextList;
 
-            if (Array.isArray(nextList) && nextList.length > 0) {
-                const result = recurse(nextList, item.mainId as string | undefined, parentMainId);
-
+            if (!Array.isArray(nextList) || nextList.length === 0) {
+                continue;
+            }
+            const result = recurse(nextList, item.mainId, parentMainId);
+            if (result.racer2 !== undefined || result.racer3 !== undefined) {
                 return result;
             }
         }
@@ -54,14 +71,14 @@ const findMainIds = (data: readonly any[], searchKey: string): MainIdsResult => 
 
 export const handler = async (ctx: Context): Promise<Data> => {
     const { type = '2', key } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '30', 10);
+    const limit = getRouteLimit(ctx, 30);
 
     const baseUrl = 'https://www.jl1mall.com';
     const targetUrl: string = new URL('forum', baseUrl).href;
     const apiUrl: string = new URL(`postApi/${type === 'recommend' ? 'recommend' : 'post'}/getPostData`, baseUrl).href;
     const apiRacerUrl: string = new URL('postApi/racer/getRacerList', baseUrl).href;
 
-    const racerResponse = await ofetch(apiRacerUrl);
+    const racerResponse = await ofetch<{ data: Racer[] }>(apiRacerUrl);
     const racerData = racerResponse.data;
 
     const { name, ...mainIds } = findMainIds(racerData, key);
@@ -79,7 +96,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
     const items: DataItem[] = response.data.records.slice(0, limit).map((item): DataItem => {
         const title: string = item.postTitle;
-        const description: string | undefined = item.contentMarkdown;
+        const description = item.contentMarkdown ? markdown.render(item.contentMarkdown) : undefined;
         const pubDate: number | string = item.dateTime;
         const linkUrl: string | undefined = new URL(`forum/PostDetail?postId=${item.postId}`, baseUrl).href;
         const categories: string[] = [...new Set([...(item.customTagArray ?? []), ...(item.topic?.split(/,/) ?? []), item.address, item.fromSource, item.typeName].filter(Boolean))];
@@ -94,12 +111,11 @@ export const handler = async (ctx: Context): Promise<Data> => {
             : undefined;
         const guid = `jl1mall-${item.postId}`;
         const image: string | undefined = item.pictureLink;
-        const updated: number | string = pubDate;
 
         const processedItem: DataItem = {
             title,
             description,
-            pubDate: pubDate ? timezone(parseDate(pubDate), +8) : undefined,
+            pubDate: pubDate ? timezone(parseDate(pubDate), 8) : undefined,
             link: linkUrl,
             category: categories,
             author: authors,
@@ -107,11 +123,10 @@ export const handler = async (ctx: Context): Promise<Data> => {
             id: guid,
             content: {
                 html: description,
-                text: description,
+                text: description ? load(description).text() : undefined,
             },
             image,
             banner: image,
-            updated: updated ? timezone(parseDate(updated), +8) : undefined,
             language,
         };
 
@@ -125,7 +140,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
         description: name,
         link: targetUrl,
         item: items,
-        allowEmpty: true,
         language,
         id: targetUrl,
     };
@@ -626,10 +640,9 @@ export const route: Route = {
             ],
         },
     },
-    description: `:::tip
+    description: `::: tip
 订阅 [星林社区遥感开发者培训班的最新内容](https://www.jl1mall.com/forum/)，此时路由为 [\`/jl1mall/forum/2/\`](https://rsshub.app/jl1mall/forum/2/遥感开发者培训班)。
-:::
-`,
+:::`,
     categories: ['new-media'],
     features: {
         requireConfig: false,

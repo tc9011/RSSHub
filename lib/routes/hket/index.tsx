@@ -1,4 +1,4 @@
-import * as cheerio from 'cheerio';
+import { load } from 'cheerio';
 import { renderToString } from 'hono/jsx/dom/server';
 
 import type { DataItem, Route } from '@/types';
@@ -20,6 +20,71 @@ const urlMap = {
     sraw: {
         baseUrl: 'https://wealth.hket.com',
     },
+};
+
+const radarCategories = {
+    china: ['srac002', 'srac003', 'srac004', 'srac005'],
+    inews: [
+        'sran001',
+        'sran008',
+        'sran010',
+        'sran011',
+        'sran012',
+        'sran009',
+        'sran009-1',
+        'sran009-2',
+        'sran009-3',
+        'sran009-4',
+        'sran009-5',
+        'sran009-6',
+        'sran011-1',
+        'sran011-2',
+        'sran011-3',
+        'sran016',
+        'sran016-1',
+        'sran016-2',
+        'sran016-3',
+        'sran016-4',
+        'sran016-5',
+    ],
+    topick: [
+        'srat006',
+        'srat001',
+        'srat008',
+        'srat055',
+        'srat069',
+        'srat070',
+        'srat052',
+        'srat052-1',
+        'srat052-2',
+        'srat052-3',
+        'srat053',
+        'srat053-1',
+        'srat053-2',
+        'srat053-3',
+        'srat053-4',
+        'srat053-6',
+        'srat053-61',
+        'srat053-62',
+        'srat053-63',
+        'srat053-64',
+        'srat072-1',
+        'srat072-2',
+        'srat072-3',
+        'srat072-4',
+    ],
+    wealth: ['sraw007', 'sraw009', 'sraw010', 'sraw011', 'sraw012', 'sraw014', 'sraw018', 'sraw019', 'sraw015', 'sraw015-07', 'sraw015-08', 'sraw015-09', 'sraw015-10', 'sraw020', 'sraw020-1', 'sraw020-2', 'sraw020-3', 'sraw020-4'],
+};
+
+const parseOptionalDate = (value: string | undefined, offset?: number) => {
+    if (!value) {
+        return;
+    }
+    const date = parseDate(value);
+    if (!Number.isFinite(date.getTime())) {
+        return;
+    }
+    return offset === undefined ? date : timezone(date, offset);
 };
 
 const renderImage = (alt, src) =>
@@ -44,22 +109,12 @@ export const route: Route = {
         supportScihub: false,
     },
     radar: [
-        {
-            source: ['china.hket.com/:category/*'],
-            target: '/:category',
-        },
-        {
-            source: ['inews.hket.com/:category/*'],
-            target: '/:category',
-        },
-        {
-            source: ['topick.hket.com/:category/*'],
-            target: '/:category',
-        },
-        {
-            source: ['wealth.hket.com/:category/*'],
-            target: '/:category',
-        },
+        ...Object.entries(radarCategories).flatMap(([subdomain, categories]) =>
+            categories.map((category) => ({
+                source: [`${subdomain}.hket.com/${category}`, `${subdomain}.hket.com/${category}/*`],
+                target: `/${category}`,
+            }))
+        ),
         {
             source: ['www.hket.com/'],
             target: '/',
@@ -69,7 +124,7 @@ export const route: Route = {
     maintainers: ['TonyRL'],
     handler,
     url: 'www.hket.com/',
-    description: `香港经济日报已有提供简单 RSS，详细可前往官方网站： [https://www.hket.com/rss](https://www.hket.com/rss)
+    description: `香港经济日报已有提供简单 RSS，详细可前往官方网站： <https://www.hket.com/rss>
 
 此路由主要补全官方 RSS 全文输出及完善分类输出。
 
@@ -127,6 +182,7 @@ export const route: Route = {
 | sraw020  | sraw020-1    | sraw020-2 | sraw020-3 | sraw020-4 |
 | -------- | ------------ | --------- | --------- | --------- |
 | ESG 主页 | ESG 趋势政策 | ESG 投资  | ESG 企业  | ESG 社会  |
+
 </details>`,
 };
 
@@ -136,22 +192,25 @@ async function handler(ctx) {
 
     const response = await ofetch(`${baseUrl}/${category}`);
 
-    const $ = cheerio.load(response);
+    const $ = load(response);
 
-    const list = $('.main-listing-container div.listing-title > a')
+    const list: DataItem[] = $('.main-listing-container div.listing-title > a')
         .toArray()
         .map((item) => {
-            item = $(item);
-            const url = item.parent().parent().find('.share-button').data('url');
+            const $item = $(item);
+            const url = $item.parent().parent().find('.share-button').attr('data-url');
+            if (!url) {
+                throw new Error(`Missing share URL for "${$item.text().trim()}"`);
+            }
             return {
-                title: item.text().trim(),
+                title: $item.text(),
                 link: url.startsWith('http') ? url : baseUrl + url,
             };
-        }) as DataItem[];
+        });
 
     const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link!, async () => {
+        list.map(async (item) => {
+            const details = await cache.tryGet(`hket:article:${item.link}`, async () => {
                 if (item.link!.startsWith('https://invest.hket.com/') || item.link!.startsWith('https://ps.hket.com/')) {
                     const data = await (item.link!.startsWith('https://invest.hket.com/')
                         ? ofetch('https://invest.hket.com/content-api-middleware/content', {
@@ -174,17 +233,17 @@ async function handler(ctx) {
                               },
                           }));
 
-                    item.pubDate = timezone(parseDate(data.displayDate), +8);
-                    item.updated = timezone(parseDate(data.lastModifiedDate), +8);
+                    item.pubDate = parseOptionalDate(data.displayDate, 8);
+                    item.updated = parseOptionalDate(data.lastModifiedDate, 8);
                     item.author = data.authors?.map((e) => e.name).join(', ');
                     item.description = data.content.full || data.content.partial;
                     item.category = data.contentTags?.map((e) => e.name);
 
-                    return item;
+                    return { pubDate: item.pubDate, updated: item.updated, author: item.author, description: item.description, category: item.category };
                 }
 
                 const response = await ofetch(item.link!);
-                const $ = cheerio.load(response);
+                const $ = load(response);
 
                 item.category = $('.contentTags-container > .hotkey-container-wrapper > .hotkey-container > a')
                     .toArray()
@@ -208,30 +267,32 @@ async function handler(ctx) {
 
                 // fix lazyload image and caption
                 $('img').each((_, e) => {
-                    e = $(e);
-                    e.replaceWith(renderImage(e.data('alt'), e.data('src') ?? e.attr('src')));
+                    const $e = $(e);
+                    $e.replaceWith(renderImage($e.data('alt'), $e.data('src') ?? $e.attr('src')));
                 });
 
                 const ldJson = JSON.parse(
                     $('script[type="application/ld+json"]')
-                        .toArray()
-                        .find((e) => $(e).text().includes('NewsArticle'))?.children[0].data
+                        .filter((_, e) => $(e).text().includes('NewsArticle'))
+                        .first()
+                        .text()
                 );
 
                 item.description = $('div.article-detail-body-container').html()!;
-                item.pubDate = parseDate(ldJson.datePublished);
-                item.updated = parseDate(ldJson.dateModified);
+                item.pubDate = parseOptionalDate(ldJson.datePublished);
+                item.updated = parseOptionalDate(ldJson.dateModified);
 
-                return item;
-            })
-        )
+                return { pubDate: item.pubDate, updated: item.updated, description: item.description, category: item.category };
+            });
+            return { ...item, ...details };
+        })
     );
 
     return {
-        title: $('head meta[name=title]').attr('content')?.trim(),
+        title: $('head meta[name=title]').attr('content')?.trim() ?? '',
         link: baseUrl + '/' + category,
         description: $('head meta[name=description]').attr('content')?.trim(),
         item: items,
-        language: 'zh-hk',
+        language: 'zh-HK' as const,
     };
 }

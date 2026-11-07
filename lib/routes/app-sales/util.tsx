@@ -1,10 +1,7 @@
-import type { Cheerio, CheerioAPI } from 'cheerio';
-import { load } from 'cheerio';
-import type { Element } from 'domhandler';
+import type { CheerioAPI } from 'cheerio';
 import { renderToString } from 'hono/jsx/dom/server';
 
 import type { DataItem } from '@/types';
-import ofetch from '@/utils/ofetch';
 
 const baseUrl = 'https://www.app-sales.net';
 const renderDescription = ({
@@ -135,7 +132,7 @@ const processItems = ($: CheerioAPI, selector: string): DataItem[] =>
     $(selector)
         .toArray()
         .map((el) => {
-            const $el: Cheerio<Element> = $(el);
+            const $el = $(el);
 
             const appName: string = $el.find('p.app-name').text()?.trim();
             const appDev: string = $el.find('p.app-dev').text()?.trim();
@@ -173,7 +170,7 @@ const processItems = ($: CheerioAPI, selector: string): DataItem[] =>
                 priceDisco,
                 linkUrl,
             });
-            const categories: string[] = [isHot ? 'Hot' : undefined, isFree ? 'Free' : undefined].filter(Boolean) as string[];
+            const categories: string[] = [isHot ? 'Hot' : undefined, isFree ? 'Free' : undefined].filter((category) => category !== undefined);
             const authors: DataItem['author'] = appDev;
             const guid: string = [appName, appDev, rating, downloads, bookmarks, priceNew].filter(Boolean).join('-');
 
@@ -197,72 +194,8 @@ const processItems = ($: CheerioAPI, selector: string): DataItem[] =>
         });
 
 /**
- * Retrieves pagination URLs from page navigation
- * @param $ - CheerioAPI instance
- * @param targetUrl - Base URL for relative path resolution
- * @returns Array of absolute pagination URLs.
+ * Returns items from the first page within the common limit.
  */
-const getAvailablePageUrls = ($: CheerioAPI, targetUrl: string): string[] =>
-    $('ul.pagination li.waves-effect a')
-        .slice(0, -1)
-        .toArray()
-        .filter((el) => {
-            const $el: Cheerio<Element> = $(el);
-
-            return $el.attr('href');
-        })
-        .map((el) => {
-            const $el: Cheerio<Element> = $(el);
-
-            return new URL($el.attr('href') as string, targetUrl).href;
-        });
-
-/**
- * Aggregates items across paginated pages
- * @param $ - Initial page CheerioAPI instance
- * @param selector - Target element CSS selector
- * @param targetUrl - Base URL for pagination requests
- * @param country - Country ID for request headers
- * @param limit - Maximum number of items to return
- * @returns Aggregated items array within specified limit.
- */
-const fetchItems = async ($: CheerioAPI, selector: string, targetUrl: string, country: string, limit: number): Promise<DataItem[]> => {
-    const initialItems = processItems($, selector);
-    if (initialItems.length >= limit) {
-        return initialItems.slice(0, limit);
-    }
-
-    /**
-     * Recursive helper function to process paginated URLs
-     *
-     * @param remainingUrls - Array of URLs yet to be processed
-     * @param aggregated - Accumulator for collected items
-     *
-     * @returns Promise resolving to aggregated items
-     */
-    const processPage = async (remainingUrls: string[], aggregated: DataItem[]): Promise<DataItem[]> => {
-        if (aggregated.length >= limit || remainingUrls.length === 0) {
-            return aggregated.slice(0, limit);
-        }
-
-        const [currentUrl, ...restUrls] = remainingUrls;
-
-        try {
-            const response = await ofetch(currentUrl, {
-                headers: {
-                    Cookie: `countryId=${country};`,
-                },
-            });
-            const pageItems = processItems(load(response), selector);
-            const newItems = [...aggregated, ...pageItems];
-
-            return newItems.length >= limit ? newItems.slice(0, limit) : processPage(restUrls, newItems);
-        } catch {
-            return processPage(restUrls, aggregated);
-        }
-    };
-
-    return await processPage(getAvailablePageUrls($, targetUrl), initialItems);
-};
+const fetchItems = ($: CheerioAPI, selector: string, limit: number): DataItem[] => processItems($, selector).slice(0, limit);
 
 export { baseUrl, fetchItems };

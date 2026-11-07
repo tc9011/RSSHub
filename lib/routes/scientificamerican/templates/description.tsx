@@ -1,4 +1,5 @@
 import { raw } from 'hono/html';
+import { jsx } from 'hono/jsx';
 import { renderToString } from 'hono/jsx/dom/server';
 
 type DescriptionImage = {
@@ -9,7 +10,7 @@ type DescriptionImage = {
 };
 
 type ContentBlock = {
-    tag: string;
+    tag: string | null;
     content: string;
 };
 
@@ -25,18 +26,14 @@ const ScientificAmericanDescription = ({ images, intro, content }: DescriptionDa
             if (!image?.src) {
                 return null;
             }
-            const altValue = image.height ?? image.width ?? image.alt;
             return (
                 <figure>
-                    <img src={image.src} alt={altValue ? String(altValue) : undefined} />
+                    <img src={image.src} alt={image.alt} />
                 </figure>
             );
         })}
         {intro ? raw(intro) : null}
-        {content?.map((block) => {
-            const Tag = block.tag as keyof JSX.IntrinsicElements;
-            return <Tag>{raw(block.content)}</Tag>;
-        })}
+        {content?.map((block) => (block.tag ? jsx(block.tag, null, raw(block.content)) : raw(block.content)))}
     </>
 );
 

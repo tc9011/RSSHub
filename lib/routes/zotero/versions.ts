@@ -2,6 +2,7 @@ import { load } from 'cheerio';
 
 import type { Route } from '@/types';
 import got from '@/utils/got';
+import { parseDate } from '@/utils/parse-date';
 
 export const route: Route = {
     path: '/versions',
@@ -26,28 +27,30 @@ export const route: Route = {
     handler,
     url: 'zotero.org/',
 };
-
 async function handler() {
     const url = 'https://www.zotero.org/support/changelog';
     const response = await got(url);
     const data = response.data;
     const $ = load(data);
     const list = $('h2');
-
     return {
         title: 'Zotero - Version History',
         link: url,
         item: list.toArray().map((item) => {
-            item = $(item);
-            let date = $(item)
+            const $item = $(item);
+            const dateMatch = $($item)
                 .text()
                 .match(/\((.*)\)/);
-            date = Array.isArray(date) ? date[1] : null;
+            const date = dateMatch?.[1];
             return {
-                title: item.text().trim(),
-                description: $('<div/>').append(item.nextUntil('h2').clone()).html(),
-                pubDate: date,
-                link: url + '#' + item.attr('id'),
+                title: $item.text(),
+                description: $item
+                    .nextUntil('h2')
+                    .toArray()
+                    .map((element) => $.html(element))
+                    .join(''),
+                ...(date && { pubDate: parseDate(date) }),
+                link: url + '#' + $item.attr('id'),
             };
         }),
     };

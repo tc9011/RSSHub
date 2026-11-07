@@ -1,8 +1,10 @@
+import type { Context } from 'hono';
 import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
 
-import type { Route } from '@/types';
+import type { Data, Route } from '@/types';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import { baseUrl, getCreatorFragment, getCreatorPostReelList } from './utils';
 
@@ -12,6 +14,7 @@ export const route: Route = {
     example: '/fantube/r18/creator/miyuu',
     parameters: { identifier: 'User handle' },
     features: {
+        nsfw: true,
         requireConfig: false,
         requirePuppeteer: false,
         antiCrawler: false,
@@ -51,7 +54,7 @@ const renderDescription = ({ description, thumbnailUrl, sampleVideoId, imageUrls
                             src={`https://customer-7d4xajfg7g3ps2lm.cloudflarestream.com/${sampleVideoId}/iframe`}
                             style="border: none; position: absolute; top: 0; height: 100%; width: 100%"
                             allow="accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture;"
-                            allowfullscreen="true"
+                            allowfullscreen
                         ></iframe>
                     </div>
                     <br />
@@ -61,15 +64,15 @@ const renderDescription = ({ description, thumbnailUrl, sampleVideoId, imageUrls
         </>
     );
 
-async function handler(ctx) {
+async function handler(ctx: Context): Promise<Data> {
     const { identifier } = ctx.req.param();
-    const limit = Number.parseInt(ctx.req.query('limit') || 18, 10);
+    const limit = Math.max(getRouteLimit(ctx, 18), 18);
 
     const creatorInfo = await getCreatorFragment(identifier);
     const posts = await getCreatorPostReelList(identifier, limit);
 
     const items = posts.map((p) => ({
-        title: p.title.replaceAll('\n', ' ').trim(),
+        title: p.title,
         description: renderDescription({
             description: p.description,
             thumbnailUrl: p.thumbnailUrl,

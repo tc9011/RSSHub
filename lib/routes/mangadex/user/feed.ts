@@ -2,6 +2,7 @@ import { config } from '@/config';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import getToken from '../_access';
 import constants from '../_constants';
@@ -10,6 +11,20 @@ import { getFilteredLanguages } from '../_profile';
 import { toQueryString } from '../_utils';
 
 const DEFAULT_LIMIT = 25;
+
+/**
+ * @see https://api.mangadex.org/docs/redoc.html#tag/Feed/operation/get-user-follows-manga-feed
+ */
+interface Chapter {
+    id: string;
+    attributes: {
+        volume: string | null;
+        chapter: string | null;
+        title: string | null;
+        publishAt: string;
+    };
+    relationships: Array<{ id: string; type: string }>;
+}
 
 export const route: Route = {
     path: '/user/feed/follow/:lang?',
@@ -67,30 +82,31 @@ async function handler(ctx) {
 
     const { lang } = ctx.req.param();
 
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit')) : DEFAULT_LIMIT;
+    const requestedLimit = getRouteLimit(ctx, DEFAULT_LIMIT);
+    const limit = Math.min(ctx.req.query('sorted') === 'false' ? requestedLimit : Math.max(DEFAULT_LIMIT, requestedLimit), 500);
 
     const accessToken = await getToken();
 
-    const languagesQuery = new Set([...(typeof lang === 'string' ? [lang] : lang || []), ...(await getFilteredLanguages())].filter(Boolean));
+    const filteredLanguages = await getFilteredLanguages();
+    const languagesQuery = new Set([...(lang ? [lang] : []), ...filteredLanguages].filter(Boolean));
 
-    const feed = (await cache.tryGet(
-        'mangadex:user-follows',
+    const feedUrl = `${userFollowUrl}${toQueryString({
+        translatedLanguage: languagesQuery,
+        order: {
+            publishAt: 'desc',
+        },
+        limit,
+    })}`;
+
+    const feed = await cache.tryGet<Chapter[]>(
+        `mangadex:user-follows:v2:${feedUrl}`,
         async () => {
-            const response = await got.get(
-                `${userFollowUrl}${toQueryString({
-                    translatedLanguage: languagesQuery,
-                    order: {
-                        publishAt: 'desc',
-                    },
-                    limit,
-                })}`,
-                {
-                    headers: {
-                        Authorization: `Bearer ${accessToken}`,
-                        'User-Agent': config.trueUA,
-                    },
-                }
-            );
+            const response = await got.get(feedUrl, {
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    'User-Agent': config.trueUA,
+                },
+            });
 
             const followedChapterFeed = response?.data?.data;
             if (!followedChapterFeed) {
@@ -101,11 +117,11 @@ async function handler(ctx) {
         },
         config.cache.routeExpire,
         false
-    )) as Array<Record<string, any>>;
+    );
 
-    const mangaIds = feed.map((chapter) => chapter?.relationships.find((relationship) => relationship.type === 'manga')?.id);
+    const mangaIds = feed.map((chapter) => chapter.relationships.find((relationship) => relationship.type === 'manga')?.id).filter((mangaId) => mangaId !== undefined);
 
-    const mangaMetas = await getMangaMetaByIds(mangaIds);
+    const mangaMetas = await getMangaMetaByIds(mangaIds, true, [...languagesQuery]);
 
     return {
         title: 'User Follows',
@@ -113,7 +129,7 @@ async function handler(ctx) {
         description: 'The latest updates of all the manga you follow on MangaDex.',
         item: feed.map((chapter) => {
             const mangaId = chapter.relationships.find((relationship) => relationship.type === 'manga')?.id;
-            const mangaMeta = mangaMetas.get(mangaId);
+            const mangaMeta = mangaId === undefined ? undefined : mangaMetas.get(mangaId);
             const chapterTitile = [chapter.attributes.volume ? `Vol. ${chapter.attributes.volume}` : null, chapter.attributes.chapter ? `Ch. ${chapter.attributes.chapter}` : null, chapter.attributes.title].filter(Boolean).join(' ');
 
             return {

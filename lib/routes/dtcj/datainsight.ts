@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
@@ -27,7 +28,7 @@ export const route: Route = {
     name: '数据洞察',
     maintainers: ['nczitzk'],
     handler,
-    url: 'dtcj.com/dtcj/datainsight',
+    url: 'dtcj.com/datainsight',
     description: `| 城数 | NEXT 情报局 | 专业精选 |
 | ---- | ----------- | -------- |
 | 3    | 1           | 4        |`,
@@ -35,6 +36,9 @@ export const route: Route = {
 
 async function handler(ctx) {
     const id = ctx.req.param('id') ?? '';
+    if (id && !/^[1-9]\d*$/.test(id)) {
+        throw new InvalidParameterError('Invalid id. Provide a positive integer category ID or omit it for all categories.');
+    }
 
     const rootUrl = 'https://dtcj.com';
     const currentUrl = `${rootUrl}/${id ? `insighttopic/${id}` : 'datainsight'}`;
@@ -49,12 +53,12 @@ async function handler(ctx) {
     const list = $('.info-2_P1UM a')
         .slice(0, 10)
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem & { link: string } => {
+            const $item = $(item);
 
             return {
-                title: item.text(),
-                link: `${rootUrl}${item.attr('href')}`,
+                title: $item.text(),
+                link: `${rootUrl}${$item.attr('href')}`,
             };
         });
 

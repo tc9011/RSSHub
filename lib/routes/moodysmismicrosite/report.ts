@@ -31,25 +31,23 @@ export const route: Route = {
         },
     ],
     name: 'industry',
-    description: `
-| ID | Description |
-| ---   | ---   |
-| 0 | 企业 |
-| 1 | 金融机构 |
-| 2 | 主权 |
-| 3 | 地方政府及城投公司 |
-| 4 | 宏观经济 |
-| 5 | 结构融资 |
-| 6 | 基础设施项目融资 |
-| 7 | ESG |
-| 8 | 其他 |
-    `,
+    description: `| ID | Description        |
+| -- | ------------------ |
+| 0  | 企业               |
+| 1  | 金融机构           |
+| 2  | 主权               |
+| 3  | 地方政府及城投公司 |
+| 4  | 宏观经济           |
+| 5  | 结构融资           |
+| 6  | 基础设施项目融资   |
+| 7  | ESG                |
+| 8  | 其他               |`,
     maintainers: ['Cedaric'],
     handler,
 };
 
 async function handler(ctx) {
-    const industryMap: Record<number, string> = {
+    const industryMap = {
         0: '企业',
         1: '金融机构',
         2: '主权',
@@ -67,7 +65,7 @@ async function handler(ctx) {
 
     const industryId = industry
         .split('&')
-        .map((name) => reversedIndustry[name.trim()])
+        .map((name) => (Object.hasOwn(industryMap, name.trim()) ? name.trim() : reversedIndustry[name.trim()]))
         .filter((key) => key !== undefined)
         .join(',');
 
@@ -78,7 +76,6 @@ async function handler(ctx) {
     return {
         title: `穆迪评级(${industry})`,
         link: 'https://www.moodysmismicrosite.com/report',
-        allowEmpty: true,
         item: items.map((x) => ({
             title: x.title,
             pubDate: parseRelativeDate(x.release_time),

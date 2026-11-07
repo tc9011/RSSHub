@@ -1,9 +1,14 @@
 import { load } from 'cheerio';
+import { FetchError } from 'ofetch';
 
-import type { Route } from '@/types';
+import NotFoundError from '@/errors/types/not-found';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
+import logger from '@/utils/logger';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
+import timezone from '@/utils/timezone';
 
 import utils from './utils';
 
@@ -94,13 +99,13 @@ export const route: Route = {
     name: '首页',
     maintainers: ['Fatpandac'],
     handler,
-    description: `-   频道
+    description: `- 频道
 
 | 新闻中心 | 政策法规 |
 | :------: | :------: |
 |   news   |  policy  |
 
-  -   类别
+- 类别
 
 | 新闻中心 | 政务新闻 | 要闻导读 | 图片新闻 | 工作动态 |
 | :------: | :------: | :------: | :------: | :------: |
@@ -114,19 +119,29 @@ export const route: Route = {
 async function handler(ctx) {
     const channel = ctx.req.param('channel');
     const cate = ctx.req.param('category');
-    requestData[channel][cate].pageSize = ctx.req.param('limit') ?? 25;
+    if (!Object.hasOwn(cateUrlMap, channel) || !Object.hasOwn(cateUrlMap[channel], cate)) {
+        throw new NotFoundError('Invalid CDE channel/category. Use news/{zwxw,ywdd,tpxw,gzdt} or policy/{flfg,zxgz}.');
+    }
+    const limit = getRouteLimit(ctx, 25);
 
     const url = `${utils.rootUrl}/main/${channel}/${cateUrlMap[channel][cate]}`;
     const response = await got({
         method: 'post',
         url,
         headers: {
-            cookie: await utils.getCookie(ctx),
+            cookie: await utils.getCookie(),
         },
         form: requestData[channel][cate],
     });
     const data = response.data.data;
-    const list = data.records.map((item) => {
+    const records = [...data.records];
+    const sorted = ctx.req.query('sorted') !== 'false';
+    const hasDates = records.every((item) => item.publishDate || item.issueDate);
+    if (sorted && hasDates) {
+        records.sort((a, b) => (b.publishDate || b.issueDate).localeCompare(a.publishDate || a.issueDate));
+    }
+    const selected = !sorted || hasDates ? records.slice(0, limit) : records;
+    const list = selected.map((item): DataItem & { link: string } => {
         const linkMap = {
             news: `${utils.rootUrl}/main/${item.isPic ? 'newspic/view/' : 'news/viewInfoCommon/'}${item.newsIdCode}`,
             policy: `${utils.rootUrl}/main/${item.regulatIdCODE ? `policy/regulatview/${item.regulatIdCODE}` : `policy/view/${item.policyIdCODE}`}`,
@@ -135,26 +150,35 @@ async function handler(ctx) {
         return {
             title: item.title,
             link: linkMap[channel],
+            pubDate: item.publishDate || item.issueDate ? timezone(parseDate(item.publishDate || item.issueDate, 'YYYYMMDD'), 8) : undefined,
         };
     });
 
     const items = await Promise.all(
         list.map((item) =>
             cache.tryGet(item.link, async () => {
-                const detailResponse = await got(item.link, {
-                    headers: {
-                        cookie: await utils.getCookie(ctx),
-                    },
-                });
+                let detailResponse;
+                try {
+                    detailResponse = await got(item.link, {
+                        headers: {
+                            cookie: await utils.getCookie(),
+                        },
+                    });
+                } catch (error) {
+                    if (channel === 'policy' && cate === 'zxgz' && error instanceof FetchError && error.statusCode === 404) {
+                        logger.warn(`CDE: rule detail ${item.link} is unavailable; retaining the public list metadata.`);
+                        return item;
+                    }
+                    throw error;
+                }
                 const $ = load(detailResponse.data);
 
-                item.pubDate = parseDate($('div.news_detail_date').text(), 'YYYYMMDD');
+                const date = $('div.news_detail_date').text().match(/\d{8}/)?.[0];
+                item.pubDate = date ? timezone(parseDate(date, 'YYYYMMDD'), 8) : item.pubDate;
 
                 const desc = $('div.news_detail_box');
-                const removeTitle = desc.find('div.news_detail_title').remove().end();
-                const removeDate = removeTitle.find('div.news_detail_date').remove().end();
-                const removeImage = removeDate.find('img').remove().end();
-                item.description = removeImage.html();
+                desc.find('div.news_detail_title, div.news_detail_date').remove();
+                item.description = desc.html() || undefined;
 
                 return item;
             })

@@ -1,11 +1,23 @@
 import { load } from 'cheerio';
 import { renderToString } from 'hono/jsx/dom/server';
+import pMap from 'p-map';
 
 import { config } from '@/config';
 import type { Data, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+
+interface SourceNews {
+    title: string;
+    timestamp: number;
+    url: string;
+    source: string;
+    abstract: string;
+    articletype: string;
+    miniProShareImage?: string;
+    miniVideoPic?: string;
+}
 
 export const route: Route = {
     path: '/news/author/:mid',
@@ -41,10 +53,11 @@ async function handler(ctx): Promise<Data> {
     const suid = encodeURIComponent(userInfo.suid);
 
     const newsListUrl = `https://i.news.qq.com/getSubNewsMixedList?guestSuid=${suid}&tabId=om_index`;
-    const news = await cache.tryGet(newsListUrl, async () => (await got(newsListUrl)).data.newslist, config.cache.routeExpire, false);
+    const news: SourceNews[] = await cache.tryGet(newsListUrl, async () => (await got(newsListUrl)).data.newslist, config.cache.routeExpire, false);
 
-    const items = await Promise.all(
-        news.map((item) => {
+    const items = await pMap(
+        news,
+        async (item) => {
             const title = item.title;
             const pubDate = parseDate(item.timestamp, 'X');
             const itemUrl = item.url;
@@ -62,13 +75,13 @@ async function handler(ctx): Promise<Data> {
                 };
             }
 
-            return cache.tryGet(itemUrl, async () => {
+            const detail = await cache.tryGet(`tencent:author:body:v1:${itemUrl}`, async () => {
                 const response = await got(itemUrl);
                 const $ = load(response.data);
                 const data = JSON.parse(
                     $('script:contains("window.DATA")')
                         .text()
-                        .match(/window\.DATA = ({.+});/)[1]
+                        .match(/window\.DATA = (\{.+\});/)![1]
                 );
                 const $data = load(data.originContent?.text || '', null, false);
                 if ($data) {
@@ -77,22 +90,27 @@ async function handler(ctx): Promise<Data> {
                         .contents()
                         .filter((_, elem) => elem.type === 'comment')
                         .replaceWith((_, elem) => {
-                            const attribute = elem.data.trim();
-                            const imageData = attribute?.startsWith('IMG') ? data.originAttribute[attribute] : undefined;
+                            const attribute = elem.type === 'comment' ? elem.data.trim() : '';
+                            const imageData = attribute.startsWith('IMG') ? data.originAttribute[attribute] : undefined;
 
                             return renderToString(imageData ? <img src={imageData.imgurl0} style={imageData.style} /> : null);
                         });
                 }
 
                 return {
-                    title,
                     description: $data.html() || abstract,
-                    link: itemUrl,
-                    author,
-                    pubDate,
                 };
             });
-        })
+
+            return {
+                title,
+                link: itemUrl,
+                author,
+                pubDate,
+                ...detail,
+            };
+        },
+        { concurrency: 3 }
     );
 
     return {

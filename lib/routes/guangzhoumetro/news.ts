@@ -31,10 +31,10 @@ async function handler() {
     const list = $('ul.ag_h_w li')
         .toArray()
         .map((item) => {
-            item = $(item);
-            const url = newsUrl + item.find('a').attr('href').slice(2);
-            const title = item.find('a').text();
-            const publishTime = parseDate(item.find('span').text());
+            const $item = $(item);
+            const url = newsUrl + $item.find('a').attr('href')!.slice(2);
+            const title = $item.find('a').text();
+            const publishTime = parseDate($item.find('span').text());
             return {
                 title,
                 link: url,
@@ -45,7 +45,7 @@ async function handler() {
 
     return {
         title: '广州地铁新闻',
-        url: newsUrl,
+        link: newsUrl,
         description: '广州地铁新闻',
         item: list.map((item) => ({
             title: item.title,

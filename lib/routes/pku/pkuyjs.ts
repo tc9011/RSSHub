@@ -39,12 +39,12 @@ async function handler() {
         link,
         description: '北京大学研究生院通知公告',
         item: list.toArray().map((item) => {
-            item = $(item);
+            const $item = $(item);
+            const date = $item.find('.zsxxCont_list_time').text();
             return {
-                title: item.find('li a').text(),
-                description: item.find('li a').text(),
-                link: item.find('li a').attr('href'),
-                pubDate: parseDate(item.find('.zsxxCont_list_time').text()),
+                title: $item.find('.zsxxCont_list_txt').text(),
+                link: $item.find('li a').attr('href'),
+                pubDate: date ? parseDate(`${date}T00:00:00Z`) : undefined,
             };
         }),
     };

@@ -1,6 +1,6 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import rssParser from '@/utils/rss-parser';
@@ -36,10 +36,11 @@ async function handler(ctx) {
     const rssUrl = blogUrl + '/rss/map';
 
     const feed = await rssParser.parseURL(rssUrl);
+    const selected = feed.items;
 
     const items = await Promise.all(
-        feed.items.map((item) =>
-            cache.tryGet(item.link, async () => {
+        selected.map((item) =>
+            cache.tryGet(item.link!, async () => {
                 try {
                     const response = await got({
                         method: 'get',
@@ -64,6 +65,7 @@ async function handler(ctx) {
     return {
         ...feed,
         title: `${feed.title} - CSDN博客`,
-        item: items,
+        image: feed.image?.url,
+        item: items as DataItem[],
     };
 }
