@@ -1,6 +1,5 @@
 import type { Route } from '@/types';
 import { ViewType } from '@/types';
-import cache from '@/utils/cache';
 import { parseDate } from '@/utils/parse-date';
 
 import { renderPost } from './templates/post';
@@ -10,7 +9,7 @@ export const route: Route = {
     path: '/profile/:handle/feed/:space/:routeParams?',
     categories: ['social-media'],
     view: ViewType.SocialMedia,
-    example: '/bsky.app/profile/jaz.bsky.social/feed/cv:cat',
+    example: '/bsky/profile/bsky.app/feed/hot-classic',
     parameters: {
         handle: 'User handle, can be found in URL',
         space: 'Space ID, can be found in URL',
@@ -32,21 +31,20 @@ async function handler(ctx) {
     const handle = ctx.req.param('handle');
     const space = ctx.req.param('space');
 
-    const DID = await resolveHandle(handle, cache.tryGet);
+    const DID = await resolveHandle(handle);
     const uri = `at://${DID}/app.bsky.feed.generator/${space}`;
-    const profile = await getFeedGenerator(uri, cache.tryGet);
-    const feeds = await getFeed(uri, cache.tryGet);
+    const profile = await getFeedGenerator(uri);
+    const feeds = await getFeed(uri);
 
     const items = feeds.feed.map(({ post }) => ({
-        title: post.record.text.split('\n')[0],
+        title: post.record.text,
         description: renderPost({
-            text: post.record.text.replaceAll('\n', '<br>'),
+            text: post.record.text,
             embed: post.embed,
-            // embed.$type "app.bsky.embed.record#view" and "app.bsky.embed.recordWithMedia#view" are not handled
         }),
         author: post.author.displayName,
         pubDate: parseDate(post.record.createdAt),
-        link: `https://bsky.app/profile/${post.author.handle}/post/${post.uri.split('app.bsky.feed.post/')[1]}`,
+        link: `https://bsky.app/profile/${post.author.handle}/post/${post.uri.split('app.bsky.feed.post/', 2)[1]}`,
         upvotes: post.likeCount,
         comments: post.replyCount,
     }));

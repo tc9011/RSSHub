@@ -44,15 +44,16 @@ async function handler() {
     const items = $('h3 a')
         .toArray()
         .map((item) => {
-            item = $(item);
+            const $item = $(item);
 
-            const projectDiv = item.parent().parent();
+            const projectDiv = $item.parent().parent();
+            const published = projectDiv.find('time').text();
             const description = projectDiv.find('p').text();
 
             return {
-                title: item.text(),
-                link: item.attr('href'),
-                pubDate: parseDate(projectDiv.find('time').text()),
+                title: $item.text(),
+                link: $item.attr('href'),
+                pubDate: published ? parseDate(published) : undefined,
                 description: renderDescription({
                     image: projectDiv.parent().find('.cover-fit')?.attr('src') ?? projectDiv.parent().parent().find('.cover-fit').attr('src'),
                     description: description ? `<p>${description}</p>` : '',

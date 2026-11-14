@@ -1,9 +1,11 @@
 import { load } from 'cheerio';
+import { escapeAttribute, escapeText } from 'entities';
 
 import type { Route } from '@/types';
 import { ViewType } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+
+import { parseCreatedAt } from './utils';
 
 export const route: Route = {
     path: '/user/:id',
@@ -22,6 +24,10 @@ export const route: Route = {
     radar: [
         {
             source: ['web.okjike.com/u/:uid'],
+            target: '/user/:uid',
+        },
+        {
+            source: ['m.okjike.com/users/:uid'],
             target: '/user/:uid',
         },
     ],
@@ -44,7 +50,7 @@ async function handler(ctx) {
     const html = response.data;
     const $ = load(html);
     const raw = $('[type = "application/json"]').html();
-    const data = JSON.parse(raw).props.pageProps;
+    const data = JSON.parse(raw ?? '').props.pageProps;
 
     const getLink = (id, type) => {
         switch (type) {
@@ -69,40 +75,40 @@ async function handler(ctx) {
 
             let linkTemplate = '';
             if (item.linkInfo && item.linkInfo.linkUrl) {
-                linkTemplate = `<a href="${item.linkInfo.linkUrl}">${item.linkInfo.title}</a><br>`;
+                linkTemplate = `<a href="${escapeAttribute(item.linkInfo.linkUrl)}">${escapeText(item.linkInfo.title)}</a><br>`;
             }
 
             let imgTemplate = '';
             if (item.pictures) {
                 for (const picture of item.pictures) {
-                    imgTemplate += `<br><img src="${picture.picUrl}">`;
+                    imgTemplate += `<br><img src="${escapeAttribute(picture.picUrl)}">`;
                 }
             }
 
-            let content = item.content || (item.linkInfo && item.linkInfo.title) || (item.question && item.question.title) || item.title || '';
-            content = content.replaceAll(/\r\n|\n|\r/g, '<br>');
+            const text = item.content || (item.linkInfo && item.linkInfo.title) || (item.question && item.question.title) || item.title || '';
+            let content = escapeText(text).replaceAll(/\r\n|\n|\r/g, '<br>');
 
             let shortenTitle = '一条动态';
             if (content) {
-                shortenTitle = content.replaceAll(/(<br>)+/g, ' ');
-                content = `${content}<br><br>`;
+                shortenTitle = text.replaceAll(/(?:\r\n|\n|\r)+/g, ' ');
+                content += '<br><br>';
             }
 
             let repostContent;
             if (item.type === 'REPOST') {
-                const screenNameTemplate = item.target.user ? `<a href="https://m.okjike.com/users/${item.target.user.username}" target="_blank">@${item.target.user.screenName}</a>` : '';
+                const screenNameTemplate = item.target.user ? `<a href="https://m.okjike.com/users/${escapeAttribute(item.target.user.username)}" target="_blank">@${escapeText(item.target.user.screenName)}</a>` : '';
 
                 let repostImgTemplate = '';
                 if (item.target.pictures) {
                     for (const picture of item.target.pictures) {
-                        repostImgTemplate += `<br><img src="${picture.thumbnailUrl}">`;
+                        repostImgTemplate += `<br><img src="${escapeAttribute(picture.thumbnailUrl)}">`;
                     }
                 }
 
-                repostContent = `<div class="rsshub-quote">转发 ${screenNameTemplate}: ${item.target.content}${repostImgTemplate}</div>`.replaceAll(/\r\n|\n|\r/g, '<br>');
-                content = `${content}${repostContent}`;
+                repostContent = `<div class="rsshub-quote">转发 ${screenNameTemplate}: ${escapeText(item.target.content)}${repostImgTemplate}</div>`.replaceAll(/\r\n|\n|\r/g, '<br>');
+                content += repostContent;
             }
-            // 部分功能未知
+            // These post types are not currently supported.
             /* else if (item.type === 'ANSWER') {
             let answerTextTemplate = '';
             let answerImgTemplate = '';
@@ -135,8 +141,8 @@ async function handler(ctx) {
 
             const single = {
                 title: `${typeMap[item.type]}了: ${shortenTitle}`,
-                description: `${content}${linkTemplate}${imgTemplate}`.replace(/(<br>|\s)+$/, ''),
-                pubDate: parseDate(item.createdAt),
+                description: `${content}${linkTemplate}${imgTemplate}`.replace(/(?:<br>|\s)+$/, ''),
+                pubDate: parseCreatedAt(item.createdAt),
                 link: getLink(item.id, item.type),
                 _extra: repostContent && {
                     links: [
@@ -163,13 +169,11 @@ async function handler(ctx) {
 
                 single.title = `一觉醒来世界发生了什么 ${$$('title').text()}`;
 
-                single.description = '';
-                $$('div.container')
+                single.description = $$('div.container')
                     .find('li.item')
-                    // eslint-disable-next-line array-callback-return
-                    .map((i, j) => {
-                        single.description += `<a href="${$$(j).find('a').attr('href')}">${$$(j).find('a').text()}</a><br>`;
-                    });
+                    .toArray()
+                    .map((j) => `<a href="${$$(j).find('a').attr('href')}">${$$(j).find('a').text()}</a><br>`)
+                    .join('');
             }
 
             return single;

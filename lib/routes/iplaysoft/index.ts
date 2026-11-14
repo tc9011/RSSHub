@@ -5,39 +5,36 @@ import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import parser from '@/utils/rss-parser';
 
 export const handler = async (ctx): Promise<Data> => {
     const feed = await parser.parseURL('https://feed.iplaysoft.com');
-    const limit = Number.parseInt(ctx.req.query('limit') || '20', 10);
+    const limit = getRouteLimit(ctx, 20);
 
     const filteredItems = feed.items
-        .filter((item) => {
-            if (!item?.link || !item?.pubDate) {
-                return false;
-            }
-            return new URL(item.link).hostname.match(/.*\.iplaysoft\.com$/);
+        .map((item) => (item.title && item.link && item.pubDate && /.*\.iplaysoft\.com$/.test(new URL(item.link).hostname) ? { ...item, title: item.title, link: item.link, pubDate: item.pubDate } : null))
+        .filter((item) => item !== null)
+        .slice(0, limit);
+
+    const items = await Promise.all(
+        filteredItems.map(async (item): Promise<DataItem> => {
+            const description = await cache.tryGet(`iplaysoft:article:${item.link}`, async () => {
+                const response = await ofetch(item.link);
+                const $ = load(response);
+
+                $('.entry-content').find('div[style*="overflow:hidden"]').remove();
+
+                return $('.entry-content').html();
+            });
+            return {
+                title: item.title,
+                description,
+                link: item.link,
+                author: item.author ?? item.creator,
+                pubDate: parseDate(item.pubDate),
+            };
         })
-        .slice(0, limit) as DataItem[];
-
-    const items: DataItem[] = await Promise.all(
-        filteredItems.map(
-            (item) =>
-                cache.tryGet(item.link as string, async () => {
-                    const response = await ofetch(item.link);
-                    const $ = load(response);
-
-                    $('.entry-content').find('div[style*="overflow:hidden"]').remove();
-
-                    return {
-                        title: item.title,
-                        description: $('.entry-content').html(),
-                        link: item.link,
-                        author: item.author,
-                        pubDate: parseDate(item.pubDate as string),
-                    } as DataItem;
-                }) as Promise<DataItem>
-        )
     );
 
     return {
@@ -53,7 +50,7 @@ export const route: Route = {
     path: '/',
     name: '首页',
     url: 'www.iplaysoft.com',
-    maintainers: ['williamgateszhao', 'cscnk52', 'LokHsu'],
+    maintainers: ['kimi360', 'williamgateszhao', 'cscnk52', 'LokHsu'],
     handler,
     example: '/iplaysoft',
     parameters: {},

@@ -12,13 +12,6 @@ const render = (work: Work, link: string) =>
             <a href={link} title="点击进入官网查看">
                 <img src={work.mainCoverUrl} alt={work.title} />
             </a>
-            <h1>
-                {work.title} <span style="font-size: 0.6em; color: darkred;">{work.source_id}</span>
-            </h1>
-            <p>
-                <b>发布者：</b>
-                {work.name}
-            </p>
             <p>
                 <b>评分：</b>
                 {work.rate_average_2dp} | <b>评论数：</b>
@@ -30,10 +23,6 @@ const render = (work: Work, link: string) =>
                 <b>价格：</b>
                 <span style="color: #f44336">{work.price} JPY</span> | <b>销量：</b>
                 {work.dl_count}
-            </p>
-            <p>
-                <b>分类：</b>
-                {work.category}
             </p>
             <p>
                 <b>声优：</b>
@@ -63,15 +52,15 @@ export const route: Route = {
     radar: [
         {
             source: ['asmr-200.com'],
-            target: 'asmr-200/works',
+            target: '/works',
         },
     ],
     name: '最新收录',
     maintainers: ['hualiong'],
     url: 'asmr-200.com',
-    description: `| 发售日期 | 收录日期 | 销量 | 价格 | 评价 | 随机 | RJ号 |
-| ---- | ---- | ---- | ---- | ---- | ---- | ---- |
-| release | create_date | dl_count | price | rate_average_2dp | random | id |`,
+    description: `| 发售日期 | 收录日期     | 销量      | 价格  | 评价               | 随机   | RJ 号 |
+| -------- | ------------ | --------- | ----- | ------------------ | ------ | ----- |
+| release  | create\\_date | dl\\_count | price | rate\\_average\\_2dp | random | id    |`,
     handler: async (ctx) => {
         const { order = 'create_date', sort = 'desc', subtitle = '0' } = ctx.req.param();
         const res = await ofetch<Result>('https://api.asmr-200.com/api/works', { query: { order, sort, page: 1, subtitle } });
@@ -85,7 +74,7 @@ export const route: Route = {
                 image: each.mainCoverUrl,
                 author: each.name,
                 link: `https://asmr-200.com/work/${each.source_id}`,
-                pubDate: timezone(parseDate(each.release, 'YYYY-MM-DD'), +8),
+                pubDate: timezone(parseDate(each.release, 'YYYY-MM-DD'), 8),
                 category,
                 description: render(each, `https://asmr-200.com/work/${each.source_id}`),
             };

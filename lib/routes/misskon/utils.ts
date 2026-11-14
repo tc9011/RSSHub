@@ -11,10 +11,9 @@ const getPosts = async (searchParams) => {
     const data = await ofetch(url.href);
     return data.map((item) => {
         const $ = load(item.content.rendered);
-        $('input').each(function () {
-            $(this).replaceWith($(this).attr('value') || '');
+        $('input').each((_, el) => {
+            $(el).replaceWith($(el).attr('value') || '');
         });
-        $('script').remove();
         return {
             title: item.title.rendered,
             link: item.link,
@@ -28,7 +27,7 @@ const getPosts = async (searchParams) => {
     });
 };
 const getTags = async (slug) => {
-    const data = await ofetch(`${ENDPOINT}/tags?slug=${slug}`);
+    const data = await ofetch(`${ENDPOINT}/tags`, { query: { slug } });
     if (data.length === 0) {
         throw new Error(`Invalid tag slug: ${slug}`);
     }
@@ -39,4 +38,4 @@ const getTags = async (slug) => {
         description: data[0].description,
     };
 };
-export { ENDPOINT, getPosts, getTags };
+export { getPosts, getTags };

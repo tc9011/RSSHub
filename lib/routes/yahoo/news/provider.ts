@@ -1,6 +1,7 @@
+import pMap from 'p-map';
+
 import InvalidParameterError from '@/errors/types/invalid-parameter';
-import type { Route } from '@/types';
-import cache from '@/utils/cache';
+import type { Data, Route } from '@/types';
 
 import { getArchive, getProviderList, parseItem, parseList } from './utils';
 
@@ -28,8 +29,7 @@ export const route: Route = {
     name: '新聞來源',
     maintainers: ['TonyRL', 'williamgateszhao'],
     handler,
-    description: `
-\`Region\`
+    description: `\`Region\`
 
 | 香港 | 台灣 |
 | ---- | ---- |
@@ -37,29 +37,30 @@ export const route: Route = {
 
 \`ProviderId\`
 
-除了可以通过路由"新聞來源列表"获得外, 也可通过 hk.news.yahoo.com/archive 和 tw.news.yahoo.com/archive 选择"新闻来源"后通过页面 Url 来获得。
+除了可以通过路由 "新聞來源列表" 获得外，也可通过 hk.news.yahoo.com/archive 和 tw\\.news.yahoo.com/archive 选择 "新闻来源" 后通过页面 Url 来获得。
 
-例如 hk.news.yahoo.com/yahoo_movies_hk_660--所有分類/archive, \`yahoo_movies_hk_660\` 就是 ProviderId 。
-`,
+例如 hk.news.yahoo.com/yahoo\\_movies\\_hk\\_660-- 所有分類 /archive, \`yahoo_movies_hk_660\` 就是 ProviderId 。`,
 };
 
-async function handler(ctx) {
+async function handler(ctx): Promise<Data> {
     const { region, providerId } = ctx.req.param();
     if (!['hk', 'tw'].includes(region)) {
         throw new InvalidParameterError(`Unknown region: ${region}`);
     }
 
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 20;
-    const providerList = await getProviderList(region, cache.tryGet);
+    const requestedLimit = Number(ctx.req.query('limit') ?? '20');
+    const limit = Number.isSafeInteger(requestedLimit) && requestedLimit > 0 ? requestedLimit : 20;
+    const providerList = await getProviderList(region);
     const provider = providerList.find((p) => p.key === providerId);
 
-    const response = await getArchive(region, limit, null, providerId);
+    const response = await getArchive(region, limit, [], providerId);
     const list = parseList(region, response);
 
-    const items = await Promise.all(list.map((item) => parseItem(item, cache.tryGet)));
+    const items = await pMap(list, parseItem, { concurrency: 3 });
 
     return {
         title: `Yahoo 新聞 - ${provider?.title ?? ''}`,
+        language: region === 'hk' ? 'zh-HK' : 'zh-TW',
         link: provider?.link ?? `https://${region}.news.yahoo.com`,
         image: 'https://s.yimg.com/cv/apiv2/social/images/yahoo_default_logo-1200x1200.png',
         item: items,

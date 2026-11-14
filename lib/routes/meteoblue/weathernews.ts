@@ -37,7 +37,7 @@ async function handler() {
 
             // Get title and link from h3 > a
             const $link = $article.find('h3[itemprop="headline"] a[itemprop="mainEntityOfPage"]');
-            const title = $link.text().trim();
+            const title = $link.text();
             const link = $link.attr('href');
 
             if (!title || !link) {
@@ -45,12 +45,12 @@ async function handler() {
             }
 
             // Get date from time element
-            const $time = $article.find('time[itemprop="datePublished"]');
+            const $time = $article.find('time[itemprop="datePublished"], time.js-localdate').first();
             const dateText = $time.attr('datetime') || '';
 
             // Extract author from the time element text
             const $authorMeta = $article.find('meta[itemprop="author"]');
-            const author = $authorMeta.attr('content')?.trim() || 'meteoblue';
+            const author = $authorMeta.attr('content') || 'meteoblue';
 
             // Get description from itemprop="description"
             const $description = $article.find('div[itemprop="description"]');
@@ -64,13 +64,12 @@ async function handler() {
                 description,
             };
         })
-        .filter(Boolean);
+        .filter((article) => article !== null);
 
     return {
         title: 'meteoblue Weather News',
         link: url,
         description: 'Latest weather news and articles from meteoblue',
         item: articles,
-        allowEmpty: true,
     };
 }

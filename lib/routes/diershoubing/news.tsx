@@ -4,6 +4,7 @@ import { renderToString } from 'hono/jsx/dom/server';
 import type { Route } from '@/types';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 const renderDesc = (data: { description: string; type: string; acontent: any }) => renderToString(<DiershoubingDescription {...data} />);
 
@@ -32,7 +33,8 @@ export const route: Route = {
 };
 
 async function handler(ctx) {
-    const { data } = await got(`https://api.diershoubing.com:5001/feed/tag/?pn=0&rn=${ctx.req.query('limit') ? Number(ctx.req.query('limit')) : 20}&tag_type=0&src=ios`);
+    const limit = getRouteLimit(ctx, 20);
+    const { data } = await got(`https://api.diershoubing.com:5001/feed/tag/?pn=0&rn=${limit}&tag_type=0&src=ios`);
 
     const items = data.feeds.map((item) => {
         let acontent;
@@ -46,7 +48,7 @@ async function handler(ctx) {
                 acontent = contentData.imgs.split(',');
                 type = 'imgs';
             } else {
-                acontent = { img: contentData.video.split('|')[0], bvid: contentData.video.split('|')[1].replace('https://www.bilibili.com/video/', '') };
+                acontent = { img: contentData.video.split('|', 1)[0], bvid: contentData.video.split('|', 2)[1].replace('https://www.bilibili.com/video/', '') };
                 type = 'bilibili';
             }
         } else {
@@ -69,9 +71,9 @@ async function handler(ctx) {
     });
 
     return {
-        title: `二柄APP`,
-        link: `https://www.diershoubing.com`,
-        description: `二柄APP新闻`,
+        title: '二柄APP',
+        link: 'https://www.diershoubing.com',
+        description: '二柄APP新闻',
         item: items,
     };
 }
@@ -88,7 +90,7 @@ const DiershoubingDescription = ({ description, type, acontent }: { description:
         ) : type === 'bilibili' ? (
             <>
                 <img src={acontent.img} />
-                <iframe src={`https://player.bilibili.com/player.html?bvid=${acontent.bvid}&high_quality=1`} width="650" height="477" scrolling="no" border="0" frameborder="no" framespacing="0" allowfullscreen="true"></iframe>
+                <iframe src={`https://player.bilibili.com/player.html?bvid=${acontent.bvid}&high_quality=1`} width="650" height="477" scrolling="no" border="0" frameborder="no" framespacing="0" allowfullscreen></iframe>
             </>
         ) : null}
     </>

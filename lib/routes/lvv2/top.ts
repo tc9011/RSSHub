@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
@@ -55,43 +56,46 @@ export const route: Route = {
 async function handler(ctx) {
     const channel = ctx.req.param('channel');
     const sort = (channel === 'sort-realtime' || channel === 'sort-score') && !ctx.req.param('sort') ? 't-week' : ctx.req.param('sort');
-    const url = `${rootUrl}/${channel}/${sort}`;
+    const url = `${rootUrl}/${channel}${sort ? `/${sort}` : ''}`;
 
     const response = await got(url);
     const $ = load(response.data);
     const list = $('#top-content-news > div')
         .toArray()
-        .map((item) => ({
+        .map((item): DataItem => ({
             title: $(item).find('div.md > a').text(),
-            link: new URL($(item).find('div.md > a').attr('href'), rootUrl).href.replace(/(https:\/\/lvv2\.com.*?)\/title.*/, '$1'),
+            link: new URL($(item).find('div.md > a').attr('href')!, rootUrl).href.replace(/(https:\/\/lvv2\.com.*?)\/title.*/, '$1'),
         }));
 
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
+    const items = await pMap(
+        list,
+        async (item) => {
+            const detail = await cache.tryGet(`lvv2:detail:${item.link}`, async () => {
                 const detailResponse = await got.get(item.link);
                 const content = load(detailResponse.data);
 
-                item.pubDate = timezone(parseDate(content('time').attr('datetime')), +8);
-                item.author = content('a.author').text();
+                const pubDate = timezone(parseDate(content('time').attr('datetime')!), 8);
+                const author = content('a.author').text();
                 const link = content('h2.title > a.title').attr('href');
-                item.description =
-                    new URL(link, item.link).hostname === 'instant.lvv2.com'
-                        ? await cache.tryGet(link, async () => {
+                const description =
+                    new URL(link!, item.link).hostname === 'instant.lvv2.com'
+                        ? await cache.tryGet(`lvv2:article:${link}`, async () => {
                               const articleResponse = await got(link);
                               const article = load(articleResponse.data);
 
                               const description = article('#_tl_editor')
-                                  .html()
+                                  .html()!
                                   .replaceAll(/(<img.*?)data-src(.*?>)/g, '$1src$2');
 
                               return description;
                           })
-                        : renderOutlink(link);
+                        : renderOutlink(link!);
 
-                return item;
-            })
-        )
+                return { pubDate, author, description };
+            });
+            return { ...item, ...detail };
+        },
+        { concurrency: 3 }
     );
 
     return {

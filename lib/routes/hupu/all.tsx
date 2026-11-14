@@ -2,11 +2,11 @@ import { load } from 'cheerio';
 import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate, parseRelativeDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+
+import { extractForumThreadDates } from './utils';
 
 export const route: Route = {
     path: '/all/:id?',
@@ -23,15 +23,15 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['m.hupu.com/:category', 'm.hupu.com/'],
-            target: '/:category',
+            source: ['bbs.hupu.com/topic-daily'],
+            target: '/all/topic-daily',
         },
     ],
     name: '热帖',
     maintainers: ['nczitzk'],
     handler,
     description: `::: tip
-  更多热帖版面参见 [论坛](https://bbs.hupu.com)
+更多热帖版面参见 [论坛](https://bbs.hupu.com)
 :::`,
 };
 
@@ -47,16 +47,17 @@ async function handler(ctx) {
     });
 
     const $ = load(response.data);
+    const threadDates = extractForumThreadDates($);
 
     let items = $('div.t-info > a, a.p-title')
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem & { link: string } => {
+            const $item = $(item);
 
             return {
-                title: item.text(),
-                link: `https://m.hupu.com/bbs${item.attr('href')}`,
-                pubDate: timezone(parseDate(item.parent().parent().find('.post-time').text(), 'MM-DD HH:mm'), +8),
+                title: $item.text(),
+                link: `https://m.hupu.com/bbs${$item.attr('href')}`,
+                pubDate: threadDates.get($item.attr('href')!),
             };
         });
 
@@ -71,17 +72,16 @@ async function handler(ctx) {
 
                     const content = load(detailResponse.data);
 
-                    const videos = [];
+                    const videos: any[] = [];
 
-                    content('.hupu-post-video').each(function () {
+                    content('.hupu-post-video').each((_, el) => {
                         videos.push({
-                            source: content(this).attr('src'),
-                            poster: content(this).attr('poster'),
+                            source: content(el).attr('src'),
+                            poster: content(el).attr('poster'),
                         });
                     });
 
                     item.author = content('.bbs-user-wrapper-content-name-span').first().text();
-                    item.pubDate = item.pubDate ?? timezone(parseRelativeDate(content('.second-line-user-info').first().text()), +8);
                     const description = content('.bbs-content').first().html();
                     item.description = renderToString(
                         <>

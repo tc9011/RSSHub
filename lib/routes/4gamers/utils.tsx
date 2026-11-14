@@ -2,11 +2,12 @@ import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
 
 import InvalidParameterError from '@/errors/types/invalid-parameter';
+import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
 
-const getCategories = (tryGet) =>
-    tryGet('4gamers:categories', async () => {
+const getCategories = () =>
+    cache.tryGet('4gamers:categories', async () => {
         const { data: response } = await got('https://www.4gamers.com.tw/site/api/news/category');
 
         return response.data.map((category) => ({
@@ -39,11 +40,14 @@ const parseItem = async (item) => {
             .map((section) => {
                 switch (section['@type']) {
                     case 'ContentAdsSection':
+                    case 'InsertOneAdsSection':
                     case 'ScrollerAdsSection':
                     case 'textScrollerAdsSection':
                         return '';
                     case 'RawHtmlSection':
                         return section.html;
+                    case 'EmbedPollSection':
+                        return section.rawHtml;
                     case 'ImageGroupSection':
                         return renderImages(section.items);
                     default:
@@ -76,4 +80,4 @@ const renderImages = (images) =>
         </>
     );
 
-export { getCategories, parseItem, parseList, renderDescription, renderImages };
+export { getCategories, parseItem, parseList };

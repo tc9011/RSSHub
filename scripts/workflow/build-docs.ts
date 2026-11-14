@@ -1,27 +1,70 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
 import { config } from '../../lib/config';
-import { namespaces } from '../../lib/registry';
+import { ensureAllLoaded, namespaces } from '../../lib/registry';
+import type { Route } from '../../lib/types';
 import { getCurrentPath } from '../../lib/utils/helpers';
 import { categories } from './data';
+
+interface FoloAnalysis {
+    data: Record<string, { subscriptionCount: number; topFeeds: any[] }>;
+}
+
+await ensureAllLoaded();
 
 const fullTests = await (await fetch('https://cdn.jsdelivr.net/gh/DIYgod/RSSHub@gh-pages/build/test-full-routes.json')).json();
 const testResult = fullTests.testResults[0].assertionResults;
 
-const foloAnalysis = await (
-    await fetch('https://raw.githubusercontent.com/RSSNext/rsshub-docs/refs/heads/main/rsshub-analytics.json', {
-        headers: {
-            'user-agent': config.trueUA,
-        },
-    })
-).json();
-const foloAnalysisResult = foloAnalysis.data as Record<string, { subscriptionCount: number; topFeeds: any[] }>;
+const foloAnalysisResponse = await fetch('https://raw.githubusercontent.com/RSSNext/rsshub-docs/refs/heads/main/rsshub-analytics.json', {
+    headers: {
+        'user-agent': config.trueUA,
+    },
+});
+const foloAnalysis: FoloAnalysis = await foloAnalysisResponse.json();
+const foloAnalysisResult = foloAnalysis.data;
 const foloAnalysisTop100 = Object.entries(foloAnalysisResult)
-    .sort((a, b) => b[1].subscriptionCount - a[1].subscriptionCount)
+    .toSorted((a, b) => b[1].subscriptionCount - a[1].subscriptionCount)
     .slice(0, 150);
 
 const __dirname = getCurrentPath(import.meta.url);
+
+const git = (...args: string[]) =>
+    execFileSync('git', args, {
+        cwd: path.join(__dirname, '../..'),
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024,
+    });
+
+/**
+ * When each file under lib/routes was first committed, followed through renames so that a moved or converted file
+ * keeps its date. The /rsshub/routes feed dates its items with this. A shallow clone would date every file to its
+ * oldest fetched commit and announce all routes as new, so the full history is required.
+ */
+const getRouteFileAddedAt = () => {
+    if (git('rev-parse', '--is-shallow-repository').trim() === 'true') {
+        throw new Error('Dating routes needs the full git history, run `git fetch --unshallow` first');
+    }
+
+    const log = git('-c', 'core.quotePath=false', '-c', 'diff.renameLimit=0', 'log', '-M', '--name-status', '--diff-filter=AR', '--format=%x00%cI', '--', 'lib/routes');
+    const addedAt = new Map<string, string>();
+    // git log lists the newest commit first; replay from the oldest so that a rename hands its date to the new path
+    for (const commit of log.split('\0').toReversed()) {
+        const [date, ...changes] = commit.split('\n');
+        for (const change of changes) {
+            const [status, from, to] = change.split('\t', 3);
+            if (status === 'A' && !addedAt.has(from)) {
+                addedAt.set(from, new Date(date).toISOString());
+            } else if (status.startsWith('R')) {
+                addedAt.set(to, addedAt.get(from) ?? new Date(date).toISOString());
+            }
+        }
+    }
+    return addedAt;
+};
+
+const routeFileAddedAt = getRouteFileAddedAt();
 
 // Build namespace-centric data structure
 interface NamespaceData {
@@ -43,19 +86,21 @@ interface RouteData {
     url?: string;
     maintainers: string[];
     example: string;
-    parameters?: Record<string, any>;
+    parameters?: Route['parameters'];
     description?: string;
     categories?: string[];
-    features?: Record<string, any>;
+    features?: Route['features'];
     radar?: any[];
     view?: number;
     location?: string;
+    /** ISO time of the commit that added the route's file */
+    addedAt?: string;
     heat: number;
     topFeeds: any[];
     zh?: {
         name?: string;
         description?: string;
-        parameters?: Record<string, any>;
+        parameters?: Route['parameters'];
     };
     test?: {
         code: number;
@@ -73,10 +118,12 @@ for (const namespace in namespaces) {
     let defaultCategory = nsData.categories?.[0];
     if (!defaultCategory) {
         for (const routePath in nsData.routes) {
-            if (nsData.routes[routePath].categories) {
-                defaultCategory = nsData.routes[routePath].categories[0];
-                break;
+            if (!nsData.routes[routePath].categories) {
+                continue;
             }
+
+            defaultCategory = nsData.routes[routePath].categories[0];
+            break;
         }
     }
     if (!defaultCategory) {
@@ -156,6 +203,7 @@ for (const namespace in namespaces) {
             radar: routeData.radar,
             view: routeData.view,
             location: routeData.location,
+            addedAt: routeFileAddedAt.get(`lib/routes/${namespace}/${routeData.location}`),
             heat,
             topFeeds: foloAnalysisResult[realPath]?.topFeeds || [],
             zh: routeData.zh

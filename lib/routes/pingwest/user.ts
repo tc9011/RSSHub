@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 
@@ -34,21 +35,20 @@ export const route: Route = {
 | ------- | ----- |
 | article | state |
 
-  参数
+参数
 
-  -   \`fulltext\`，全文输出，例如：\`/pingwest/user/7781550877/article/fulltext\``,
+- \`fulltext\`，全文输出，例如：\`/pingwest/user/7781550877/article/fulltext\``,
 };
 
 async function handler(ctx) {
     const { uid, type = 'article', option } = ctx.req.param();
+    if (type !== 'article' && type !== 'state') {
+        throw new InvalidParameterError('Invalid type: use article or state.');
+    }
     const baseUrl = 'https://www.pingwest.com';
     const aimUrl = `${baseUrl}/user/${uid}/${type}`;
     const { userName, realUid, userSign, userAvatar } = await cache.tryGet(`pingwest:user:info:${uid}`, async () => {
-        const res = await got(aimUrl, {
-            headers: {
-                Referer: baseUrl,
-            },
-        });
+        const res = await got(aimUrl);
         const $ = load(res.data);
         const userInfoNode = $('#J_userId');
         return {
@@ -65,13 +65,10 @@ async function handler(ctx) {
             user_id: realUid,
             tab: type,
         },
-        headers: {
-            Referer: baseUrl,
-        },
     });
     const $ = load(response.data.data.list);
 
-    let item = [];
+    let item: DataItem[];
     const needFullText = option === 'fulltext';
     switch (type) {
         case 'article':

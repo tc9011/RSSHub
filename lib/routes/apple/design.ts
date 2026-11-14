@@ -25,7 +25,7 @@ async function handler() {
         .toArray()
         .flatMap((item) => {
             const table = $(item);
-            const date = table.find('.date').first().text();
+            const date = table.find('.date').text();
 
             return table
                 .find('.topic-item')
@@ -45,7 +45,9 @@ async function handler() {
                         title,
                     };
                 });
-        });
+        })
+        // The page lists some updates twice, such as the June 2023 Privacy entry
+        .filter((item, index, items) => items.findIndex((candidate) => candidate.guid === item.guid) === index);
 
     return {
         item: items,

@@ -2,6 +2,7 @@ import { renderToString } from 'hono/jsx/dom/server';
 
 import type { Route } from '@/types';
 import ofetch from '@/utils/ofetch';
+import { parseDate } from '@/utils/parse-date';
 
 export const route: Route = {
     path: '/package/:name{(@[a-z0-9-~][a-z0-9-._~]*/)?[a-z0-9-~][a-z0-9-._~]*}',
@@ -30,10 +31,10 @@ async function handler(ctx) {
     const packageVersionRes = await ofetch(packageVersionAPI);
 
     const packageVersion = packageVersionRes.time;
-    const packageVersionList = Object.keys(packageVersion)
-        .map((key) => ({
+    const packageVersionList = Object.entries(packageVersion)
+        .map(([key, value]) => ({
             version: key,
-            time: packageVersion[key],
+            time: value,
         }))
         .toReversed();
 
@@ -61,6 +62,7 @@ async function handler(ctx) {
                 ),
                 link: `https://www.npmjs.com/package/${name}`,
                 guid: `https://www.npmjs.com/package/${name}${packageVersion.modified}`,
+                pubDate: packageVersion.modified ? parseDate(packageVersion.modified) : undefined,
             },
         ],
     };

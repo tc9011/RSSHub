@@ -1,6 +1,6 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { Data, Route } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
 
@@ -28,7 +28,7 @@ export const route: Route = {
     url: 'desktop.webcatalog.io/en/changelog',
 };
 
-async function handler() {
+async function handler(): Promise<Data> {
     const url = 'https://desktop.webcatalog.io/en/changelog';
     const response = await ofetch(url);
     const $ = load(response);
@@ -42,11 +42,12 @@ async function handler() {
             const $section = load(section);
             const month = $section('h1').remove().text();
             const title = $section('h2').first().remove().text();
+            const date = month ? parseDate(month) : undefined;
             return {
                 title: `${month} - ${title}`,
                 description: $section.html(),
                 link: url,
-                pubDate: parseDate(month),
+                pubDate: date && Number.isFinite(date.getTime()) ? date : undefined,
                 guid: `webcatalog-${month}-${title}`,
             };
         });

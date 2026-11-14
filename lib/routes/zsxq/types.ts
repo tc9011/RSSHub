@@ -46,7 +46,7 @@ interface TalkTopic extends BasicTopic {
     };
 }
 
-export interface QATopic extends BasicTopic {
+interface QATopic extends BasicTopic {
     type: 'q&a';
     answer?: {
         owner: {
@@ -147,7 +147,7 @@ export interface TopicImage {
 
 export type Topic = TalkTopic | QATopic | TaskTopic | SolutionTopic;
 
-export type ResponseData = UserInfo | GroupInfo | Topic[];
+export type ResponseData = UserInfo | GroupInfo | Topic[] | { topics: Topic[] };
 
 export type UserInfoResponse = BasicResponse<UserInfo>;
 

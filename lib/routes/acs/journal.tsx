@@ -6,18 +6,28 @@ import { config } from '@/config';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import { parseDate } from '@/utils/parse-date';
-import puppeteer from '@/utils/puppeteer';
+import { getPlaywrightPage } from '@/utils/playwright';
 
 export const route: Route = {
     path: '/journal/:id',
+    categories: ['journal'],
+    example: '/acs/journal/jacsat',
+    parameters: { id: 'Journal id, can be found in URL' },
+    features: {
+        requirePuppeteer: true,
+        supportScihub: true,
+    },
     radar: [
         {
             source: ['pubs.acs.org/journal/:id', 'pubs.acs.org/'],
         },
     ],
-    name: 'Unknown',
+    name: 'Journal',
     maintainers: ['nczitzk'],
     handler,
+    description: `::: tip
+See [Browse Content](https://pubs.acs.org)
+:::`,
 };
 
 async function handler(ctx) {
@@ -26,57 +36,55 @@ async function handler(ctx) {
     const rootUrl = 'https://pubs.acs.org';
     const currentUrl = `${rootUrl}/toc/${id}/0/0`;
 
-    let title = '';
-
-    const browser = await puppeteer();
-    const items = await cache.tryGet(
-        currentUrl,
+    const { title, items } = await cache.tryGet(
+        `${currentUrl}:feed`,
         async () => {
-            const page = await browser.newPage();
-            await page.setRequestInterception(true);
-            page.on('request', (request) => {
-                request.resourceType() === 'document' || request.resourceType() === 'script' ? request.continue() : request.abort();
+            const { page, destroy } = await getPlaywrightPage(currentUrl, {
+                closeTimeout: 0,
+                gotoConfig: { waitUntil: 'domcontentloaded', timeout: config.requestTimeout },
+                onBeforeLoad: async (page) => {
+                    await page.route('**/*', (route) => (['document', 'script', 'xhr', 'fetch'].includes(route.request().resourceType()) ? route.continue() : route.abort()));
+                },
             });
-            await page.goto(currentUrl, {
-                waitUntil: 'domcontentloaded',
-            });
-            await page.waitForSelector('.toc');
-
-            const html = await page.evaluate(() => document.documentElement.innerHTML);
-            await page.close();
+            let html: string;
+            try {
+                await page.waitForSelector('.toc', { timeout: config.requestTimeout });
+                html = await page.content();
+            } finally {
+                await destroy();
+            }
 
             const $ = load(html);
 
-            title = $('meta[property="og:title"]').attr('content');
+            const title = $('meta[property="og:title"]').attr('content')!;
 
-            return $('.issue-item')
+            const items = $('.issue-item')
                 .toArray()
                 .map((item) => {
-                    item = $(item);
+                    const $item = $(item);
 
-                    const a = item.find('.issue-item_title a');
-                    const doi = item.find('input[name="doi"]').attr('value');
+                    const a = $item.find('.issue-item_title a');
+                    const doi = $item.find('input[name="doi"]').attr('value');
 
                     return {
                         doi,
                         guid: doi,
                         title: a.text(),
                         link: `${rootUrl}${a.attr('href')}`,
-                        pubDate: parseDate(item.find('.pub-date-value').text(), 'MMMM D, YYYY'),
-                        author: item
+                        pubDate: parseDate($item.find('.pub-date-value').text(), 'MMMM D, YYYY'),
+                        author: $item
                             .find('.issue-item_loa li')
                             .toArray()
                             .map((a) => $(a).text())
                             .join(', '),
-                        description: renderDescription(item.find('.issue-item_img').html(), item.find('.hlFld-Abstract').html()),
+                        description: renderDescription($item.find('.issue-item_img').html(), $item.find('.hlFld-Abstract').html()),
                     };
                 });
+            return { title, items };
         },
         config.cache.routeExpire,
         false
     );
-
-    await browser.close();
 
     return {
         title,

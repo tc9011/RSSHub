@@ -26,7 +26,7 @@ export const route: Route = {
     description: '英語之家 - The Home of English 首頁',
 };
 
-async function handler() {
+async function handler(): Promise<Data> {
     const rootUrl = 'https://englishhome.org';
     const apiUrl = `${rootUrl}/wp-json/wp/v2/posts?per_page=20&_embed=author,wp:term`;
 
@@ -36,7 +36,7 @@ async function handler() {
         title: post.title?.rendered,
         description: post.content?.rendered ?? post.excerpt?.rendered ?? '',
         link: post.link,
-        pubDate: parseDate(post.date_gmt ?? post.date),
+        pubDate: post.date_gmt ? parseDate(`${post.date_gmt}Z`) : parseDate(post.date),
         author: post._embedded?.author?.[0]?.name,
         category: Array.isArray(post._embedded?.['wp:term'])
             ? post._embedded['wp:term']
@@ -51,5 +51,5 @@ async function handler() {
         link: rootUrl,
         language: 'zh-TW',
         item: items,
-    } as Data;
+    };
 }

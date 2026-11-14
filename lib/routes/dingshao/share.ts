@@ -35,9 +35,11 @@ async function handler(ctx: Context) {
         },
     });
 
+    const authors = new Map(response.value.bundle.users.map((user) => [user.id, user.profile.name]));
     const items = response.value.bundle.channelMessages.map((message) => ({
-        title: message.excerpt.split('\n')[0],
+        title: message.excerpt,
         description: message.content,
+        author: authors.get(message.author),
         pubDate: parseDate(message.publishedAt),
         category: message.tags,
         link: `${baseUrl}/channel/${response.value.channel}/${message.id}`,
@@ -46,7 +48,7 @@ async function handler(ctx: Context) {
     const channelProfile = response.value.bundle.channels.find((channel) => channel.id === response.value.channel)?.profile;
 
     return {
-        title: channelProfile?.name,
+        title: channelProfile!.name,
         description: channelProfile?.description,
         link: `${baseUrl}/share/${shortId}`,
         image: channelProfile?.image,

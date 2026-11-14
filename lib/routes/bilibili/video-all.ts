@@ -8,7 +8,7 @@ import utils from './utils';
 export const route: Route = {
     path: '/user/video-all/:uid/:embed?',
     name: '用户所有视频',
-    maintainers: [],
+    maintainers: ['CcccFz'],
     handler,
     example: '/bilibili/user/video-all/2267573',
     parameters: {
@@ -16,6 +16,9 @@ export const route: Route = {
         embed: '默认为开启内嵌视频, 任意值为关闭',
     },
     categories: ['social-media'],
+    features: {
+        requirePuppeteer: true,
+    },
 };
 
 async function handler(ctx) {
@@ -24,14 +27,8 @@ async function handler(ctx) {
     const cookie = await cache.getCookie();
     const wbiVerifyString = await cache.getWbiVerifyString();
     const dmImgList = utils.getDmImgList();
-    const [name, face] = await cache.getUsernameAndFaceFromUID(uid);
+    const [name, face] = (await cache.getUsernameAndFaceFromUID(uid)) as [string, string];
 
-    await got(`https://space.bilibili.com/${uid}/video?tid=0&page=1&keyword=&order=pubdate`, {
-        headers: {
-            Referer: `https://space.bilibili.com/${uid}/`,
-            Cookie: cookie,
-        },
-    });
     const params = utils.addWbiVerifyInfo(utils.addDmVerifyInfo(`mid=${uid}&ps=30&tid=0&pn=1&keyword=&order=pubdate&platform=web&web_location=1550101&order_avoided=true`, dmImgList), wbiVerifyString);
     const response = await got(`https://api.bilibili.com/x/space/wbi/arc/search?${params}`, {
         headers: {
@@ -40,17 +37,11 @@ async function handler(ctx) {
         },
     });
 
-    const vlist = [...response.data.data.list.vlist];
+    const vlist = response.data.data.list.vlist;
     const pageTotal = Math.ceil(response.data.data.page.count / response.data.data.page.ps);
 
     const getPage = async (pageId) => {
         const cookie = await cache.getCookie();
-        await got(`https://space.bilibili.com/${uid}/video?tid=0&page=${pageId}&keyword=&order=pubdate`, {
-            headers: {
-                Referer: `https://space.bilibili.com/${uid}/`,
-                Cookie: cookie,
-            },
-        });
         const params = utils.addWbiVerifyInfo(utils.addDmVerifyInfo(`mid=${uid}&ps=30&tid=0&pn=${pageId}&keyword=&order=pubdate&platform=web&web_location=1550101&order_avoided=true`, dmImgList), wbiVerifyString);
         return got(`https://api.bilibili.com/x/space/wbi/arc/search?${params}`, {
             headers: {
@@ -60,7 +51,7 @@ async function handler(ctx) {
         });
     };
 
-    const promises = [];
+    const promises: Array<Promise<any>> = [];
 
     if (pageTotal > 1) {
         for (let i = 2; i <= pageTotal; i++) {

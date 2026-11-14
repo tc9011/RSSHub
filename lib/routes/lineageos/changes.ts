@@ -2,13 +2,14 @@ import type { CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
 import type { Context } from 'hono';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 export const handler = async (ctx: Context): Promise<Data> => {
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '30', 10);
+    const limit = getRouteLimit(ctx, 30);
 
     const baseUrl = 'https://download.lineageos.org';
     const targetUrl: string = new URL('changes', baseUrl).href;
@@ -16,7 +17,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
     const targetResponse = await ofetch(targetUrl);
     const $: CheerioAPI = load(targetResponse);
-    const language = $('html').attr('lang') ?? 'en';
+    const language = ($('html').attr('lang') ?? 'en') as Language;
 
     const response = await ofetch(apiUrl);
 
@@ -44,7 +45,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
         description: undefined,
         link: targetUrl,
         item: items,
-        allowEmpty: true,
         author: $('title').text(),
         language,
         id: targetUrl,

@@ -34,12 +34,19 @@ export const route: Route = {
 };
 
 async function handler() {
-    const feed = await parser.parseURL('https://zed.dev/blog.rss');
+    const feed = await parser.parseString(await ofetch<string, 'text'>('https://zed.dev/blog.rss', { responseType: 'text' }));
+    if (!feed.title) {
+        throw new Error('Zed blog feed has no title');
+    }
 
     const items = await Promise.all(
-        feed.items.map((item) =>
-            cache.tryGet(item.link as string, async () => {
-                const data = await ofetch(item.link as string);
+        feed.items.map(async (item) => {
+            const { link, title } = item;
+            if (!link || !title) {
+                throw new Error('Zed blog feed item has no link or title');
+            }
+            const description = await cache.tryGet(`zed:${link}:description:v2`, async () => {
+                const data = await ofetch(link);
                 const $ = load(data);
 
                 const article = $('article');
@@ -50,21 +57,18 @@ async function handler() {
                 article.find('[class]').removeAttr('class');
                 article.find('[id]').removeAttr('id');
                 article.find('[preload]').removeAttr('preload');
-                article.find('script').remove();
-                article.find('figcaption').remove();
                 article.find('aside').remove(); // remove Looking and hiring part
 
-                item.content = article.html() as string;
-
-                return {
-                    title: item.title,
-                    link: item.link,
-                    description: item.content,
-                    pubDate: item.pubDate,
-                    author: item.creator,
-                } as DataItem;
-            })
-        )
+                return article.html();
+            });
+            return {
+                title,
+                link,
+                description,
+                pubDate: item.pubDate,
+                author: item.creator,
+            } satisfies DataItem;
+        })
     );
 
     return {
@@ -73,5 +77,5 @@ async function handler() {
         description: feed.description,
         item: items,
         language: 'en',
-    } as Data;
+    } satisfies Data;
 }

@@ -1,9 +1,10 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { Language, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import timezone from '@/utils/timezone';
 
 export const route: Route = {
     path: '/shopping-guide/:category?/:language?',
@@ -42,17 +43,18 @@ async function handler(ctx) {
     const list = $('.shadow-long-blk')
         .toArray()
         .map((item) => {
-            item = $(item);
+            const $item = $(item);
 
-            const info = item
+            const info = $item
                 .find('.item-info li')
                 .toArray()
                 .map((item) => $(item).text().trim());
+            const publishedAt = info.shift();
             return {
-                title: item.find('h2').text().trim(),
-                description: item.find('p').text().trim(),
-                link: `${rootUrl}${item.attr('href')}`,
-                pubDate: parseDate(info.shift(), 'YYYY-MM-DD'),
+                title: $item.find('h2').text(),
+                description: $item.find('p').text().trim(),
+                link: `${rootUrl}${$item.attr('href')}`,
+                pubDate: publishedAt ? timezone(parseDate(publishedAt, 'YYYY-MM-DD'), 8) : undefined,
                 category: info,
             };
         });
@@ -65,14 +67,16 @@ async function handler(ctx) {
 
                 const header = $('.article-img-blk');
                 header.find('img').each((_, ele) => {
-                    ele = $(ele);
-                    if (ele.attr('src') && ele.attr('srcset')) {
-                        ele.removeAttr('srcset');
-                        ele.attr('src', ele.attr('src').replace(/\/\d+c\d+\//, '/0p0/'));
+                    const $ele = $(ele);
+                    if (!($ele.attr('src') && $ele.attr('srcset'))) {
+                        return;
                     }
+
+                    $ele.removeAttr('srcset');
+                    $ele.attr('src', $ele.attr('src')!.replace(/\/\d+c\d+\//, '/0p0/'));
                 });
 
-                item.description = header.html() + $('article .ckec').html();
+                item.description = header.html()! + $('article .ckec').html()!;
 
                 return item;
             })
@@ -82,6 +86,7 @@ async function handler(ctx) {
     return {
         title: $('head title').text(),
         link: currentUrl,
+        language: ($('html').attr('lang') ?? (language === 'tc' ? 'zh-HK' : 'zh-CN')) as Language,
         image: $('meta[property="og:image"]').attr('content'),
         logo: $('link[rel="apple-touch-icon"]').attr('href'),
         icon: $('link[rel="apple-touch-icon"]').attr('href'),

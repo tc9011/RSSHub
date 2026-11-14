@@ -1,10 +1,14 @@
+import { load } from 'cheerio';
 import type { Context } from 'hono';
+import pMap from 'p-map';
 
+import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Data, DataItem, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
 import { renderDescription } from './templates/description';
@@ -198,19 +202,27 @@ const idOptions = [
 const defaultType = 1;
 const siteTitle = '艾瑞咨询';
 
+interface ReportItem extends DataItem {
+    detailId?: string | number;
+}
+
 export const handler = async (ctx: Context): Promise<Data> => {
     const { type: paramType = defaultType, id: paramId = '' } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '50', 10);
+    const limit = getRouteLimit(ctx, 50);
 
-    const typeObj = types?.[paramType] ?? Object.values(types).find((obj) => obj.label === paramType || obj.value === paramType);
+    const typeObj = Object.hasOwn(types, paramType) ? types[paramType] : Object.values(types).find((obj) => obj.label === paramType);
     if (!typeObj) {
-        throw new Error(`Invalid type: ${paramType}. Please refer to [the documentation](https://docs.rsshub.app/routes/other#${siteTitle}) for valid types.`);
+        throw new InvalidParameterError('type must be 1, 2, 3, 4, or a documented category name.');
     }
 
     const idObj = idOptions.find((option) => option.label === paramId || option.value === paramId);
 
+    if (!idObj && !/^\d+$/.test(paramId)) {
+        throw new InvalidParameterError('id must be a numeric industry ID or a documented industry name.');
+    }
+
     const type: number = typeObj.value;
-    const id: string | undefined = idObj ? String(idObj.value) : undefined;
+    const id = idObj?.value ?? paramId;
 
     const baseUrl = 'https://www.iresearch.com.cn';
     const imageBaseUrl = 'https://pic.iresearch.cn';
@@ -220,19 +232,15 @@ export const handler = async (ctx: Context): Promise<Data> => {
 
     const response = await ofetch(apiUrl, {
         query: {
-            ...(id
-                ? {
-                      [typeObj.idKey]: id,
-                  }
-                : {}),
+            ...(id && {
+                [typeObj.idKey]: id,
+            }),
             [typeObj.limitKey]: limit,
             ...typeObj.fixedQuery,
         },
     });
 
-    let items: DataItem[] = [];
-
-    items = response.List.slice(0, limit).map((item): DataItem => {
+    let items: ReportItem[] = response.List.slice(0, limit).map((item): ReportItem => {
         const title: string =
             item.reportname ??
             (() => {
@@ -244,7 +252,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
                 return item.sTitle ?? item.Content;
             })();
 
-        const images: string[] = [item.BigImg, item.SmallImg, item.reportpic].filter(Boolean) as string[];
+        const images: string[] = [item.BigImg, item.SmallImg, item.reportpic].filter(Boolean);
         const description: string | undefined = renderDescription({
             images: images.map((src) => ({
                 src,
@@ -259,24 +267,22 @@ export const handler = async (ctx: Context): Promise<Data> => {
         const authors: DataItem['author'] = item.Author;
         const guid: string = item.Id ? `iresearch-${item.Id}` : item.id ? `iresearch-ireport.${item.id}` : '';
         const image: string | undefined = images?.[0] ?? undefined;
-        const updated: number | string = pubDate;
 
-        let processedItem: DataItem = {
+        let processedItem: ReportItem = {
             title,
             description,
-            pubDate: pubDate ? timezone(parseDate(pubDate), +8) : undefined,
-            link: item.id ? new URL(`report/detail?id=${item.id}`, baseUrl).href : (linkUrl ?? (item.Id ? new URL(`chart/detail?id=${item.id}`, baseUrl).href : undefined)),
+            pubDate: pubDate ? timezone(parseDate(pubDate), 8) : undefined,
+            link: item.id ? new URL(`report/detail?id=${item.id}`, baseUrl).href : (linkUrl ?? (item.Id ? new URL(`chart/detail?id=${item.Id}`, baseUrl).href : undefined)),
             category: categories,
             author: authors,
             guid,
             id: guid,
             content: {
                 html: description,
-                text: description,
+                text: description ? load(description).text() : undefined,
             },
             image,
             banner: image,
-            updated: updated ? timezone(parseDate(updated), +8) : undefined,
             detailId: item.id ?? (linkUrl ? item.NewsId : item.Id),
         };
 
@@ -315,8 +321,9 @@ export const handler = async (ctx: Context): Promise<Data> => {
         return processedItem;
     });
 
-    items = await Promise.all(
-        items.map((item) => {
+    items = await pMap(
+        items,
+        (item) => {
             if (!item.link || (item.guid ? /chart\.\d+$/.test(item.guid) : false)) {
                 delete item.detailId;
                 return item;
@@ -344,11 +351,11 @@ export const handler = async (ctx: Context): Promise<Data> => {
                     data.reportpic,
                     ...Array.from(
                         {
-                            length: Number.parseInt(data.PagesCount ?? data.pagesCount, 10),
+                            length: Number(data.PagesCount ?? data.pagesCount),
                         },
                         (_, index) => `${imageBaseUrl}/${typeObj.imageSlug}/${item.detailId}/${index + 1}.jpg`
                     ),
-                ].filter(Boolean) as string[];
+                ].filter(Boolean);
                 const description: string | undefined = renderDescription({
                     images: images.map((src) => ({
                         src,
@@ -359,20 +366,18 @@ export const handler = async (ctx: Context): Promise<Data> => {
                 const pubDate: number | string = data.Uptime;
                 const categories: string[] = [...new Set([...(item.category ?? []), data.industry, ...(data.Keyword ?? []), ...(data.keywords?.split(/,/) ?? [])])].filter(Boolean);
                 const image: string | undefined = images?.[0] ?? undefined;
-                const updated: number | string = pubDate;
 
                 let processedItem: DataItem = {
                     title,
                     description,
-                    pubDate: pubDate ? timezone(parseDate(pubDate), +8) : undefined,
+                    pubDate: pubDate ? timezone(parseDate(pubDate), 8) : item.pubDate,
                     category: categories,
                     content: {
                         html: description,
-                        text: description,
+                        text: description ? load(description).text() : undefined,
                     },
                     image,
                     banner: image,
-                    updated: updated ? timezone(parseDate(updated), +8) : undefined,
                 };
 
                 const medias: Record<string, Record<string, string>> = (() => {
@@ -414,7 +419,8 @@ export const handler = async (ctx: Context): Promise<Data> => {
                     ...processedItem,
                 };
             });
-        })
+        },
+        { concurrency: 3 }
     );
 
     return {
@@ -422,7 +428,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
         description: siteTitle,
         link: targetUrl,
         item: items,
-        allowEmpty: true,
         author: siteTitle,
         id: targetUrl,
     };
@@ -448,8 +453,8 @@ export const route: Route = {
             options: idOptions,
         },
     },
-    description: `:::tip
-订阅 [电子商务最新报告](https://www.iresearch.com.cn/report.shtml?type=1&classId=86)，其源网址为 \`https://www.iresearch.com.cn/report.shtml?type=1&classId=86\`，请参考该 URL 指定部分构成参数，此时路由为 [\`/iresearch/report/最新报告/电子商务\`](https://rsshub.app/iresearch/report/最新报告/电子商务) 或 [\`/iresearch/report/1/86\`](https://rsshub.app/iresearch/report/1/86)。
+    description: `::: tip
+订阅 [电子商务最新报告](https://www.iresearch.com.cn/report.shtml?type=1\\&classId=86)，其源网址为 \`https://www.iresearch.com.cn/report.shtml?type=1&classId=86\`，请参考该 URL 指定部分构成参数，此时路由为 [\`/iresearch/report/最新报告/电子商务\`](https://rsshub.app/iresearch/report/最新报告/电子商务) 或 [\`/iresearch/report/1/86\`](https://rsshub.app/iresearch/report/1/86)。
 :::
 
 #### 分类
@@ -461,40 +466,39 @@ export const route: Route = {
 <details>
   <summary>更多行业</summary>
 
-| 名称                                                                       | ID                                             |
-| -------------------------------------------------------------------------- | ---------------------------------------------- |
-| [家电行业](https://www.iresearch.com.cn/report.shtml?type=3&classId=1)     | [1](https://rsshub.app/iresearch/report/3/1)   |
-| [服装行业](https://www.iresearch.com.cn/report.shtml?type=3&classId=2)     | [2](https://rsshub.app/iresearch/report/3/2)   |
-| [美妆行业](https://www.iresearch.com.cn/report.shtml?type=3&classId=3)     | [3](https://rsshub.app/iresearch/report/3/3)   |
-| [食品饮料行业](https://www.iresearch.com.cn/report.shtml?type=3&classId=4) | [4](https://rsshub.app/iresearch/report/3/4)   |
-| [酒行业](https://www.iresearch.com.cn/report.shtml?type=3&classId=5)       | [5](https://rsshub.app/iresearch/report/3/5)   |
-| [媒体文娱](https://www.iresearch.com.cn/report.shtml?classId=59)           | [59](https://rsshub.app/iresearch/report/1/59) |
-| [广告营销](https://www.iresearch.com.cn/report.shtml?classId=89)           | [89](https://rsshub.app/iresearch/report/1/89) |
-| [游戏行业](https://www.iresearch.com.cn/report.shtml?classId=90)           | [90](https://rsshub.app/iresearch/report/1/90) |
-| [视频媒体](https://www.iresearch.com.cn/report.shtml?classId=91)           | [91](https://rsshub.app/iresearch/report/1/91) |
-| [消费电商](https://www.iresearch.com.cn/report.shtml?classId=69)           | [69](https://rsshub.app/iresearch/report/1/69) |
-| [电子商务](https://www.iresearch.com.cn/report.shtml?classId=86)           | [86](https://rsshub.app/iresearch/report/1/86) |
-| [消费者洞察](https://www.iresearch.com.cn/report.shtml?classId=87)         | [87](https://rsshub.app/iresearch/report/1/87) |
-| [旅游行业](https://www.iresearch.com.cn/report.shtml?classId=88)           | [88](https://rsshub.app/iresearch/report/1/88) |
-| [汽车行业](https://www.iresearch.com.cn/report.shtml?classId=80)           | [80](https://rsshub.app/iresearch/report/1/80) |
-| [教育行业](https://www.iresearch.com.cn/report.shtml?classId=63)           | [63](https://rsshub.app/iresearch/report/1/63) |
-| [企业服务](https://www.iresearch.com.cn/report.shtml?classId=60)           | [60](https://rsshub.app/iresearch/report/1/60) |
-| [网络服务](https://www.iresearch.com.cn/report.shtml?classId=84)           | [84](https://rsshub.app/iresearch/report/1/84) |
-| [应用服务](https://www.iresearch.com.cn/report.shtml?classId=85)           | [85](https://rsshub.app/iresearch/report/1/85) |
-| [AI 大数据](https://www.iresearch.com.cn/report.shtml?classId=65)          | [65](https://rsshub.app/iresearch/report/1/65) |
-| [人工智能](https://www.iresearch.com.cn/report.shtml?classId=83)           | [83](https://rsshub.app/iresearch/report/1/83) |
-| [物流行业](https://www.iresearch.com.cn/report.shtml?classId=75)           | [75](https://rsshub.app/iresearch/report/1/75) |
-| [金融行业](https://www.iresearch.com.cn/report.shtml?classId=70)           | [70](https://rsshub.app/iresearch/report/1/70) |
-| [支付行业](https://www.iresearch.com.cn/report.shtml?classId=82)           | [82](https://rsshub.app/iresearch/report/1/82) |
-| [房产行业](https://www.iresearch.com.cn/report.shtml?classId=68)           | [68](https://rsshub.app/iresearch/report/1/68) |
-| [医疗健康](https://www.iresearch.com.cn/report.shtml?classId=62)           | [62](https://rsshub.app/iresearch/report/1/62) |
-| [先进制造](https://www.iresearch.com.cn/report.shtml?classId=61)           | [61](https://rsshub.app/iresearch/report/1/61) |
-| [能源环保](https://www.iresearch.com.cn/report.shtml?classId=77)           | [77](https://rsshub.app/iresearch/report/1/77) |
-| [区块链](https://www.iresearch.com.cn/report.shtml?classId=76)             | [76](https://rsshub.app/iresearch/report/1/76) |
-| [其他](https://www.iresearch.com.cn/report.shtml?classId=81)               | [81](https://rsshub.app/iresearch/report/1/81) |
+| 名称                                                                        | ID                                             |
+| --------------------------------------------------------------------------- | ---------------------------------------------- |
+| [家电行业](https://www.iresearch.com.cn/report.shtml?type=3\\&classId=1)     | [1](https://rsshub.app/iresearch/report/3/1)   |
+| [服装行业](https://www.iresearch.com.cn/report.shtml?type=3\\&classId=2)     | [2](https://rsshub.app/iresearch/report/3/2)   |
+| [美妆行业](https://www.iresearch.com.cn/report.shtml?type=3\\&classId=3)     | [3](https://rsshub.app/iresearch/report/3/3)   |
+| [食品饮料行业](https://www.iresearch.com.cn/report.shtml?type=3\\&classId=4) | [4](https://rsshub.app/iresearch/report/3/4)   |
+| [酒行业](https://www.iresearch.com.cn/report.shtml?type=3\\&classId=5)       | [5](https://rsshub.app/iresearch/report/3/5)   |
+| [媒体文娱](https://www.iresearch.com.cn/report.shtml?classId=59)            | [59](https://rsshub.app/iresearch/report/1/59) |
+| [广告营销](https://www.iresearch.com.cn/report.shtml?classId=89)            | [89](https://rsshub.app/iresearch/report/1/89) |
+| [游戏行业](https://www.iresearch.com.cn/report.shtml?classId=90)            | [90](https://rsshub.app/iresearch/report/1/90) |
+| [视频媒体](https://www.iresearch.com.cn/report.shtml?classId=91)            | [91](https://rsshub.app/iresearch/report/1/91) |
+| [消费电商](https://www.iresearch.com.cn/report.shtml?classId=69)            | [69](https://rsshub.app/iresearch/report/1/69) |
+| [电子商务](https://www.iresearch.com.cn/report.shtml?classId=86)            | [86](https://rsshub.app/iresearch/report/1/86) |
+| [消费者洞察](https://www.iresearch.com.cn/report.shtml?classId=87)          | [87](https://rsshub.app/iresearch/report/1/87) |
+| [旅游行业](https://www.iresearch.com.cn/report.shtml?classId=88)            | [88](https://rsshub.app/iresearch/report/1/88) |
+| [汽车行业](https://www.iresearch.com.cn/report.shtml?classId=80)            | [80](https://rsshub.app/iresearch/report/1/80) |
+| [教育行业](https://www.iresearch.com.cn/report.shtml?classId=63)            | [63](https://rsshub.app/iresearch/report/1/63) |
+| [企业服务](https://www.iresearch.com.cn/report.shtml?classId=60)            | [60](https://rsshub.app/iresearch/report/1/60) |
+| [网络服务](https://www.iresearch.com.cn/report.shtml?classId=84)            | [84](https://rsshub.app/iresearch/report/1/84) |
+| [应用服务](https://www.iresearch.com.cn/report.shtml?classId=85)            | [85](https://rsshub.app/iresearch/report/1/85) |
+| [AI 大数据](https://www.iresearch.com.cn/report.shtml?classId=65)           | [65](https://rsshub.app/iresearch/report/1/65) |
+| [人工智能](https://www.iresearch.com.cn/report.shtml?classId=83)            | [83](https://rsshub.app/iresearch/report/1/83) |
+| [物流行业](https://www.iresearch.com.cn/report.shtml?classId=75)            | [75](https://rsshub.app/iresearch/report/1/75) |
+| [金融行业](https://www.iresearch.com.cn/report.shtml?classId=70)            | [70](https://rsshub.app/iresearch/report/1/70) |
+| [支付行业](https://www.iresearch.com.cn/report.shtml?classId=82)            | [82](https://rsshub.app/iresearch/report/1/82) |
+| [房产行业](https://www.iresearch.com.cn/report.shtml?classId=68)            | [68](https://rsshub.app/iresearch/report/1/68) |
+| [医疗健康](https://www.iresearch.com.cn/report.shtml?classId=62)            | [62](https://rsshub.app/iresearch/report/1/62) |
+| [先进制造](https://www.iresearch.com.cn/report.shtml?classId=61)            | [61](https://rsshub.app/iresearch/report/1/61) |
+| [能源环保](https://www.iresearch.com.cn/report.shtml?classId=77)            | [77](https://rsshub.app/iresearch/report/1/77) |
+| [区块链](https://www.iresearch.com.cn/report.shtml?classId=76)              | [76](https://rsshub.app/iresearch/report/1/76) |
+| [其他](https://www.iresearch.com.cn/report.shtml?classId=81)                | [81](https://rsshub.app/iresearch/report/1/81) |
 
-</details>
-`,
+</details>`,
     categories: ['other'],
     features: {
         requireConfig: false,
@@ -508,53 +512,27 @@ export const route: Route = {
     radar: [
         {
             source: ['www.iresearch.com.cn/report.shtml'],
-            target: (_, url) => {
-                const urlObj: URL = new URL(url);
-                const type: string | undefined = urlObj.searchParams.get('type') ?? undefined;
-                const id: string | undefined = urlObj.searchParams.get('classId') ?? urlObj.searchParams.get('channelId') ?? urlObj.searchParams.get('cid') ?? undefined;
-
-                return `/iresearch/report${type ? `/${type}${id ? `/${id}` : ''}` : ''}`;
-            },
+            target: '/report',
         },
         {
             title: '最新报告',
             source: ['www.iresearch.com.cn/report.shtml'],
-            target: (_, url) => {
-                const urlObj: URL = new URL(url);
-                const id: string | undefined = urlObj.searchParams.get('classId') ?? urlObj.searchParams.get('channelId') ?? urlObj.searchParams.get('cid') ?? undefined;
-
-                return `/iresearch/report/1${id ? `/${id}` : ''}`;
-            },
+            target: '/report/1',
         },
         {
             title: '研究图表',
             source: ['www.iresearch.com.cn/report.shtml'],
-            target: (_, url) => {
-                const urlObj: URL = new URL(url);
-                const id: string | undefined = urlObj.searchParams.get('classId') ?? urlObj.searchParams.get('channelId') ?? urlObj.searchParams.get('cid') ?? undefined;
-
-                return `/iresearch/report/4${id ? `/${id}` : ''}`;
-            },
+            target: '/report/4',
         },
         {
             title: '周度市场观察',
             source: ['www.iresearch.com.cn/report.shtml'],
-            target: (_, url) => {
-                const urlObj: URL = new URL(url);
-                const id: string | undefined = urlObj.searchParams.get('classId') ?? urlObj.searchParams.get('channelId') ?? urlObj.searchParams.get('cid') ?? undefined;
-
-                return `/iresearch/report/3${id ? `/${id}` : ''}`;
-            },
+            target: '/report/3',
         },
         {
             title: '热门报告',
             source: ['www.iresearch.com.cn/report.shtml'],
-            target: (_, url) => {
-                const urlObj: URL = new URL(url);
-                const id: string | undefined = urlObj.searchParams.get('classId') ?? urlObj.searchParams.get('channelId') ?? urlObj.searchParams.get('cid') ?? undefined;
-
-                return `/iresearch/report/2${id ? `/${id}` : ''}`;
-            },
+            target: '/report/2',
         },
         {
             title: '周度市场观察 - 家电行业',

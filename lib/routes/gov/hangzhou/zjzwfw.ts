@@ -1,34 +1,32 @@
-import logger from '@/utils/logger';
+import type { Page } from '@/utils/playwright';
 
-export async function crawler(item: any, browser: any): Promise<string> {
+export async function crawler(item: any, context: any): Promise<string> {
+    let page: Page | undefined;
     try {
         let response = '';
-        const page = await browser.newPage();
-        await page.setRequestInterception(true);
-        page.on('request', (request) => {
+        const currentPage: Page = await context.newPage();
+        page = currentPage;
+        await currentPage.route('**/*', (route) => {
+            const request = route.request();
             const resourceType = request.resourceType();
-            if (['document', 'script', 'stylesheet', 'xhr'].includes(resourceType)) {
-                request.continue();
-            } else {
-                request.abort();
-            }
+            return ['document', 'script', 'stylesheet', 'xhr'].includes(resourceType) ? route.continue() : route.abort();
         });
-        await page.goto(item.link, {
-            waitUntil: 'networkidle0',
+        await currentPage.goto(item.link, {
+            waitUntil: 'networkidle',
             timeout: 29000,
         });
         const selector = '.item-left .item .title .button';
-        await page.evaluate((selector) => document.querySelector(selector).click(), selector);
-        await page.waitForSelector('.item-left .item .bg_box div:nth-child(16)', { timeout: 5000 });
-        response = await page.content();
+        await currentPage.waitForSelector(selector, { timeout: 5000 });
+        await currentPage.evaluate((selector) => document.querySelector<HTMLElement>(selector)!.click(), selector);
+        await currentPage.waitForSelector('.item-left .item .bg_box div:nth-child(16)', { timeout: 5000 });
+        response = await currentPage.content();
         return response || '';
-    } catch (error) {
-        logger.error('Error when visiting /gov/hangzhou/zwfw:', error);
-        return '';
+    } finally {
+        await page?.close();
     }
 }
 
-export function analyzer(box: any): object {
+export function analyzer(box: any) {
     return {
         serviceInfo: {
             serviceTarget: box.find('.row:nth(1)>div:nth(1)').find('.inner').children().first().attr('content'),

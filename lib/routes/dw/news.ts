@@ -1,5 +1,5 @@
 import { config } from '@/config';
-import type { Route } from '@/types';
+import type { DataItem, Language, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 
@@ -24,12 +24,10 @@ export const route: Route = {
     name: 'News',
     maintainers: ['quiniapiezoelectricity'],
     handler,
-    description: `
-::: tip
+    description: `::: tip
 Parameters can be obtained from the official website, for instance:
-For the site https://www.dw.com/de/deutschland/s-12321 the language code would be \`de\` and the category ID would be \`s-1432\`.
-:::
-`,
+For the site <https://www.dw.com/de/deutschland/s-12321> the language code would be \`de\` and the category ID would be \`s-1432\`.
+:::`,
     radar: [
         {
             source: ['www.dw.com/:lang/:name/:id'],
@@ -38,7 +36,7 @@ For the site https://www.dw.com/de/deutschland/s-12321 the language code would b
     ],
 };
 
-const defaultUrl = `https://www.dw.com/graph-api/en/content/navigation/9097`;
+const defaultUrl = 'https://www.dw.com/graph-api/en/content/navigation/9097';
 const typenames = new Set(['Article', 'Liveblog', 'Video']);
 
 async function handler(ctx) {
@@ -68,13 +66,16 @@ async function handler(ctx) {
     const feed = response.data.data.content;
     cache.set('dw:navigation', feed.topStoriesNavigations, config.cache.routeExpire);
 
-    const list = feed.contentComposition.informationSpaces.flatMap((section) => Object.values(section).flatMap((component) => component[0]?.contents || [])).filter((item) => typenames.has(item.__typename) && item.id);
+    const list: Array<DataItem & { id: string | number; __typename: string; namedUrl: string; contentDate: string; teaser: string; type: string }> = feed.contentComposition.informationSpaces
+        .flatMap((section) => Object.values<any>(section).flatMap((component) => component[0]?.contents || []))
+        .filter((item) => typenames.has(item.__typename) && item.id);
+    const uniqueList = new Map(list.map((item) => [item.id, item])).values().toArray();
     const items = await processItems(
-        list.map((item) => {
+        uniqueList.map((item) => {
             item.link = new URL(item.namedUrl, 'https://www.dw.com').href;
             item.pubDate = item.contentDate;
             item.description = item.teaser;
-            item.language = lang;
+            item.language = lang as Language;
             item.type = item.__typename.toLowerCase();
             return item;
         })

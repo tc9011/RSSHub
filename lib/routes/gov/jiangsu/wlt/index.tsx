@@ -1,16 +1,18 @@
 import { load } from 'cheerio';
 import { renderToString } from 'hono/jsx/dom/server';
 
-import type { Route } from '@/types';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import timezone from '@/utils/timezone';
 
 export const route: Route = {
-    path: '/jiangsu/wlt/:page?',
+    path: '/wlt/:page?',
     categories: ['government'],
     example: '/gov/jiangsu/wlt',
-    parameters: { page: '页数，默认第 1 页' },
+    parameters: { page: '旧页数参数，仅支持第 1 页；可省略' },
     features: {
         requireConfig: false,
         requirePuppeteer: false,
@@ -22,10 +24,10 @@ export const route: Route = {
     radar: [
         {
             source: ['wlt.jiangsu.gov.cn/'],
-            target: '/jiangsu/wlt',
+            target: '/wlt',
         },
     ],
-    name: '江苏文旅局审批公告',
+    name: '文旅局审批公告',
     maintainers: ['GideonSenku'],
     handler,
     url: 'wlt.jiangsu.gov.cn/',
@@ -34,10 +36,13 @@ export const route: Route = {
 async function handler(ctx) {
     const baseUrl = 'http://58.213.82.179:18080/jsswlt_sgs/front';
     const currentUrl = `${baseUrl}/list.do`;
-    const page = ctx.req.param('page') ?? 1;
+    const page = ctx.req.param('page');
+    if (page && page !== '1') {
+        throw new InvalidParameterError('Only the first page is supported. Omit page or use 1.');
+    }
     const searchParams = {
         type: 0,
-        pageNo0: page,
+        pageNo0: 1,
     };
     const response = await got({
         method: 'get',
@@ -48,14 +53,13 @@ async function handler(ctx) {
     const $ = load(response.data);
     const list = $('.tg_tb1')
         .toArray()
-        .map((item) => {
+        .map((item): DataItem & { link: string } => {
             const i = $(item);
-            const id = i.prop('onclick').match(/openDetail\('(\d+)'\)/)?.[1] || '';
+            const id = i.prop('onclick')?.match(/openDetail\('(\d+)'\)/)?.[1] || '';
             return {
                 title: i.text(),
                 link: id ? `${baseUrl}/detail.do?iid=${id}` : '',
                 description: '',
-                pubDate: '',
             };
         })
         .filter((e) => e.link);
@@ -75,8 +79,6 @@ async function handler(ctx) {
 
                 item.description = renderToString(
                     <>
-                        <text>许可日期：{dateText} </text>
-                        <br />
                         <text>行政名称：{hostingUnit} </text>
                         <br />
                         <text>许可编号：{licenseNumber} </text>
@@ -86,7 +88,7 @@ async function handler(ctx) {
                         <text>许可内容：{performanceContent} </text>
                     </>
                 );
-                item.pubDate = parseDate(dateText);
+                item.pubDate = dateText ? timezone(parseDate(dateText), 8) : undefined;
 
                 return item;
             })

@@ -1,9 +1,12 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
+import { parseDate } from '@/utils/parse-date';
+import timezone from '@/utils/timezone';
 
 export const route: Route = {
     path: '/group/:groupid/:type?',
@@ -45,7 +48,7 @@ export const route: Route = {
             target: '/group/:groupid',
         },
     ],
-    name: '豆瓣小组',
+    name: '小组',
     maintainers: ['DIYgod'],
     handler,
 };
@@ -63,30 +66,29 @@ async function handler(ctx) {
     const $ = load(response.data);
     const list = $('.olt tr:not(.th)').slice(0, 30).toArray();
 
-    const items = await Promise.all(
-        list.map((item) => {
+    const items = await pMap(
+        list,
+        (item) => {
             const $1 = $(item);
-            const result = {
-                title: $1.find('.title a').attr('title'),
+            const result: DataItem = {
+                title: $1.find('.title a').attr('title')!,
                 author: $1.find('a').eq(1).text(),
                 link: $1.find('.title a').attr('href'),
             };
-            return cache.tryGet(result.link, async () => {
-                try {
-                    const detailResponse = await got({
-                        method: 'get',
-                        url: result.link,
-                    });
-                    const $ = load(detailResponse.data);
+            return cache.tryGet(result.link!, async () => {
+                const detailResponse = await got({
+                    method: 'get',
+                    url: result.link,
+                });
+                const $ = load(detailResponse.data);
 
-                    result.pubDate = $('.create-time').text();
-                    result.description = $('.rich-content').html();
-                    return result;
-                } catch {
-                    return result;
-                }
+                const date = $('.create-time').text();
+                result.pubDate = date ? timezone(parseDate(date), 8) : undefined;
+                result.description = $('.rich-content').html();
+                return result;
             });
-        })
+        },
+        { concurrency: 3 }
     );
 
     return {

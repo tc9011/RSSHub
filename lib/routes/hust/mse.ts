@@ -1,44 +1,47 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { DataItem, Language, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
+import timezone from '@/utils/timezone';
 
 export const handler = async (ctx) => {
     const { category = 'sylm/xyxw' } = ctx.req.param();
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 11;
+    const limit = getRouteLimit(ctx, 11);
 
     const domain = 'mse.hust.edu.cn';
     const rootUrl = `https://${domain}`;
-    const currentUrl = new URL(`${category}.htm`, rootUrl).href;
+    const currentUrl = `${rootUrl}/${category}.htm`;
 
     const { data: response } = await got(currentUrl);
 
     const $ = load(response);
 
-    const language = $('html').prop('lang');
+    const language = $('html').prop('lang') as Language;
 
     let items = $('div.list ul li')
         .slice(0, limit)
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem => {
+            const $item = $(item);
 
-            const a = item.find('a');
+            const a = $item.find('a');
+            const pubDate = parseDate($item.find('span.time').text().trim(), 'YYYY-MM-DD', true);
 
             return {
                 title: a.text(),
-                pubDate: parseDate(item.find('span.time').text()),
-                link: new URL(a.prop('href'), currentUrl).href,
+                pubDate: Number.isFinite(pubDate.getTime()) ? timezone(pubDate, 8) : undefined,
+                link: new URL(a.prop('href')!, currentUrl).href,
                 language,
             };
         });
 
     items = await Promise.all(
         items.map((item) =>
-            cache.tryGet(item.link, async () => {
-                if (!item.link.includes(domain)) {
+            cache.tryGet(item.link!, async () => {
+                if (!item.link!.includes(domain)) {
                     return item;
                 }
 
@@ -53,11 +56,12 @@ export const handler = async (ctx) => {
                     const data = $$(d).text();
 
                     if (!item.pubDate && data.startsWith('发布')) {
-                        const pubDate = data.split(/：/)?.pop();
-                        item.pubDate = pubDate ? parseDate(pubDate) : item.pubDate;
-                    } else if (!item.author && data.startsWith('作者')) {
-                        item.author = data.split(/：/)?.pop() ?? undefined;
-                    } else if (!item.author && data.startsWith('编辑')) {
+                        const date = data.split(/：/)?.pop()?.trim();
+                        const pubDate = date ? parseDate(date, ['YYYY-MM-DD', 'YYYY-MM-DD HH:mm:ss', 'YYYY-MM-DD HH:mm'], true) : undefined;
+                        if (pubDate && Number.isFinite(pubDate.getTime())) {
+                            item.pubDate = timezone(pubDate, 8);
+                        }
+                    } else if (!item.author && (data.startsWith('作者') || data.startsWith('编辑'))) {
                         item.author = data.split(/：/)?.pop() ?? undefined;
                     }
                 }
@@ -76,16 +80,15 @@ export const handler = async (ctx) => {
     );
 
     const title = $('meta[name="keywords"]').prop('content')?.replaceAll(',', ' - ') ?? $('title').text();
-    const image = new URL($('div.logo img').prop('src'), rootUrl).href;
+    const image = new URL($('div.logo img').prop('src')!, rootUrl).href;
 
     return {
         title,
         description: title.split(/-/).pop()?.trim(),
         link: currentUrl,
         item: items,
-        allowEmpty: true,
         image,
-        author: title.split(/-/)[0]?.trim(),
+        author: title.split(/-/, 1)[0]?.trim(),
         language,
     };
 };
@@ -99,7 +102,7 @@ export const route: Route = {
     example: '/hust/mse/sylm/xyxw',
     parameters: { category: '分类，默认为 `sylm/xyxw`，即学院新闻，可在对应分类页 URL 中找到' },
     description: `::: tip
-  若订阅 [通知公告](https://mse.hust.edu.cn/sylm/tzgg.htm)，网址为 \`https://mse.hust.edu.cn/sylm/tzgg.htm\`。截取 \`https://mse.hust.edu.cn/\` 到末尾 \`.html\` 的部分 \`sylm/tzgg\` 作为参数填入，此时路由为 [\`/hust/mse/sylm/tzgg\`](https://rsshub.app/hust/mse/sylm/tzgg)。
+若订阅 [通知公告](https://mse.hust.edu.cn/sylm/tzgg.htm)，网址为 \`https://mse.hust.edu.cn/sylm/tzgg.htm\`。截取 \`https://mse.hust.edu.cn/\` 到末尾 \`.html\` 的部分 \`sylm/tzgg\` 作为参数填入，此时路由为 [\`/hust/mse/sylm/tzgg\`](https://rsshub.app/hust/mse/sylm/tzgg)。
 :::
 
 #### [首页栏目](https://mse.hust.edu.cn/xyxw.htm)
@@ -108,9 +111,9 @@ export const route: Route = {
 | -------------------------------------------- | -------------------------------------------- | -------------------------------------------- | -------------------------------------------- |
 | [xyxw](https://rsshub.app/hust/mse/xyxw)     | [tzgg](https://rsshub.app/hust/mse/tzgg)     | [zszp](https://rsshub.app/hust/mse/zszp)     | [mtjj](https://rsshub.app/hust/mse/mtjj)     |
 
-| [期刊动态](https://mse.hust.edu.cn/qkdt.htm) | [学术活动](https://mse.hust.edu.cn/xshd.htm) | [师生天地](https://mse.hust.edu.cn/sstd.htm) | [STAR风采](https://mse.hust.edu.cn/STARfc.htm) |
-| -------------------------------------------- | -------------------------------------------- | -------------------------------------------- | ---------------------------------------------- |
-| [qkdt](https://rsshub.app/hust/mse/qkdt)     | [xshd](https://rsshub.app/hust/mse/xshd)     | [sstd](https://rsshub.app/hust/mse/sstd)     | [STARfc](https://rsshub.app/hust/mse/STARfc)   |
+| [期刊动态](https://mse.hust.edu.cn/qkdt.htm) | [学术活动](https://mse.hust.edu.cn/xshd.htm) | [师生天地](https://mse.hust.edu.cn/sstd.htm) | [STAR 风采](https://mse.hust.edu.cn/STARfc.htm) |
+| -------------------------------------------- | -------------------------------------------- | -------------------------------------------- | ----------------------------------------------- |
+| [qkdt](https://rsshub.app/hust/mse/qkdt)     | [xshd](https://rsshub.app/hust/mse/xshd)     | [sstd](https://rsshub.app/hust/mse/sstd)     | [STARfc](https://rsshub.app/hust/mse/STARfc)    |
 
 <details>
 <summary>更多分类</summary>
@@ -129,9 +132,9 @@ export const route: Route = {
 
 #### [人才培养](https://mse.hust.edu.cn/rcpy.htm)
 
-| [本科生教育](https://mse.hust.edu.cn/rcpy/bksjy.htm) | [研究生教育](https://mse.hust.edu.cn/rcpy/yjsjy.htm) | [学生工作](https://mse.hust.edu.cn/rcpy/xsg_z.htm)   | [机械创新基地](https://mse.hust.edu.cn/rcpy/jxcxjd.htm) | [常用下载](https://mse.hust.edu.cn/rcpy/cyxz.htm)  |
-| ---------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------- |
-| [rcpy/bksjy](https://rsshub.app/hust/mse/rcpy/bksjy) | [rcpy/yjsjy](https://rsshub.app/hust/mse/rcpy/yjsjy) | [rcpy/xsg_z](https://rsshub.app/hust/mse/rcpy/xsg_z) | [rcpy/jxcxjd](https://rsshub.app/hust/mse/rcpy/jxcxjd)  | [rcpy/cyxz](https://rsshub.app/hust/mse/rcpy/cyxz) |
+| [本科生教育](https://mse.hust.edu.cn/rcpy/bksjy.htm) | [研究生教育](https://mse.hust.edu.cn/rcpy/yjsjy.htm) | [学生工作](https://mse.hust.edu.cn/rcpy/xsg_z.htm)    | [机械创新基地](https://mse.hust.edu.cn/rcpy/jxcxjd.htm) | [常用下载](https://mse.hust.edu.cn/rcpy/cyxz.htm)  |
+| ---------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------- |
+| [rcpy/bksjy](https://rsshub.app/hust/mse/rcpy/bksjy) | [rcpy/yjsjy](https://rsshub.app/hust/mse/rcpy/yjsjy) | [rcpy/xsg\\_z](https://rsshub.app/hust/mse/rcpy/xsg_z) | [rcpy/jxcxjd](https://rsshub.app/hust/mse/rcpy/jxcxjd)  | [rcpy/cyxz](https://rsshub.app/hust/mse/rcpy/cyxz) |
 
 #### [科学研究](https://mse.hust.edu.cn/kxyj.htm)
 
@@ -171,9 +174,9 @@ export const route: Route = {
 
 #### [人才培养](https://mse.hust.edu.cn/sylm/xyxw.htm#)
 
-| [本科生教育](https://mse.hust.edu.cn/rcpy/bksjy.htm) | [研究生教育](https://mse.hust.edu.cn/rcpy/yjsjy.htm) | [学生工作](https://mse.hust.edu.cn/rcpy/xsg_z.htm)   | [机械创新基地](https://mse.hust.edu.cn/rcpy/jxcxjd.htm) | [常用下载](https://mse.hust.edu.cn/rcpy/cyxz.htm)  |
-| ---------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------- |
-| [rcpy/bksjy](https://rsshub.app/hust/mse/rcpy/bksjy) | [rcpy/yjsjy](https://rsshub.app/hust/mse/rcpy/yjsjy) | [rcpy/xsg_z](https://rsshub.app/hust/mse/rcpy/xsg_z) | [rcpy/jxcxjd](https://rsshub.app/hust/mse/rcpy/jxcxjd)  | [rcpy/cyxz](https://rsshub.app/hust/mse/rcpy/cyxz) |
+| [本科生教育](https://mse.hust.edu.cn/rcpy/bksjy.htm) | [研究生教育](https://mse.hust.edu.cn/rcpy/yjsjy.htm) | [学生工作](https://mse.hust.edu.cn/rcpy/xsg_z.htm)    | [机械创新基地](https://mse.hust.edu.cn/rcpy/jxcxjd.htm) | [常用下载](https://mse.hust.edu.cn/rcpy/cyxz.htm)  |
+| ---------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------- |
+| [rcpy/bksjy](https://rsshub.app/hust/mse/rcpy/bksjy) | [rcpy/yjsjy](https://rsshub.app/hust/mse/rcpy/yjsjy) | [rcpy/xsg\\_z](https://rsshub.app/hust/mse/rcpy/xsg_z) | [rcpy/jxcxjd](https://rsshub.app/hust/mse/rcpy/jxcxjd)  | [rcpy/cyxz](https://rsshub.app/hust/mse/rcpy/cyxz) |
 
 #### [科学研究](https://mse.hust.edu.cn/sylm/xyxw.htm#)
 
@@ -199,8 +202,7 @@ export const route: Route = {
 | -------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------- | -------------------------------------------------- |
 | [xyzl/xydt](https://rsshub.app/hust/mse/xyzl/xydt) | [xyzl/jcxy](https://rsshub.app/hust/mse/xyzl/jcxy) | [xyzl/xyml](https://rsshub.app/hust/mse/xyzl/xyml) | [xyzl/xyzp](https://rsshub.app/hust/mse/xyzl/xyzp) | [xyzl/fwxy](https://rsshub.app/hust/mse/xyzl/fwxy) | [xyzl/cyxz](https://rsshub.app/hust/mse/xyzl/cyxz) |
 
-</details>
-    `,
+</details>`,
     categories: ['university'],
 
     features: {
@@ -214,12 +216,8 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['mse.hust.edu.cn/:category?'],
-            target: (params) => {
-                const category = params.category;
-
-                return `/hust/mse${category ? `/${category}` : ''}`;
-            },
+            source: ['mse.hust.edu.cn/', 'mse.hust.edu.cn/sylm/xyxw.htm'],
+            target: '/mse/sylm/xyxw',
         },
         {
             title: '首页栏目 - 学院新闻',

@@ -3,29 +3,28 @@ import { load } from 'cheerio';
 import type { Element } from 'domhandler';
 import type { Context } from 'hono';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 export const handler = async (ctx: Context): Promise<Data> => {
     const { category } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '30', 10);
+    const limit = getRouteLimit(ctx, 30);
 
     const baseUrl = 'https://bullionvault.com';
     const targetUrl: string = new URL(`gold-news${category ? `/${category}` : ''}`, baseUrl).href;
 
     const response = await ofetch(targetUrl);
     const $: CheerioAPI = load(response);
-    const language = $('html').attr('lang') ?? 'en';
+    const language = ($('html').attr('lang') ?? 'en') as Language;
 
-    let items: DataItem[] = [];
-
-    items = $('section#block-bootstrap-views-block-latest-articles-block div.media, div.gold-news-content table tr')
+    let items: DataItem[] = $('section#block-bootstrap-views-block-latest-articles-block div.media, div.gold-news-content table tr')
         .slice(0, limit)
         .toArray()
-        .map((el): Element => {
+        .map((el) => {
             const $el: Cheerio<Element> = $(el);
             const $aEl: Cheerio<Element> = $el.find('td.views-field-title a, div.views-field-title a').first();
 
@@ -42,14 +41,12 @@ export const handler = async (ctx: Context): Promise<Data> => {
                     avatar: undefined,
                 };
             });
-            const upDatedStr: string | undefined = pubDateStr;
 
             const processedItem: DataItem = {
                 title,
                 pubDate: pubDateStr ? parseDate(pubDateStr) : undefined,
                 link: linkUrl,
                 author: authors,
-                updated: upDatedStr ? parseDate(upDatedStr) : undefined,
                 language,
             };
 
@@ -64,11 +61,21 @@ export const handler = async (ctx: Context): Promise<Data> => {
                 }
 
                 return cache.tryGet(item.link, async (): Promise<DataItem> => {
-                    const detailResponse = await ofetch(item.link);
+                    const detailResponse = await ofetch(item.link!);
                     const $$: CheerioAPI = load(detailResponse);
+                    const metadata = $$('script[type="application/ld+json"]')
+                        .toArray()
+                        .map((el) => {
+                            try {
+                                return JSON.parse($$(el).text());
+                            } catch {
+                                return;
+                            }
+                        })
+                        .find((entry) => entry?.['@type'] === 'NewsArticle');
 
                     const title: string = $$('article.article h1').text();
-                    const description: string | undefined = $$('div.content').html() ?? '';
+                    const description = $$('div.content').html();
                     const pubDateStr: string | undefined = $$('div.submitted').text().split(/,/).pop();
                     const categories: string[] = $$('meta[name="news_keywords"]').attr('content')?.split(/,/) ?? [];
                     const authorEls: Element[] = $$('div.view-author-bio').toArray();
@@ -81,19 +88,18 @@ export const handler = async (ctx: Context): Promise<Data> => {
                             avatar: $$authorEl.find('img').attr('src'),
                         };
                     });
-                    const upDatedStr: string | undefined = pubDateStr;
 
                     const processedItem: DataItem = {
                         title,
                         description,
-                        pubDate: pubDateStr ? parseDate(pubDateStr) : item.pubDate,
+                        pubDate: metadata?.datePublished ? parseDate(metadata.datePublished) : pubDateStr ? parseDate(pubDateStr) : item.pubDate,
                         category: categories,
                         author: authors,
                         content: {
                             html: description,
                             text: description,
                         },
-                        updated: upDatedStr ? parseDate(upDatedStr) : item.updated,
+                        updated: metadata?.dateModified ? parseDate(metadata.dateModified) : undefined,
                         language,
                     };
 
@@ -172,8 +178,7 @@ If you subscribe to [Gold Price News](https://www.bullionvault.com/gold-news/gol
 | [Investment News](https://www.bullionvault.com/gold-news/news)                    | [news](https://rsshub.app/bullionvault/gold-news/news)                               |
 | [Gold Investor Index](https://www.bullionvault.com/gold-news/gold-investor-index) | [gold-investor-index](https://rsshub.app/bullionvault/gold-news/gold-investor-index) |
 | [Gold Infographics](https://www.bullionvault.com/gold-news/infographics)          | [infographics](https://rsshub.app/bullionvault/gold-news/infographics)               |
-| [Market Fundamentals](https://www.bullionvault.com/gold-news/market-fundamentals) | [market-fundamentals](https://rsshub.app/bullionvault/gold-news/market-fundamentals) |
-`,
+| [Market Fundamentals](https://www.bullionvault.com/gold-news/market-fundamentals) | [market-fundamentals](https://rsshub.app/bullionvault/gold-news/market-fundamentals) |`,
     categories: ['finance'],
     features: {
         requireConfig: false,

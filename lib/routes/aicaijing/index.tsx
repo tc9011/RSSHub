@@ -2,18 +2,28 @@ import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
 
 import type { Route } from '@/types';
+import { getSubPath } from '@/utils/common-utils';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 export const route: Route = {
-    path: '/:category?/:id?',
-    name: 'Unknown',
-    maintainers: [],
+    path: '/latest',
+    categories: ['finance'],
+    example: '/aicaijing/latest',
+    radar: [
+        {
+            source: ['www.aicaijing.com/'],
+            target: '/latest',
+        },
+    ],
+    name: '最新文章',
+    maintainers: ['nczitzk'],
     handler,
 };
 
-async function handler(ctx) {
-    const category = ctx.req.param('category') ?? 'latest';
+export async function handler(ctx) {
+    const category = getSubPath(ctx).split('/', 2)[1];
     const id = ctx.req.param('id') ?? 14;
 
     const titles = {
@@ -55,7 +65,7 @@ async function handler(ctx) {
 
     const rootUrl = 'https://www.aicaijing.com.cn';
     const apiRootUrl = 'https://api.aicaijing.com.cn';
-    const apiUrl = `${apiRootUrl}/article/detail/list?size=${ctx.req.query('limit') ?? 50}&page=1${categories[category].url}`;
+    const apiUrl = `${apiRootUrl}/article/detail/list?size=${getRouteLimit(ctx, 50)}&page=1&platform=1${categories[category].url}`;
 
     const response = await got({
         method: 'get',
@@ -65,7 +75,7 @@ async function handler(ctx) {
     const items = response.data.data.items.map((item) => ({
         title: item.title,
         link: `${rootUrl}/article/${item.articleId}`,
-        author: item.userInfo.nickname,
+        author: item.userInfo?.nickname,
         pubDate: parseDate(item.createTime),
         category: [item.category.name, ...item.tags.map((t) => t.name)],
         description: renderToString(

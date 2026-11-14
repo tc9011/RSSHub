@@ -2,12 +2,12 @@ import { load } from 'cheerio';
 import dayjs from 'dayjs';
 import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
+import pMap from 'p-map';
 
 import type { Data, DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
 
 import type { ArticleDetailResponse, ArticleListResponse, DateListResponse, SectionListResponse } from './types';
 
@@ -33,17 +33,17 @@ export const route: Route = {
     ],
 };
 
-async function handler() {
+async function handler(): Promise<Data> {
     const dateListResponse = await ofetch<DateListResponse>(`${API_HOST}/uv/article/period/date`, {
         method: 'POST',
         body: {
             code: CODE,
-            date: dayjs(new Date(), 'YYYY-MM-01'),
+            date: dayjs().format('YYYY-MM-01'),
         },
         headers: { 'X-Requested-With': 'XMLHttpRequest' },
     });
 
-    const lastDate = dateListResponse.obj.dateList.toSorted().at(-1);
+    const lastDate = dateListResponse.obj.dateList.toSorted((a, b) => a.localeCompare(b)).at(-1);
 
     const sectionListResponse = await ofetch<SectionListResponse>(`${API_HOST}/uv/article/period/periodTime`, {
         method: 'POST',
@@ -55,9 +55,10 @@ async function handler() {
         headers: { 'X-Requested-With': 'XMLHttpRequest' },
     });
 
-    const items = await Promise.all(
-        sectionListResponse.obj.editionList.map((section) =>
-            cache.tryGet(`stdaily:epaper:${section.id}`, async () => {
+    const items = await pMap(
+        sectionListResponse.obj.editionList,
+        (section) =>
+            cache.tryGet(`stdaily:epaper:v2:${section.id}`, async () => {
                 const { list } = await ofetch<ArticleListResponse>(`${API_HOST}/uv/article/article/editionId`, {
                     method: 'POST',
                     body: {
@@ -67,47 +68,47 @@ async function handler() {
                     headers: { 'X-Requested-With': 'XMLHttpRequest' },
                 });
 
-                return await Promise.all(
-                    list.map(
-                        async (article) =>
-                            await cache.tryGet(`stddaily:epaper:article:${article.id}`, async () => {
-                                const {
-                                    obj: { articleVo },
-                                } = await ofetch<ArticleDetailResponse>(`${API_HOST}/uv/article/article/articleId`, {
-                                    method: 'POST',
-                                    body: {
-                                        code: CODE,
-                                        id: article.id,
-                                        siteId: SITE_ID,
-                                    },
-                                    headers: { 'X-Requested-With': 'XMLHttpRequest' },
-                                });
+                return await pMap(
+                    list,
+                    async (article) =>
+                        await cache.tryGet(`stdaily:epaper:article:v2:${article.id}`, async (): Promise<DataItem> => {
+                            const {
+                                obj: { articleVo },
+                            } = await ofetch<ArticleDetailResponse>(`${API_HOST}/uv/article/article/articleId`, {
+                                method: 'POST',
+                                body: {
+                                    code: CODE,
+                                    id: article.id,
+                                    siteId: SITE_ID,
+                                },
+                                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                            });
 
-                                return {
-                                    title: `${articleVo.editionName.match(/：(.*)/)?.[1]} - ${load(articleVo.title).text()}`,
-                                    description: renderToString(
-                                        <>
-                                            {articleVo.subtitle ? <h3>{articleVo.subtitle}</h3> : null}
-                                            {articleVo.picList?.length
-                                                ? articleVo.picList.map((pic) => (
-                                                      <div>
-                                                          <img src={pic.url} />
-                                                          {pic.picText ? <p>{pic.picText}</p> : null}
-                                                      </div>
-                                                  ))
-                                                : null}
-                                            {articleVo.content ? raw(articleVo.content) : null}
-                                        </>
-                                    ),
-                                    pubDate: timezone(parseDate(articleVo.periodTime), +8),
-                                    author: articleVo.author,
-                                    link: `https://epaper.stdaily.com/statics/technology-site/index.html#/home?isDetail=1&currentNewsId=${article.id}&currentVersionName=${articleVo.editionName}&currentVersion=${Number(section.editionCode)}&timeValue=${articleVo.periodTime}`,
-                                } as DataItem;
-                            })
-                    )
+                            return {
+                                title: `${articleVo.editionName.match(/：(.*)/)?.[1]} - ${load(articleVo.title).text()}`,
+                                description: renderToString(
+                                    <>
+                                        {articleVo.subtitle ? <h3>{articleVo.subtitle}</h3> : null}
+                                        {articleVo.picList?.length
+                                            ? articleVo.picList.map((pic) => (
+                                                  <div>
+                                                      <img src={pic.url} />
+                                                      {pic.picText ? <p>{pic.picText}</p> : null}
+                                                  </div>
+                                              ))
+                                            : null}
+                                        {articleVo.content ? raw(articleVo.content) : null}
+                                    </>
+                                ),
+                                pubDate: articleVo.periodTime ? parseDate(`${articleVo.periodTime}T00:00:00Z`) : undefined,
+                                author: articleVo.author,
+                                link: `https://epaper.stdaily.com/statics/technology-site/index.html#/home?isDetail=1&currentNewsId=${article.id}&currentVersionName=${articleVo.editionName}&currentVersion=${Number(section.editionCode)}&timeValue=${articleVo.periodTime}`,
+                            };
+                        }),
+                    { concurrency: 3 }
                 );
-            })
-        )
+            }),
+        { concurrency: 1 }
     );
 
     return {
@@ -115,5 +116,5 @@ async function handler() {
         link: 'https://epaper.stdaily.com',
         item: items.flat(),
         image: 'https://www.stdaily.com/favicon.ico',
-    } as Data;
+    };
 }

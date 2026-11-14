@@ -2,11 +2,11 @@ import { load } from 'cheerio';
 import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
-import { getSubPath } from '@/utils/common-utils';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
 type Attachment = {
@@ -40,18 +40,26 @@ const renderDescription = ({ description, attachments }: DescriptionProps): stri
     );
 
 export const route: Route = {
-    path: '/stats/*',
-    name: '国家统计局 通用',
+    path: '/:path{.+}?',
+    name: '通用',
     url: 'www.stats.gov.cn',
     categories: ['government'],
     maintainers: ['bigfei', 'nczitzk', 'reply2future'],
     example: '/gov/stats/sj/zxfb',
+    parameters: { path: '路径，默认为 统计数据 > 最新发布' },
     handler,
     radar: [
         {
-            title: '国家统计局 通用',
-            source: ['www.stats.gov.cn/*path'],
-            target: '/gov/stats/*path',
+            source: ['www.stats.gov.cn/sj/zxfb/'],
+            target: '/sj/zxfb',
+        },
+        {
+            source: ['www.stats.gov.cn/sj/sjjd/'],
+            target: '/sj/sjjd',
+        },
+        {
+            source: ['www.stats.gov.cn/xw/szyw/zyjs/'],
+            target: '/xw/szyw/zyjs',
         },
     ],
     description: `::: tip
@@ -67,17 +75,23 @@ export const route: Route = {
 :::`,
 };
 
+function parsePublicationDate(date: string) {
+    const pubDate = date ? timezone(parseDate(date, ['YYYY/MM/DD HH:mm:ss', 'YYYY/MM/DD HH:mm', 'YYYY-MM-DD HH:mm:ss', 'YYYY-MM-DD HH:mm', 'YYYY/MM/DD', 'YYYY-MM-DD'], true), 8) : undefined;
+    return pubDate && Number.isFinite(pubDate.getTime()) ? pubDate : undefined;
+}
+
 async function handler(ctx) {
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit')) : 15;
+    const limit = getRouteLimit(ctx, 15);
     const rootUrl = 'http://www.stats.gov.cn';
 
     const { headers } = await ofetch.raw(rootUrl);
     const sid = headers
         ?.getSetCookie()
         .find((s) => s.startsWith('wzws_sessionid='))
-        ?.split(';')[0] as string;
+        ?.split(';', 1)[0] as string;
 
-    const pathname = getSubPath(ctx) === '/stats' ? '/sj/zxfb/' : getSubPath(ctx).replace(/^\/stats(.*)/, '$1');
+    const { path = 'sj/zxfb' } = ctx.req.param();
+    const pathname = `/${path}`;
     const currentUrl = `${rootUrl}${pathname.endsWith('/') ? pathname : pathname + '/'}`;
 
     const response = await ofetch(currentUrl, {
@@ -90,21 +104,21 @@ async function handler(ctx) {
     const $ = load(response);
 
     let items = $($('a.pchide').length === 0 ? 'a[title]' : '.list-content a.pchide')
-        .slice(0, limit)
+        .slice(0, ctx.req.query('sorted') === 'false' ? limit : Math.max(15, limit))
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem => {
+            const $item = $(item);
 
             return {
-                title: item.attr('title'),
-                link: new URL(item.attr('href'), currentUrl).href,
+                title: $item.attr('title')!,
+                link: new URL($item.attr('href')!, currentUrl).href,
             };
         });
 
     items = await Promise.all(
         items.map((item) =>
-            cache.tryGet(item.link, async () => {
-                const detailResponse = await ofetch(item.link, {
+            cache.tryGet(item.link!, async () => {
+                const detailResponse = await ofetch(item.link!, {
                     headers: {
                         Cookie: sid,
                         Referer: rootUrl,
@@ -115,9 +129,9 @@ async function handler(ctx) {
 
                 // articles from www.news.cn or www.gov.cn
 
-                if (/(news\.cn|www\.gov\.cn)/.test(item.link)) {
+                if (/news\.cn|www\.gov\.cn/.test(item.link!)) {
                     if (content('.year').text()) {
-                        item.pubDate = timezone(parseDate(`${content('.year').text()}/${content('.day').text()} ${content('.time').text()}`, 'YYYY/MM/DD HH:mm:ss'), +8);
+                        item.pubDate = parsePublicationDate(`${content('.year').text()}/${content('.day').text()} ${content('.time').text()}`);
                         item.author = content('.source')
                             .text()
                             .replace(/来源：/, '')
@@ -126,11 +140,11 @@ async function handler(ctx) {
                         content('.pages_print').remove();
 
                         const info = content('.info, .pages-date').text().split('来源：');
-                        item.pubDate = timezone(parseDate(info[0].trim()), +8);
+                        item.pubDate = parsePublicationDate(info[0].trim());
                         item.author = info.pop();
                     }
 
-                    item.title = item.title || content('h1').first().text() || content('h2').first().text();
+                    item.title ||= content('h1').first().text() || content('h2').first().text();
                     item.description = content('#detail, .xlcontent, .pages_content').html();
 
                     return item;
@@ -140,17 +154,17 @@ async function handler(ctx) {
 
                 content('.pchide').remove();
 
-                item.title = item.title || content('div.detail-title h1').text();
-                item.pubDate = timezone(parseDate(content('div.detail-title-des h2 p, .info').first().text().trim()), +8);
+                item.title ||= content('div.detail-title h1').text();
+                item.pubDate = parsePublicationDate(content('div.detail-title-des h2 p, .info').first().text().trim());
                 item.description = renderDescription({
-                    description: content('.TRS_Editor').html() || content('.TRS_UEDITOR').html(),
+                    description: (content('.TRS_Editor').html() || content('.TRS_UEDITOR').html()) ?? undefined,
                     attachments: content('a[oldsrc]')
                         .toArray()
                         .map((a) => {
-                            a = $(a);
+                            const $a = $(a);
                             return {
-                                link: new URL(a.attr('href'), item.link).href,
-                                name: a.text().trim(),
+                                link: new URL($a.attr('href')!, item.link!).href,
+                                name: $a.text().trim(),
                             };
                         }),
                 });
@@ -159,6 +173,11 @@ async function handler(ctx) {
             })
         )
     );
+
+    if (ctx.req.query('sorted') !== 'false' && items.every((item) => item.pubDate instanceof Date && Number.isFinite(item.pubDate.getTime()))) {
+        items.sort((a, b) => (b.pubDate as Date).getTime() - (a.pubDate as Date).getTime());
+        items = items.slice(0, limit);
+    }
 
     return {
         title: $('title').text(),

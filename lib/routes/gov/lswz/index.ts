@@ -1,34 +1,47 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { DataItem, Language, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
 export const handler = async (ctx) => {
     const { category = 'html/xinwen/index' } = ctx.req.param();
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 25;
+    const limit = getRouteLimit(ctx, 25);
+    // Article timestamps can refine the dates on the first list page.
+    const candidateLimit = ctx.req.query('sorted') === 'false' ? limit : Math.max(25, limit);
 
     const rootUrl = 'https://www.lswz.gov.cn';
-    const currentUrl = new URL(`${category}.shtml`, rootUrl).href;
+    let currentUrl = `${rootUrl}/${category}.shtml`;
 
     const { data: response } = await got(currentUrl);
 
-    const $ = load(response);
+    let $ = load(response);
+    const redirectsToFirstLink = $('script')
+        .toArray()
+        .some((script) => /window\.location\.href\s*=\s*document\.links\[0\]\.href/.test($(script).text()));
+    const redirectUrl = redirectsToFirstLink ? $('a[href]').first().prop('href') : undefined;
+    if (redirectUrl) {
+        currentUrl = new URL(redirectUrl, currentUrl).href;
+        const { data: redirectedResponse } = await got(currentUrl);
+        $ = load(redirectedResponse);
+    }
 
-    const language = $('html').prop('lang');
+    const language = $('html').prop('lang') as Language;
 
     let items = $('ul.lists li')
-        .slice(0, limit)
+        .slice(0, candidateLimit)
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem & { link: string } => {
+            const $item = $(item);
+            const pubDate = $item.find('span').text();
 
             return {
-                title: item.find('a').text(),
-                pubDate: parseDate(item.find('span').text()),
-                link: new URL(item.find('a').prop('href'), rootUrl).href,
+                title: $item.find('a').text(),
+                pubDate: pubDate ? timezone(parseDate(pubDate), 8) : undefined,
+                link: new URL($item.find('a').prop('href')!, rootUrl).href,
             };
         });
 
@@ -48,7 +61,7 @@ export const handler = async (ctx) => {
 
                 item.title = title || item.title;
                 item.description = description;
-                item.pubDate = pubDate ? timezone(parseDate(pubDate), +8) : item.pubDate;
+                item.pubDate = pubDate ? timezone(parseDate(pubDate), 8) : item.pubDate;
                 item.author = $$('meta[name="ContentSource"]').prop('content')?.trim() ?? undefined;
                 item.content = {
                     html: description,
@@ -61,14 +74,14 @@ export const handler = async (ctx) => {
         )
     );
 
-    const image = new URL($('div.lsj-index-logo img').prop('src'), rootUrl).href;
+    const imageSource = $('div.lsj-index-logo img').prop('src');
+    const image = imageSource ? new URL(imageSource, rootUrl).href : undefined;
 
     return {
         title: $('title').text(),
         description: $('meta[name="ColumnDescription"]').prop('content'),
         link: currentUrl,
         item: items,
-        allowEmpty: true,
         image,
         author: $('meta[name="SiteName"]').prop('content'),
         language,
@@ -76,15 +89,15 @@ export const handler = async (ctx) => {
 };
 
 export const route: Route = {
-    path: '/lswz/:category{.+}?',
-    name: '国家粮食和物资储备局',
+    path: '/:category{.+}?',
+    name: '通用',
     url: 'lswz.gov.cn',
     maintainers: ['nczitzk'],
     handler,
     example: '/gov/lswz',
     parameters: { category: '分类，默认为 `html/xinwen/index`，可在对应分类页 URL 中找到' },
     description: `::: tip
-  若订阅 [新闻发布](https://www.lswz.gov.cn/html/xinwen/index.shtml)，网址为 \`https://www.lswz.gov.cn/html/xinwen/index.shtml\`。截取 \`https://www.lswz.gov.cn/\` 到末尾 \`.shtml\` 的部分 \`html/xinwen/index\` 作为参数填入，此时路由为 [\`/gov/lswz/html/xinwen/index\`](https://rsshub.app/gov/lswz/html/xinwen/index)。
+若订阅 [新闻发布](https://www.lswz.gov.cn/html/xinwen/index.shtml)，网址为 \`https://www.lswz.gov.cn/html/xinwen/index.shtml\`。截取 \`https://www.lswz.gov.cn/\` 到末尾 \`.shtml\` 的部分 \`html/xinwen/index\` 作为参数填入，此时路由为 [\`/gov/lswz/html/xinwen/index\`](https://rsshub.app/gov/lswz/html/xinwen/index)。
 :::
 
 | [新闻发布](https://www.lswz.gov.cn/html/xinwen/index.shtml)        | [党建工作](https://www.lswz.gov.cn/html/djgz/index.shtml)      |
@@ -94,7 +107,6 @@ export const route: Route = {
 | [粮食交易](https://www.lswz.gov.cn/html/zmhd/lysj/lsjy.shtml)          | [粮食质量](https://www.lswz.gov.cn/html/zmhd/lysj/lszl.shtml)          |
 | ---------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | [html/zmhd/lysj/lsjy](https://rsshub.app/gov/lswz/html/zmhd/lysj/lsjy) | [html/zmhd/lysj/lszl](https://rsshub.app/gov/lswz/html/zmhd/lysj/lszl) |
-
 
 #### [业务频道](https://www.lswz.gov.cn/html/ywpd/index.shtml)
 
@@ -124,7 +136,7 @@ export const route: Route = {
 
 #### [粮食收购](https://www.lswz.gov.cn/html/zmhd/lysj/lssg-szym.shtml)
 
-| [收购数据](https://www.lswz.gov.cn/html/zmhd/lysj/lssg-szym.shtml)               | [政策·解读](https://www.lswz.gov.cn/html/zmhd/lysj/lssg-gzdt.shtml)              |
+| [收购数据](https://www.lswz.gov.cn/html/zmhd/lysj/lssg-szym.shtml)               | [政策・解读](https://www.lswz.gov.cn/html/zmhd/lysj/lssg-gzdt.shtml)             |
 | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
 | [html/zmhd/lysj/lssg-szym](https://rsshub.app/gov/lswz/html/zmhd/lysj/lssg-szym) | [html/zmhd/lysj/lssg-gzdt](https://rsshub.app/gov/lswz/html/zmhd/lysj/lssg-gzdt) |
 
@@ -132,9 +144,7 @@ export const route: Route = {
 
 | [市场监测](https://www.lswz.gov.cn/html/zmhd/lysj/lsjg-scjc.shtml)               | [市场价格](https://www.lswz.gov.cn/html/zmhd/lysj/lsjg-scjg.shtml)               |
 | -------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| [html/zmhd/lysj/lsjg-scjc](https://rsshub.app/gov/lswz/html/zmhd/lysj/lsjg-scjc) | [html/zmhd/lysj/lsjg-scjg](https://rsshub.app/gov/lswz/html/zmhd/lysj/lsjg-scjg) |
-
-  `,
+| [html/zmhd/lysj/lsjg-scjc](https://rsshub.app/gov/lswz/html/zmhd/lysj/lsjg-scjc) | [html/zmhd/lysj/lsjg-scjg](https://rsshub.app/gov/lswz/html/zmhd/lysj/lsjg-scjg) |`,
     categories: ['government'],
 
     features: {
@@ -148,142 +158,139 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['www.lswz.gov.cn/:category?'],
-            target: (params) => {
-                const category = params.category;
-
-                return `/gov/lswz${category ? `/${category}` : ''}`;
-            },
+            title: '新闻发布',
+            source: ['www.lswz.gov.cn/'],
+            target: '/html/xinwen/index',
         },
         {
             title: '新闻发布',
             source: ['www.lswz.gov.cn/html/xinwen/index.shtml'],
-            target: '/lswz/html/xinwen/index',
+            target: '/html/xinwen/index',
         },
         {
             title: '党建工作',
             source: ['www.lswz.gov.cn/html/djgz/index.shtml'],
-            target: '/lswz/html/djgz/index',
+            target: '/html/djgz/index',
         },
         {
             title: '业务频道 - 粮食调控',
             source: ['www.lswz.gov.cn/html/ywpd/lstk/index.shtml'],
-            target: '/lswz/html/ywpd/lstk/index',
+            target: '/html/ywpd/lstk/index',
         },
         {
             title: '业务频道 - 物资储备',
             source: ['www.lswz.gov.cn/html/ywpd/wzcb/index.shtml'],
-            target: '/lswz/html/ywpd/wzcb/index',
+            target: '/html/ywpd/wzcb/index',
         },
         {
             title: '业务频道 - 能源储备',
             source: ['www.lswz.gov.cn/html/ywpd/nycb/index.shtml'],
-            target: '/lswz/html/ywpd/nycb/index',
+            target: '/html/ywpd/nycb/index',
         },
         {
             title: '业务频道 - 安全应急',
             source: ['www.lswz.gov.cn/html/ywpd/aqyj/index.shtml'],
-            target: '/lswz/html/ywpd/aqyj/index',
+            target: '/html/ywpd/aqyj/index',
         },
         {
             title: '业务频道 - 法规体改',
             source: ['www.lswz.gov.cn/html/ywpd/fgtg/index.shtml'],
-            target: '/lswz/html/ywpd/fgtg/index',
+            target: '/html/ywpd/fgtg/index',
         },
         {
             title: '业务频道 - 规划建设',
             source: ['www.lswz.gov.cn/html/ywpd/gjks/index.shtml'],
-            target: '/lswz/html/ywpd/gjks/index',
+            target: '/html/ywpd/gjks/index',
         },
         {
             title: '业务频道 - 财务审计',
             source: ['www.lswz.gov.cn/html/ywpd/cwsj/index.shtml'],
-            target: '/lswz/html/ywpd/cwsj/index',
+            target: '/html/ywpd/cwsj/index',
         },
         {
             title: '业务频道 - 仓储科技',
             source: ['www.lswz.gov.cn/html/ywpd/cckj/index.shtml'],
-            target: '/lswz/html/ywpd/cckj/index',
+            target: '/html/ywpd/cckj/index',
         },
         {
             title: '业务频道 - 执法督查',
             source: ['www.lswz.gov.cn/html/ywpd/zfdc/index.shtml'],
-            target: '/lswz/html/ywpd/zfdc/index',
+            target: '/html/ywpd/zfdc/index',
         },
         {
             title: '业务频道 - 国际交流',
             source: ['www.lswz.gov.cn/html/ywpd/gjjl/index.shtml'],
-            target: '/lswz/html/ywpd/gjjl/index',
+            target: '/html/ywpd/gjjl/index',
         },
         {
             title: '业务频道 - 人事人才',
             source: ['www.lswz.gov.cn/html/ywpd/rsrc/index.shtml'],
-            target: '/lswz/html/ywpd/rsrc/index',
+            target: '/html/ywpd/rsrc/index',
         },
         {
             title: '业务频道 - 标准质量',
             source: ['www.lswz.gov.cn/html/ywpd/bzzl/index.shtml'],
-            target: '/lswz/html/ywpd/bzzl/index',
+            target: '/html/ywpd/bzzl/index',
         },
         {
             title: '业务频道 - 粮食和储备研究',
             source: ['www.lswz.gov.cn/html/ywpd/lshcbyj/index.shtml'],
-            target: '/lswz/html/ywpd/lshcbyj/index',
+            target: '/html/ywpd/lshcbyj/index',
         },
         {
             title: '政策发布 - 文件',
             source: ['www.lswz.gov.cn/html/zcfb/wenjian.shtml'],
-            target: '/lswz/html/zcfb/wenjian',
+            target: '/html/zcfb/wenjian',
         },
         {
             title: '政策发布 - 法律法规',
             source: ['www.lswz.gov.cn/html/zcfb/fggz-fg.shtml'],
-            target: '/lswz/html/zcfb/fggz-fg',
+            target: '/html/zcfb/fggz-fg',
         },
         {
             title: '政策发布 - 规章',
             source: ['www.lswz.gov.cn/html/zcfb/fggz-gz.shtml'],
-            target: '/lswz/html/zcfb/fggz-gz',
+            target: '/html/zcfb/fggz-gz',
         },
         {
             title: '通知公告 - 行政通知',
             source: ['www.lswz.gov.cn/html/tzgg/xztz.shtml'],
-            target: '/lswz/html/tzgg/xztz',
+            target: '/html/tzgg/xztz',
         },
         {
             title: '通知公告 - 公告通告',
             source: ['www.lswz.gov.cn/html/tzgg/ggtg.shtml'],
-            target: '/lswz/html/tzgg/ggtg',
+            target: '/html/tzgg/ggtg',
         },
         {
             title: '粮食收购 - 收购数据',
             source: ['www.lswz.gov.cn/html/zmhd/lysj/lssg-szym.shtml'],
-            target: '/lswz/html/zmhd/lysj/lssg-szym',
+            target: '/html/zmhd/lysj/lssg-szym',
         },
         {
             title: '粮食收购 - 政策·解读',
             source: ['www.lswz.gov.cn/html/zmhd/lysj/lssg-gzdt.shtml'],
-            target: '/lswz/html/zmhd/lysj/lssg-gzdt',
+            target: '/html/zmhd/lysj/lssg-gzdt',
         },
         {
             title: '粮食价格 - 市场监测',
             source: ['www.lswz.gov.cn/html/zmhd/lysj/lsjg-scjc.shtml'],
-            target: '/lswz/html/zmhd/lysj/lsjg-scjc',
+            target: '/html/zmhd/lysj/lsjg-scjc',
         },
         {
             title: '粮食价格 - 市场价格',
             source: ['www.lswz.gov.cn/html/zmhd/lysj/lsjg-scjg.shtml'],
-            target: '/lswz/html/zmhd/lysj/lsjg-scjg',
+            target: '/html/zmhd/lysj/lsjg-scjg',
         },
         {
             title: '粮食交易',
             source: ['www.lswz.gov.cn/html/zmhd/lysj/lsjy.shtml'],
-            target: '/lswz/html/zmhd/lysj/lsjy',
+            target: '/html/zmhd/lysj/lsjy',
         },
         {
             title: '粮食质量',
             source: ['www.lswz.gov.cn/html/zmhd/lysj/lszl.shtml'],
-            target: '/lswz/html/zmhd/lysj/lszl',
+            target: '/html/zmhd/lysj/lszl',
         },
     ],
 };

@@ -1,3 +1,4 @@
+import type { CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
 
 import cache from '@/utils/cache';
@@ -5,6 +6,45 @@ import got from '@/utils/got';
 import logger from '@/utils/logger';
 import { parseDate } from '@/utils/parse-date';
 import timezone from '@/utils/timezone';
+
+function getArticleDates($: CheerioAPI) {
+    const chunks = $('script')
+        .toArray()
+        .flatMap((element) => {
+            const match = $(element)
+                .text()
+                .trim()
+                .match(/^self\.__next_f\.push\(([\s\S]*)\);?$/);
+            if (!match) {
+                return [];
+            }
+            try {
+                const chunk: unknown = JSON.parse(match[1]);
+                return Array.isArray(chunk) && typeof chunk[1] === 'string' ? [chunk[1]] : [];
+            } catch {
+                return [];
+            }
+        });
+
+    for (const record of [...chunks.flatMap((chunk) => chunk.split('\n')), ...chunks.join('').split('\n')]) {
+        // A text record has no trailing newline, so the metadata record can start in the middle of a line.
+        const json = record.match(/[\da-f]+:(\{.*)$/)?.[1];
+        if (!json) {
+            continue;
+        }
+        try {
+            const metadata = JSON.parse(json) as { '@type'?: string; datePublished?: string; dateModified?: string };
+            if (metadata?.['@type'] === 'NewsArticle' && (metadata.datePublished || metadata.dateModified)) {
+                return {
+                    pubDate: metadata.datePublished ? parseDate(metadata.datePublished) : undefined,
+                    updated: metadata.dateModified ? parseDate(metadata.dateModified) : undefined,
+                };
+            }
+        } catch {
+            // Other RSC records need not be JSON article metadata.
+        }
+    }
+}
 
 export async function handler(ctx) {
     const { category, topic } = ctx.req.param();
@@ -21,20 +61,21 @@ export async function handler(ctx) {
     const { data: response } = await got(link);
     const $ = load(response);
 
-    const listItems = $('div.list-news')
+    const listItems = $('div.list-news, div.category_article div.bignews-wrap, div.category_article div.small-listnews')
         .toArray()
         .map((item) => {
-            item = $(item);
-            const a = item.find('div.explainer-subtext a');
+            const $item = $(item);
+            const a = $item.find('h2 a');
             return {
-                title: a.text(),
+                // Category pages cut the visible headline at 80 characters; the image link keeps the full one.
+                title: $item.find('a[title]').attr('title') ?? a.text(),
                 link: `${baseUrl}${a.attr('href')}`,
             };
         });
 
     const items = await Promise.all(
         listItems.map((item) =>
-            cache.tryGet(item.link, async () => {
+            cache.tryGet(`dnaindia:${item.link}`, async () => {
                 const { data: response } = await got(item.link);
                 const $ = load(response);
 
@@ -44,17 +85,17 @@ export async function handler(ctx) {
                     .map((item) => $(item).find('a').text());
                 // Process date
                 const timeText = $('p.dna-update').text();
-                const dateMatch = timeText.match(/Updated\s*:\s*([\w\s,:\d]+?)(?:\s*\||$)/);
+                const dateMatch = timeText.match(/Updated\s*:([\w\s,:]+)/);
                 let time = dateMatch ? dateMatch[1].trim() : '';
                 time = time.replace(/\s+IST$/, '');
-                const pubDate = timezone(parseDate(time), +5.5);
+                const updated = time ? timezone(parseDate(time), 5.5) : undefined;
+                const articleDates = getArticleDates($);
                 // Get author information
                 const authorMeta = $('meta[name="author"]').attr('content');
-                const author = authorMeta || 'DNA Web Team';
+                const author = authorMeta || $('.author_section a[href*="/authors/"]').text().trim() || 'DNA Web Team';
 
                 // Process description
                 const description = $('div.article-description')
-                    .clone()
                     .children('div')
                     .remove()
                     .end()
@@ -67,7 +108,8 @@ export async function handler(ctx) {
                     ...item,
                     itunes_item_image,
                     category,
-                    pubDate,
+                    pubDate: articleDates?.pubDate,
+                    updated: articleDates?.updated ?? updated,
                     author,
                     description,
                 };
@@ -82,6 +124,6 @@ export async function handler(ctx) {
         description: 'Latest News on dnaIndia.com',
         logo: 'https://cdn.dnaindia.com/sites/all/themes/dnaindia/favicon-1016.ico',
         icon: 'https://cdn.dnaindia.com/sites/all/themes/dnaindia/favicon-1016.ico',
-        language: 'en-us',
+        language: 'en-us' as const,
     };
 }

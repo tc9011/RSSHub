@@ -24,7 +24,7 @@ export const route: Route = {
     radar: [
         {
             source: ['gitcode.com/:owner/:repo/commits', 'gitcode.com/:owner/:repo/commits/:branch'],
-            target: (params) => `/gitcode/commits/${params.owner}/${params.repo}${params.branch ? `/${params.branch}` : ''}`,
+            target: '/commits/:owner/:repo/:branch?',
         },
     ],
     name: '仓库提交',
@@ -37,7 +37,7 @@ async function handler(ctx) {
     // API路径
     const apiUrl = `https://web-api.gitcode.com/api/v2/projects/${encodeURIComponent(`${owner}/${repo}`)}/repository/commits`;
 
-    const searchParams: Record<string, any> = {
+    const searchParams = {
         per_page: ctx.req.query('limit') ? Number(ctx.req.query('limit')) : 100,
         ref_name: branch,
     };

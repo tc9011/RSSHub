@@ -3,13 +3,14 @@ import { createDecipheriv } from 'node:crypto';
 import dayjs from 'dayjs';
 import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
+import { routePath } from 'hono/route';
 
 import { config } from '@/config';
 import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import { parseDate } from '@/utils/parse-date';
-import puppeteer from '@/utils/puppeteer';
+import { getPlaywrightPage } from '@/utils/playwright';
 import timezone from '@/utils/timezone';
 
 // Parameters
@@ -24,28 +25,29 @@ const getMultiKeywordHotTrend = async (page, keyword, start_date, end_date, app_
         data: JSON.stringify({ keyword_list: [keyword], start_date, end_date, app_name }),
     };
 
-    const res = await page.evaluate((e) => {
-        function queryData() {
-            const p = new Promise((resolve) => {
+    const res = await page.evaluate(
+        async (e) =>
+            await new Promise<string>((resolve, reject) => {
                 const req = new XMLHttpRequest();
                 req.open(e.method, e.url, true);
                 req.setRequestHeader('accept', 'application/json, text/plain, */*');
                 req.setRequestHeader('content-type', 'application/json;charset=UTF-8');
                 req.setRequestHeader('tea-uid', '7054893410171930123');
-                req.addEventListener('readystatechange', () => {
-                    if (req.readyState === 4 && req.status === 200) {
+                req.timeout = 30000;
+                req.addEventListener('load', () => {
+                    if (req.status >= 200 && req.status < 300) {
                         resolve(req.responseText);
                     } else {
-                        return;
+                        reject(new Error(`Oceanengine API returned HTTP ${req.status}`));
                     }
                 });
+                req.addEventListener('error', () => reject(new Error('Oceanengine API request failed')));
+                req.addEventListener('timeout', () => reject(new Error('Oceanengine API request timed out')));
                 req.send(e.data);
-            });
-            return p;
-        }
-        return Promise.resolve(queryData()).then((result) => result);
-    }, e);
-    return res[0];
+            }),
+        e
+    );
+    return res;
 };
 
 // Decrypt Data
@@ -75,7 +77,6 @@ const searchLinkNames = ['今日热榜', '百度', '谷歌', '知乎', '微博',
 const createContent = (keyword, queryList, queryListText) =>
     renderToString(
         <OceanengineContent
-            keyword={keyword}
             queryListText={queryListText}
             queries={queryList.map((query) => ({
                 links: searchLinkUrls(encodeURIComponent(query)).map((url, index) => `<a href="${url}" rel="noopener noreferrer" target="_blank">${searchLinkNames[index]}</a>`),
@@ -85,13 +86,23 @@ const createContent = (keyword, queryList, queryListText) =>
     );
 
 export const route: Route = {
-    path: '/index/:keyword/:channel?',
-    name: 'Unknown',
+    path: '/index/:keyword',
+    categories: ['other'],
+    example: '/oceanengine/index/教材',
+    parameters: {
+        keyword: '热点关键词',
+    },
+    description: '爬取巨量算数近 6 个月的抖音指数，解密后提取指数波峰当日的热门搜索关键词，生成为 RSS。可用于追踪新闻热点事件。',
+    features: {
+        requirePuppeteer: true,
+        antiCrawler: true,
+    },
+    name: '抖音指数波峰',
     maintainers: ['Jkker'],
     handler,
 };
 
-async function handler(ctx) {
+export async function handler(ctx) {
     const now = dayjs();
     const start_date = now.subtract(DEFAULT_FETCH_DURATION_MONTH, 'month').format('YYYYMMDD');
     const end_date = now.format('YYYYMMDD');
@@ -99,27 +110,30 @@ async function handler(ctx) {
     if (!keyword) {
         throw new InvalidParameterError('Invalid keyword');
     }
-    if (ctx.req.param('channel') && !['douyin', 'toutiao'].includes(ctx.req.param('channel'))) {
-        throw new InvalidParameterError('Invalid channel。 Only support `douyin` or `toutiao`');
-    }
+    const isToutiao = routePath(ctx) === '/oceanengine/index/:keyword/toutiao';
 
-    const channel = ctx.req.param('channel') === 'toutiao' ? 'toutiao' : 'aweme'; // default channel is `douyin`
-    const channelName = ctx.req.param('channel') === 'toutiao' ? '头条' : '抖音';
+    const channel = isToutiao ? 'toutiao' : 'aweme';
+    const channelName = isToutiao ? '头条' : '抖音';
 
     const link = `https://trendinsight.oceanengine.com/arithmetic-index/analysis?keyword=${keyword}&appName=${channel}`;
 
     const item = await cache.tryGet(
         link,
         async () => {
-            const browser = await puppeteer();
-            const page = await browser.newPage();
-            await page.setRequestInterception(true);
-            page.on('request', (request) => {
-                request.resourceType() === 'document' || request.resourceType() === 'script' || request.resourceType() === 'xhr' ? request.continue() : request.abort();
+            const { page, destroy } = await getPlaywrightPage('https://trendinsight.oceanengine.com/arithmetic-index', {
+                noGoto: true,
+                closeTimeout: 0,
             });
-            await page.goto('https://trendinsight.oceanengine.com/arithmetic-index');
-            const res = await getMultiKeywordHotTrend(page, keyword, start_date, end_date, channel);
-            await browser.close();
+            let res: string;
+            try {
+                await page.route('**/*', (route) => {
+                    ['document', 'script', 'xhr'].includes(route.request().resourceType()) ? route.continue() : route.abort();
+                });
+                await page.goto('https://trendinsight.oceanengine.com/arithmetic-index');
+                res = await getMultiKeywordHotTrend(page, keyword, start_date, end_date, channel);
+            } finally {
+                await destroy();
+            }
 
             const rawData = JSON.parse(res).data;
             const data = decrypt(rawData).hot_list[0];
@@ -141,7 +155,7 @@ async function handler(ctx) {
                     author: `巨量算数 - ${channelName}算数指数`,
                     description: content,
                     link,
-                    pubDate: timezone(parseDate(date), +8),
+                    pubDate: timezone(parseDate(date), 8),
                     guid: `巨量算数 - ${channelName}算数指数 | ${keyword} - ${date}`,
                 };
             });
@@ -154,7 +168,7 @@ async function handler(ctx) {
         title: `${keyword} - ${channelName}指数波峰`,
         link,
         description: `巨量算数 - ${channelName}算数指数 | 关键词: ${keyword}`,
-        language: 'zh-cn',
+        language: 'zh-CN' as const,
         item,
     };
 }

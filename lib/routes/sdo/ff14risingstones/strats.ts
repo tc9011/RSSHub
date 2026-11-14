@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 
 import type { Route } from '@/types';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import { getPosts } from './api';
 import { INDEX_URL, LOGO_URL, POST_TYPE, REQUIRE_CONFIG, STRAT_PART } from './constant';
@@ -47,7 +48,7 @@ export const route: Route = {
 async function handler(ctx: Context) {
     checkConfig();
 
-    const limit = ctx.req.query('limit') || 20;
+    const limit = getRouteLimit(ctx, 20);
 
     const pid =
         ctx.req
@@ -69,7 +70,7 @@ async function handler(ctx: Context) {
     });
 
     return {
-        title: `石之家 - ${POST_TYPE[type] ?? ''}攻略${stratPart ? ` - ${stratPart}` : ''}`,
+        title: `石之家 - ${POST_TYPE[type!] ?? ''}攻略${stratPart ? ` - ${stratPart}` : ''}`,
         link: `${INDEX_URL}#/strat`,
         image: LOGO_URL,
         item: await generatePostFeeds(posts),

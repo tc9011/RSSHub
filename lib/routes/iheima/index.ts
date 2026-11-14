@@ -1,6 +1,9 @@
+import { load } from 'cheerio';
+
 import type { Route } from '@/types';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 export const route: Route = {
     path: '/recommend',
@@ -12,29 +15,31 @@ export const route: Route = {
     handler,
 };
 
-async function handler() {
-    const baseUrl = 'https://www.iheima.com/?page=1&pagesize=20';
+async function handler(ctx) {
+    const limit = getRouteLimit(ctx, 20);
+    const baseUrl = 'https://www.iheima.com';
 
-    const response = await got({
-        method: 'get',
-        url: baseUrl,
-        responseType: 'json',
-        headers: {
-            Accept: 'application/json, text/javascript, */*; q=0.01',
-            Referer: 'https://www.iheima.com/',
-            'X-Requested-With': 'XMLHttpRequest',
-        },
-    });
+    const response = await got(baseUrl);
+    const $ = load(response.data);
 
-    const content = JSON.parse(response.body);
-    const list = content.contents;
+    const items = $('div.item-wrap')
+        .slice(0, limit)
+        .toArray()
+        .map((element) => {
+            const $element = $(element);
+            const linkElement = $element.find('a.title').first();
+            const image = $element.find('a.pic img').attr('src');
+            const brief = $element.find('div.brief').text().trim();
+            const pubDate = parseDate($element.find('.time').text().trim());
 
-    const items = list.map((item) => ({
-        title: item.title,
-        link: item.url,
-        pubDate: parseDate(item.published),
-        description: item.content,
-    }));
+            return {
+                title: linkElement.text().trim(),
+                link: linkElement.attr('href') ? new URL(linkElement.attr('href')!, baseUrl).href : undefined,
+                pubDate: Number.isFinite(pubDate.getTime()) ? pubDate : undefined,
+                description: `${image ? `<img src="${new URL(image, baseUrl).href}">` : ''}${brief ? `<p>${brief}</p>` : ''}`,
+            };
+        })
+        .filter((item) => item.title && item.link);
 
     return {
         title: '推荐',

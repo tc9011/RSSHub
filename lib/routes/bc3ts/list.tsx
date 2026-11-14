@@ -4,6 +4,7 @@ import { config } from '@/config';
 import type { Route } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import type { Media, PostResponse } from './types';
 
@@ -47,7 +48,7 @@ const MediaList = ({ media }: { media: Media[] }) => (
 
 async function handler(ctx) {
     const { sort = '1' } = ctx.req.param();
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 20;
+    const limit = getRouteLimit(ctx, 20);
 
     const response = await ofetch<PostResponse>('https://app.bc3ts.net/post/list/v2', {
         headers: {
@@ -63,8 +64,8 @@ async function handler(ctx) {
     });
 
     const items = response.data.map((p) => ({
-        title: p.title ?? p.content.split('\n')[0],
-        description: p.content.replaceAll('\n', '<br>') + (p.media.length && renderMedia(p.media)),
+        title: p.title ?? p.content.split('\n', 1)[0],
+        description: p.content.replaceAll('\n', '<br>') + (p.media.length ? renderMedia(p.media) : ''),
         link: `${baseUrl}/post/${p.id}`,
         author: p.user.name,
         pubDate: parseDate(p.created_time, 'x'),
@@ -76,7 +77,7 @@ async function handler(ctx) {
     return {
         title: `爆料公社${sort === '1' ? '最新' : '熱門'}動態`,
         link: baseUrl,
-        language: 'zh-TW',
+        language: 'zh-TW' as const,
         image: 'https://img.bc3ts.net/image/web/main/logo-white-new-2023.png',
         icon: 'https://img.bc3ts.net/image/web/main/logo/logo_icon_6th_2024_192x192.png',
         item: items,

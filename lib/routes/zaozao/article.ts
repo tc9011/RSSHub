@@ -28,37 +28,37 @@ export const route: Route = {
 | --------- | -------- | -------- | --------- | -------- | -------- |
 | recommend | quality  | growth   | community | material | industry |`,
 };
-
 async function handler(ctx) {
     const { type = 'recommend' } = ctx.req.param();
     const response = await got({
         method: 'put',
         url: `https://e.zaozao.run/article/page/${type}`,
         headers: {
-            Referer: `https://www.zaozao.run/`,
+            Referer: 'https://www.zaozao.run/',
         },
         body: JSON.stringify({
             pageNo: 1,
             pageSize: 100,
         }),
     });
-
-    const { status, statusMessage } = response;
-    if (status !== 200) {
-        throw new Error(statusMessage);
+    if (!response.data.success || !Array.isArray(response.data.data)) {
+        throw new Error('The article API did not return a successful article list.');
     }
-
     const { data } = response.data;
-
     return {
-        title: `前端早早聊 - 文章`,
+        title: '前端早早聊 - 文章',
         link: `https://www.zaozao.run/article/${type}`,
-        description: `前端早早聊 - 文章`,
+        description: '前端早早聊 - 文章',
         item: data.map((item) => ({
             title: item.title,
             link: item.url,
             author: item.recommenderName,
-            pubDate: parseDate(item.updateAt),
+            pubDate: isOneOf(item.updateAt, [undefined, null]) || item.updateAt === '' ? undefined : parseDate(item.updateAt),
         })),
     };
+}
+
+function isOneOf<const T>(value: unknown, values: readonly T[]): value is T {
+    const candidates: readonly unknown[] = values;
+    return candidates.includes(value);
 }

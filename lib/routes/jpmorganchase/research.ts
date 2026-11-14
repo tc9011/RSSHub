@@ -1,4 +1,5 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
 import type { Data, DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
@@ -52,27 +53,31 @@ type IndexEntry = {
     image: string;
 };
 
+type IndexResponse = {
+    meta: PartitionMeta;
+    items: IndexEntry[];
+};
+
 async function fetchIndexEntires(): Promise<IndexEntry[]> {
-    const response = await ofetch(indexUrl);
+    const response = await ofetch<IndexResponse>(indexUrl);
     if (!('meta' in response)) {
         return [];
     }
 
-    const meta = response.meta as PartitionMeta;
-    const maxItemCount = Number(meta['partition-size']);
+    const maxItemCount = Number(response.meta['partition-size']);
 
-    return (response.items as IndexEntry[]).slice(0, maxItemCount);
+    return response.items.slice(0, maxItemCount);
 }
 
 function fetchDataItem(entry: IndexEntry): Promise<DataItem> {
-    const url = `${base}${entry.link}`;
+    const url = new URL(entry.link, base).href;
 
     return cache.tryGet(url, async () => {
         let authors: string[] = [];
         let description = '';
         let category: string[] = [];
         let articleDate: string = entry.date;
-        const pageContent: string = await ofetch(url);
+        const pageContent = await ofetch<string>(url);
 
         if (pageContent.length > 0) {
             const $ = load(pageContent);
@@ -82,7 +87,7 @@ function fetchDataItem(entry: IndexEntry): Promise<DataItem> {
                 .toArray()
                 .map((el) => $(el).text().trim());
             articleDate = $('.date').text().trim() || entry.date;
-            description = $('.root').children('div').children('div:eq(1)').html() || '';
+            description = $('.root').children('div').children('div:eq(1)').html() ?? '';
         }
 
         return {
@@ -91,14 +96,14 @@ function fetchDataItem(entry: IndexEntry): Promise<DataItem> {
             title: entry.title,
             description,
             link: url,
-            pubDate: parseDate(articleDate),
+            pubDate: articleDate ? parseDate(articleDate) : undefined,
         } satisfies DataItem;
-    }) as Promise<DataItem>;
+    });
 }
 
 async function handler(): Promise<Data> {
     const entires = await fetchIndexEntires();
-    const items = await Promise.all(entires.map((it) => fetchDataItem(it)));
+    const items = await pMap(entires, fetchDataItem, { concurrency: 3 });
 
     return {
         title: 'All Topics - JPMorganChase Institute',

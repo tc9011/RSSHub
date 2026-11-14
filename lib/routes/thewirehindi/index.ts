@@ -1,7 +1,7 @@
 import type { Data, Route } from '@/types';
-import got from '@/utils/got';
+import parser from '@/utils/rss-parser';
 
-import { mapPostToItem } from './utils';
+import { mapFeedItem } from './utils';
 
 export const route: Route = {
     path: '/',
@@ -27,11 +27,9 @@ export const route: Route = {
     url: 'thewirehindi.com/',
 };
 
-async function handler() {
-    const apiUrl = 'https://thewirehindi.com/wp-json/wp/v2/posts?_embed';
-    const { data } = await got(apiUrl);
-
-    const items = data.map((v) => mapPostToItem(v));
+async function handler(): Promise<Data> {
+    const feed = await parser.parseURL('https://thewirehindi.com/feed/');
+    const items = feed.items.map((item) => mapFeedItem(item)).filter((item) => item.title);
 
     return {
         title: 'The Wire Hindi - Latest News',
@@ -40,5 +38,5 @@ async function handler() {
         description: 'Latest news from The Wire Hindi',
         logo: 'https://thewirehindi.com/wp-content/uploads/2023/05/cropped-The-wire-32x32.jpeg',
         language: 'hi',
-    } as Data;
+    };
 }

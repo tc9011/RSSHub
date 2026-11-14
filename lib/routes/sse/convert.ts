@@ -1,6 +1,6 @@
 import type { Route } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDateInTimezone } from '@/utils/parse-date-in-timezone';
 
 export const route: Route = {
     path: '/convert/:query?',
@@ -28,7 +28,7 @@ async function handler(ctx) {
     if (query) {
         const pairs = query.split('&');
         for (const pair of pairs) {
-            const [key, value] = pair.split('=');
+            const [key, value] = pair.split('=', 2);
             if (key) {
                 queries[key] = value;
             }
@@ -51,7 +51,7 @@ async function handler(ctx) {
     const items = response.data.result.map((item) => ({
         title: item.title,
         description: `${host}${item.URL}`,
-        pubDate: parseDate(item.ADDDATE),
+        pubDate: item.ADDDATE ? parseDateInTimezone(item.ADDDATE, 8) : undefined,
         link: `${host}${item.URL}`,
         author: item.security_Code,
     }));

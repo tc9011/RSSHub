@@ -6,7 +6,6 @@ import type { Route } from '@/types';
 import { ViewType } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
 import { isValidHost } from '@/utils/valid-host';
 
 const md = MarkdownIt({
@@ -16,7 +15,7 @@ const md = MarkdownIt({
 export const route: Route = {
     path: '/posts/:site',
     categories: ['blog'],
-    example: '/posts/walnut',
+    example: '/hedwig/posts/walnut',
     parameters: { site: '站点名，原则上只要是 `{site}.hedwig.pub` 都可以匹配' },
     features: {
         supportRadar: false,
@@ -43,11 +42,11 @@ export const route: Route = {
         const pageProps = json.props.pageProps;
 
         const list = pageProps.issuesByNewsletter.map((item) => {
-            const description = item.blocks.reduce((desc, block) => desc + md.render(block.markdown.text), '');
+            const description = item.blocks.map((block) => md.render(block.markdown.text)).join('');
             return {
                 title: item.subject,
                 description,
-                pubDate: timezone(parseDate(item.publishAt, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]'), +0),
+                pubDate: item.publishAt ? parseDate(item.publishAt) : undefined,
                 link: `${baseUrl}/i/${item.urlFriendlyName}`,
             };
         });

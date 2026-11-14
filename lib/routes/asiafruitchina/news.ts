@@ -3,30 +3,29 @@ import { load } from 'cheerio';
 import type { Element } from 'domhandler';
 import type { Context } from 'hono';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import { renderDescription } from './templates/description';
 
 export const handler = async (ctx: Context): Promise<Data> => {
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '30', 10);
+    const limit = getRouteLimit(ctx, 30);
 
     const baseUrl = 'https://asiafruitchina.net';
     const targetUrl: string = new URL('category/news', baseUrl).href;
 
     const response = await ofetch(targetUrl);
     const $: CheerioAPI = load(response);
-    const language = $('html').attr('lang') ?? 'zh-CN';
+    const language = ($('html').attr('lang') ?? 'zh-CN') as Language;
 
-    let items: DataItem[] = [];
-
-    items = $('div.listBlocks ul li')
+    let items: DataItem[] = $('div.listBlocks ul li')
         .slice(0, limit)
         .toArray()
-        .map((el): Element => {
+        .map((el) => {
             const $el: Cheerio<Element> = $(el);
             const $aEl: Cheerio<Element> = $el.find('div.storyDetails h3 a');
 
@@ -50,7 +49,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
             const pubDateStr: string | undefined = $el.find('span.date').text();
             const linkUrl: string | undefined = $aEl.attr('href');
             const image: string | undefined = $el.find('a.image img').attr('src');
-            const upDatedStr: string | undefined = pubDateStr;
 
             const processedItem: DataItem = {
                 title,
@@ -63,7 +61,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
                 },
                 image,
                 banner: image,
-                updated: upDatedStr ? parseDate(upDatedStr) : undefined,
                 language,
             };
 
@@ -78,7 +75,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
                 }
 
                 return cache.tryGet(item.link, async (): Promise<DataItem> => {
-                    const detailResponse = await ofetch(item.link);
+                    const detailResponse = await ofetch(item.link!);
                     const $$: CheerioAPI = load(detailResponse);
 
                     const title: string = $$('div.story_title h1').text();
@@ -92,7 +89,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
                             ?.split(/,/)
                             .map((c) => c.trim()) ?? [];
                     const authors: DataItem['author'] = $$('span.author').first().text();
-                    const upDatedStr: string | undefined = pubDateStr;
 
                     let processedItem: DataItem = {
                         title,
@@ -104,7 +100,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
                             html: description,
                             text: description,
                         },
-                        updated: upDatedStr ? parseDate(upDatedStr) : item.updated,
                         language,
                     };
 
@@ -146,7 +141,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
         description: $('meta[name="description"]').attr('content'),
         link: targetUrl,
         item: items,
-        allowEmpty: true,
         image: $('img.logo').attr('src'),
         author: title.split(/-/).pop(),
         language,
@@ -176,7 +170,7 @@ export const route: Route = {
     radar: [
         {
             source: ['asiafruitchina.net/category/news'],
-            target: '/asiafruitchina/news',
+            target: '/news',
         },
     ],
     view: ViewType.Articles,

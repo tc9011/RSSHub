@@ -1,7 +1,8 @@
 import type { Context } from 'hono';
+import pMap from 'p-map';
 
 import InvalidParameterError from '@/errors/types/invalid-parameter';
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 
@@ -21,7 +22,7 @@ const sortMap = {
 };
 
 export const route: Route = {
-    path: ['/pd/guild/:id/:sub?/:sort?'],
+    path: '/pd/guild/:id/:sub?/:sort?',
     categories: ['bbs'],
     example: '/qq/pd/guild/qrp4pkq01d/650967831/created',
     parameters: {
@@ -51,12 +52,12 @@ export const route: Route = {
 async function handler(ctx: Context): Promise<Data> {
     const { id, sub = 'hot', sort = 'created' } = ctx.req.param();
 
-    if (sort in sortMap === false) {
+    if (!Object.hasOwn(sortMap, sort)) {
         throw new InvalidParameterError('invalid sort parameter, should be `hot`, `created`, or `replied`');
     }
     const sortType = sortMap[sort];
 
-    let url = '';
+    let url: string;
     let body = {};
     let headers = {};
 
@@ -81,52 +82,54 @@ async function handler(ctx: Context): Promise<Data> {
     }
 
     const data = await ofetch(url, { method: 'POST', body, headers });
-    const feeds = data.data?.vecFeed || [];
+    const feeds: Feed[] = data.data?.vecFeed || [];
 
-    const items = feeds.map(async (feed: Feed) => {
-        let subId = sub;
-        if (sub === 'hot') {
-            // get real subId for hot feeds
-            subId = feed.channelInfo?.sign?.channel_id || '';
-        }
-        const feedLink = baseUrl + id + '/post/' + feed.id;
-        const feedDetail = await cache.tryGet(feedLink, async () => {
-            // notice: do not change the order of the keys in the body
-            body = {
-                feedId: feed.id,
-                userId: feed.poster?.id,
-                createTime: feed.createTime,
-                from: 2,
-                detail_type: 1,
-                channelSign: { guild_number: id, channel_id: subId },
-                extInfo: {
-                    mapInfo: [
-                        { key: 'qc-tabid', value: 'ark' },
-                        { key: 'qc-pageid', value: 'pc' },
-                    ],
-                },
-            };
-            headers = {
-                cookie: 'p_uin=o09000002',
-                referer: feedLink,
-                'x-oidb': '{"uint32_service_type":5}',
-                'x-qq-client-appid': '537246381',
-            };
-            const feedResponse = await ofetch(getFeedDetailUrl, { method: 'POST', body, headers });
-            const feedContent: Feed = feedResponse.data?.feed || {};
-            return {
-                title: feed.title?.contents[0]?.text_content?.text || feed.channelInfo?.guild_name || '',
-                link: feedLink,
-                description: parseFeed(feedContent),
-                pubDate: new Date(Number(feed.createTime) * 1000),
-                author: feed.poster?.nick,
-            };
-        });
+    const feedItems = await pMap(
+        feeds,
+        async (feed) => {
+            let subId = sub;
+            if (sub === 'hot') {
+                // get real subId for hot feeds
+                subId = feed.channelInfo?.sign?.channel_id || '';
+            }
+            const feedLink = baseUrl + id + '/post/' + feed.id;
+            const feedDetail = await cache.tryGet(feedLink, async () => {
+                // notice: do not change the order of the keys in the body
+                body = {
+                    feedId: feed.id,
+                    userId: feed.poster?.id,
+                    createTime: feed.createTime,
+                    from: 2,
+                    detail_type: 1,
+                    channelSign: { guild_number: id, channel_id: subId },
+                    extInfo: {
+                        mapInfo: [
+                            { key: 'qc-tabid', value: 'ark' },
+                            { key: 'qc-pageid', value: 'pc' },
+                        ],
+                    },
+                };
+                headers = {
+                    cookie: 'p_uin=o09000002',
+                    referer: feedLink,
+                    'x-oidb': '{"uint32_service_type":5}',
+                    'x-qq-client-appid': '537246381',
+                };
+                const feedResponse = await ofetch(getFeedDetailUrl, { method: 'POST', body, headers });
+                const feedContent: Feed = feedResponse.data?.feed || {};
+                return {
+                    title: feed.title?.contents[0]?.text_content?.text || feed.channelInfo?.guild_name || '',
+                    link: feedLink,
+                    description: parseFeed(feedContent),
+                    pubDate: new Date(Number(feed.createTime) * 1000),
+                    author: feed.poster?.nick,
+                };
+            });
 
-        return feedDetail;
-    });
-
-    const feedItems = await Promise.all(items);
+            return feedDetail;
+        },
+        { concurrency: 3 }
+    );
 
     let guildName = '';
 
@@ -142,6 +145,6 @@ async function handler(ctx: Context): Promise<Data> {
         title: guildName,
         link: baseUrl + id,
         description: guildName,
-        item: feedItems as DataItem[],
+        item: feedItems,
     };
 }
