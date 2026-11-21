@@ -1,10 +1,10 @@
 import { load } from 'cheerio'; // An HTML parser with an API similar to jQuery
 
-import type { Route } from '@/types';
+import type { Data, Route } from '@/types';
 // import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch'; // Unified request library used
-// import puppeteer from '@/utils/puppeteer';
-// import { parseDate } from '@/utils/parse-date';
+// import playwright from '@/utils/playwright';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/section/:section',
@@ -13,7 +13,8 @@ export const route: Route = {
     parameters: { section: 'target section' },
     radar: [
         {
-            source: ['dealstreetasia.com/'],
+            source: ['dealstreetasia.com/section/:section/'],
+            target: '/section/:section',
         },
     ],
     name: 'Section',
@@ -29,7 +30,7 @@ async function handler(ctx) {
     return items;
 }
 
-async function fetchPage(section: string) {
+async function fetchPage(section: string): Promise<Data> {
     const baseUrl = 'https://dealstreetasia.com'; // Define base URL
 
     const response = await ofetch(`${baseUrl}/section/${section}/`);
@@ -44,7 +45,7 @@ async function fetchPage(section: string) {
         title: item.title || 'No Title',
         link: item.uri ? `https://www.dealstreetasia.com${item.uri}` : '',
         description: item.excerpt || '', // Default to empty string if undefined
-        pubDate: item.post_date ? new Date(item.post_date).toUTCString() : '',
+        pubDate: item.post_date ? parseDate(item.post_date) : '',
         category: item.sections.nodes.map((section) => section.name),
         image: item.featuredImage?.node?.mediaItemUrl.replace(/\?.*$/, ''), // Use .replace to sanitize the image URL
     }));

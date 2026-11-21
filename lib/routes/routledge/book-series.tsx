@@ -5,16 +5,22 @@ import { renderToString } from 'hono/jsx/dom/server';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/:bookName/book-series/:bookId',
+    categories: ['journal'],
+    example: '/routledge/A-Colour-Atlas/book-series/CRCACOLOATLA',
+    parameters: {
+        bookName: 'Book name, can be found in URL',
+        bookId: 'Book ID, can be found in URL',
+    },
     radar: [
         {
             source: ['routledge.com/:bookName/book-series/:bookId'],
         },
     ],
-    name: 'Unknown',
+    name: 'Book Series',
     maintainers: ['TonyRL'],
     handler,
 };
@@ -41,15 +47,15 @@ async function handler(ctx) {
     const list = $('.row.book')
         .toArray()
         .map((item) => {
-            item = $(item);
-            const title = item.find('h3 a');
-            const description = item.find('p.description');
-            const meta = item.find('p.description').prev().text().split('\n');
+            const $item = $(item);
+            const title = $item.find('h3 a');
+            const description = $item.find('p.description');
+            const meta = $item.find('p.description').prev().text().split('\n');
             return {
                 title: title.text(),
                 link: title.attr('href'),
                 description: description.text(),
-                pubDate: parseDate(meta.pop().trim(), 'MMMM DD, YYYY'),
+                pubDate: parseDate(meta.pop()!.trim(), 'MMMM DD, YYYY'),
                 author: meta
                     .map((i) => i.trim())
                     .filter(Boolean)
@@ -58,8 +64,8 @@ async function handler(ctx) {
         });
 
     const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
+        list.map(async (item) => {
+            const description = await cache.tryGet(item.link!, async () => {
                 const { data } = await got(item.link);
                 const $ = load(data);
                 const isbn = $('meta[property="books:isbn"]').attr('content');
@@ -75,10 +81,10 @@ async function handler(ctx) {
                 description.find('button.accordion-button').contents().unwrap();
                 description.find('.fa-shopping-cart').parent().parent().remove();
 
-                item.description = renderDescription(image, description.html());
-                return item;
-            })
-        )
+                return renderDescription(image, description.html());
+            });
+            return { ...item, description };
+        })
     );
 
     return {

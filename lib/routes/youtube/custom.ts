@@ -5,9 +5,9 @@ import ConfigNotFoundError from '@/errors/types/config-not-found';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
-import utils from './utils';
+import { formatDescription, getChannelWithId, getPlaylistItems, getThumbnail, renderYoutube } from './utils';
 
 export const route: Route = {
     path: '/c/:username/:embed?',
@@ -50,12 +50,12 @@ async function handler(ctx) {
     const ytInitialData = JSON.parse(
         $('script')
             .text()
-            .match(/ytInitialData = ({.*?});/)?.[1] || '{}'
+            .match(/ytInitialData = (\{.*?\});/)?.[1] || '{}'
     );
     const externalId = ytInitialData.metadata.channelMetadataRenderer.externalId;
-    const playlistId = (await utils.getChannelWithId(externalId, 'contentDetails', cache)).data.items[0].contentDetails.relatedPlaylists.uploads;
+    const playlistId = (await getChannelWithId(externalId, 'contentDetails', cache)).data.items[0].contentDetails.relatedPlaylists.uploads;
 
-    const data = (await utils.getPlaylistItems(playlistId, 'snippet', cache)).data.items;
+    const data = (await getPlaylistItems(playlistId, 'snippet', cache)).data.items;
 
     return {
         title: `${username} - YouTube`,
@@ -67,10 +67,10 @@ async function handler(ctx) {
             .map((item) => {
                 const snippet = item.snippet;
                 const videoId = snippet.resourceId.videoId;
-                const img = utils.getThumbnail(snippet.thumbnails);
+                const img = getThumbnail(snippet.thumbnails);
                 return {
                     title: snippet.title,
-                    description: utils.renderDescription(embed, videoId, img, utils.formatDescription(snippet.description)),
+                    description: renderYoutube(embed, videoId, img, formatDescription(snippet.description)),
                     pubDate: parseDate(snippet.publishedAt),
                     link: `https://www.youtube.com/watch?v=${videoId}`,
                     author: snippet.videoOwnerChannelTitle,

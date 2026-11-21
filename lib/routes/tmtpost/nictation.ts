@@ -1,11 +1,11 @@
 import type { Route } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/nictation',
     categories: ['new-media'],
-    example: '/tmtpost/word',
+    example: '/tmtpost/nictation',
     parameters: {},
     features: {
         requireConfig: false,
@@ -15,9 +15,11 @@ export const route: Route = {
         supportPodcast: false,
         supportScihub: false,
     },
-    radar: {
-        source: ['www.tmtpost.com'],
-    },
+    radar: [
+        {
+            source: ['www.tmtpost.com'],
+        },
+    ],
     name: '快报',
     maintainers: ['defp'],
     handler,
@@ -25,7 +27,7 @@ export const route: Route = {
 };
 
 async function handler() {
-    const currentTime = Math.floor(Date.now() / 1000);
+    const currentTime = Math.floor(Temporal.Now.instant().epochMilliseconds / 1000);
     const oneHourAgo = currentTime - 3600;
     const url = 'https://api.tmtpost.com/v1/word/list';
 

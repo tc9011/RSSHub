@@ -1,34 +1,39 @@
+import { Context } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
 
 import { config } from '@/config';
 import template from '@/middleware/template';
 
-const createCtx = (query: Record<string, string | undefined>, data: any, extra: Record<string, unknown> = {}) => {
-    const store = new Map<string, unknown>([['data', data], ...Object.entries(extra)]);
-    return {
-        req: {
-            query: (key: string) => query[key],
-            url: 'http://localhost/rss',
-        },
-        get: (key: string) => store.get(key),
-        set: (key: string, value: unknown) => store.set(key, value),
+const createCtx = (query: Record<string, string | undefined>, data: any, extra: { json?: { ok: boolean }; apiData?: { ok: boolean }; redirect?: string } = {}) => {
+    const url = new URL('http://localhost/rss');
+    for (const [key, value] of Object.entries(query)) {
+        if (value !== undefined) {
+            url.searchParams.set(key, value);
+        }
+    }
+    const ctx = new Context(new Request(url), { env: {}, path: url.pathname });
+    ctx.set('data', data);
+    for (const [key, value] of Object.entries(extra)) {
+        ctx.set(key, value);
+    }
+
+    return Object.assign(ctx, {
         json: vi.fn((payload) => payload),
         html: vi.fn((payload) => payload),
         render: vi.fn((payload) => payload),
         body: vi.fn((payload) => payload),
-        redirect: vi.fn((url: string, status: number) => ({ url, status })),
+        redirect: vi.fn((redirectUrl: string, status: number) => ({ url: redirectUrl, status })),
         header: vi.fn(),
-        res: { headers: new Headers() },
-    };
+    });
 };
 
 describe('template middleware', () => {
     it('returns debug json when requested', async () => {
         const originalDebug = config.debugInfo;
-        config.debugInfo = true;
+        config.debugInfo = 'true';
 
         const ctx = createCtx({ format: 'debug.json' }, { item: [] }, { json: { ok: true } });
-        const result = await template(ctx as any, async () => {});
+        const result = await template(ctx, async () => {});
 
         expect(result).toEqual({ ok: true });
         expect(ctx.json).toHaveBeenCalled();
@@ -38,7 +43,7 @@ describe('template middleware', () => {
 
     it('returns api data without rendering', async () => {
         const ctx = createCtx({}, null, { apiData: { ok: true } });
-        const result = await template(ctx as any, async () => {});
+        const result = await template(ctx, async () => {});
 
         expect(result).toEqual({ ok: true });
         expect(ctx.json).toHaveBeenCalledWith({ ok: true });
@@ -46,13 +51,44 @@ describe('template middleware', () => {
 
     it('renders debug html snippet when requested', async () => {
         const originalDebug = config.debugInfo;
-        config.debugInfo = true;
+        config.debugInfo = 'true';
 
         const ctx = createCtx({ format: '0.debug.html' }, { item: [{ description: 'Hello' }] });
-        const result = await template(ctx as any, async () => {});
+        const result = await template(ctx, async () => {});
 
         expect(result).toBe('Hello');
         expect(ctx.html).toHaveBeenCalled();
+        expect(ctx.header).toHaveBeenCalledWith('Content-Security-Policy', expect.stringContaining('sandbox'));
+
+        config.debugInfo = originalDebug;
+    });
+
+    it.each([
+        ['false', 'debug.json', {}],
+        ['false', '0.debug.html', {}],
+        ['secret', 'debug.json', {}],
+        ['secret', '0.debug.html', {}],
+        ['secret', 'debug.json', { debug: 'wrong' }],
+        ['secret', '0.debug.html', { debug: 'wrong' }],
+    ])('ignores debug formats when debugInfo=%s (format=%s, query %o)', async (debugInfo, format, query: Record<string, string>) => {
+        const originalDebug = config.debugInfo;
+        config.debugInfo = debugInfo;
+
+        const ctx = createCtx({ format, ...query }, { item: [{ description: 'Hello' }] }, { json: { ok: true } });
+        await template(ctx, async () => {});
+
+        expect(ctx.json).not.toHaveBeenCalled();
+        expect(ctx.html).not.toHaveBeenCalled();
+
+        config.debugInfo = originalDebug;
+    });
+
+    it('allows debug formats with the debug secret', async () => {
+        const originalDebug = config.debugInfo;
+        config.debugInfo = 'secret';
+
+        const ctx = createCtx({ format: '0.debug.html', debug: 'secret' }, { item: [{ description: 'Hello' }] });
+        expect(await template(ctx, async () => {})).toBe('Hello');
 
         config.debugInfo = originalDebug;
     });
@@ -72,13 +108,79 @@ describe('template middleware', () => {
             ],
         };
         const ctx = createCtx({ format: 'rss' }, data);
-        await template(ctx as any, async () => {});
+        await template(ctx, async () => {});
 
         expect(data.item[0].title).toBe('ABC...');
         expect(data.item[0].author).toBe('Alice, Bob');
-        expect(data.item[0].itunes_duration).toBe('0:01:05');
+        expect(data.item[0].itunes_duration).toBe(65);
 
         config.titleLengthLimit = originalLimit;
+    });
+
+    it('removes control characters from every field', async () => {
+        const pubDate = Temporal.Instant.fromEpochMilliseconds(0);
+        const data = {
+            title: 'Feed\u{0008}',
+            description: 'About\u{0008}',
+            link: 'https://example.com/\u{0008}',
+            item: [
+                {
+                    title: 'Tab\tbed\u{0008} title',
+                    description: 'Body\u{0008}\u{FFFE}',
+                    link: 'https://example.com/item\u{0008}',
+                    author: 'Author\u{0008}',
+                    category: ['Tag\u{0008}'],
+                    guid: 'id\u{0008}',
+                    pubDate,
+                    content: { text: 'Text\u{0008}' },
+                    media: { content: { url: 'https://example.com/media\u{0008}' } },
+                    attachments: [{ url: 'https://example.com/file\u{0008}', mime_type: 'audio/mpeg' }],
+                },
+            ],
+        };
+        const ctx = createCtx({ format: 'rss' }, data);
+        await template(ctx, async () => {});
+
+        expect(data).toEqual({
+            title: 'Feed',
+            description: 'About',
+            link: 'https://example.com/',
+            item: [
+                {
+                    title: 'Tab bed title',
+                    description: 'Body',
+                    link: 'https://example.com/item',
+                    author: 'Author',
+                    category: ['Tag'],
+                    guid: 'id',
+                    pubDate,
+                    content: { text: 'Text' },
+                    media: { content: { url: 'https://example.com/media' } },
+                    attachments: [{ url: 'https://example.com/file', mime_type: 'audio/mpeg' }],
+                },
+            ],
+        });
+    });
+
+    it.each([
+        ['', undefined],
+        [null, undefined],
+        [undefined, undefined],
+        [0, undefined],
+        [Temporal.Instant.from('2019-01-01T00:00:00Z'), '2019-01-01T00:00:00.000Z'],
+        [1_546_300_800_000, '2019-01-01T00:00:00.000Z'],
+        ['2019-01-01T00:00:00.000Z', '2019-01-01T00:00:00.000Z'],
+        ['Tue, 01 Jan 2019 00:00:00 GMT', '2019-01-01T00:00:00.000Z'],
+        ['Tue, 01 Jan 2019 08:00:00 UTC+8', '2019-01-01T00:00:00.000Z'],
+        // no zone in the string, so it is read as UTC
+        ['Tue, 01 Jan 2019 00:00:00', '2019-01-01T00:00:00.000Z'],
+        ['something invalid', undefined],
+    ])('converts the date %s to ISO 8601 for non-rss formats', async (date, expected) => {
+        const data = { title: 'Test', item: [{ title: 'Item', pubDate: date, updated: date }] };
+        await template(createCtx({ format: 'atom' }, data), async () => {});
+
+        expect(data.item[0].pubDate).toBe(expected);
+        expect(data.item[0].updated).toBe(expected);
     });
 
     it('clears invalid dates for non-rss formats', async () => {
@@ -93,15 +195,15 @@ describe('template middleware', () => {
             ],
         };
         const ctx = createCtx({ format: 'json' }, data);
-        await template(ctx as any, async () => {});
+        await template(ctx, async () => {});
 
-        expect(data.item[0].pubDate).toBe('');
-        expect(data.item[0].updated).toBe('');
+        expect(data.item[0].pubDate).toBeUndefined();
+        expect(data.item[0].updated).toBeUndefined();
     });
 
     it('returns redirect response when redirect is set', async () => {
         const ctx = createCtx({}, { item: [] }, { redirect: 'https://example.com' });
-        const result = await template(ctx as any, async () => {});
+        const result = await template(ctx, async () => {});
 
         expect(result).toEqual({ url: 'https://example.com', status: 301 });
         expect(ctx.redirect).toHaveBeenCalledWith('https://example.com', 301);
@@ -118,7 +220,7 @@ describe('template middleware', () => {
             ],
         };
         const ctx = createCtx({ format: 'rss3' }, data);
-        const result = await template(ctx as any, async () => {});
+        const result = await template(ctx, async () => {});
 
         expect(ctx.json).toHaveBeenCalled();
         expect(result).toHaveProperty('data');
@@ -135,7 +237,7 @@ describe('template middleware', () => {
             ],
         };
         const ctx = createCtx({ format: 'atom' }, data);
-        await template(ctx as any, async () => {});
+        await template(ctx, async () => {});
 
         expect(ctx.render).toHaveBeenCalled();
     });

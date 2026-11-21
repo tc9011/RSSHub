@@ -1,12 +1,10 @@
+import type { Cheerio, CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
+import type { Element } from 'domhandler';
 
 import type { Data, DataItem, Route } from '@/types';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
-
-type CheerioInstance = ReturnType<typeof load>;
-type CheerioSelection = ReturnType<CheerioInstance>;
+import { parseDate } from '@/utils/time';
 
 interface DateContext {
     currentYear: number;
@@ -14,15 +12,15 @@ interface DateContext {
     prevDay: number;
 }
 
-function parseDateString(dateStr: string, ctx: DateContext): Date | undefined {
+function parseDateString(dateStr: string, ctx: DateContext): Temporal.Instant | undefined {
     // 格式如 "1月9·周五" 或 "12月25·周三"
-    const match = dateStr.match(/(\d+)月(\d+)/);
+    const match = /(\d+)月(\d+)/.exec(dateStr);
     if (!match) {
         return undefined;
     }
 
-    const month = Number.parseInt(match[1], 10);
-    const day = Number.parseInt(match[2], 10);
+    const month = Number(match[1]);
+    const day = Number(match[2]);
 
     // 检测跨年：如果当前日期比上一个日期大，说明跨年了
     if (ctx.prevMonth > 0 && (month > ctx.prevMonth || (month === ctx.prevMonth && day > ctx.prevDay))) {
@@ -33,11 +31,11 @@ function parseDateString(dateStr: string, ctx: DateContext): Date | undefined {
     ctx.prevDay = day;
 
     // 网站只提供日期，不提供时间，使用 timezone 处理时区
-    return timezone(parseDate(`${ctx.currentYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`), 8);
+    return parseDate(`${ctx.currentYear}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`, 8);
 }
 
-function processNewsList($: CheerioInstance, $newsList: CheerioSelection, ctx: DateContext): DataItem[] {
-    let currentPubDate: Date | undefined;
+function processNewsList($: CheerioAPI, $newsList: Cheerio<Element>, ctx: DateContext): DataItem[] {
+    let currentPubDate: Temporal.Instant | undefined;
 
     return $newsList
         .children()
@@ -46,7 +44,7 @@ function processNewsList($: CheerioInstance, $newsList: CheerioSelection, ctx: D
             const $child = $(child);
 
             if ($child.hasClass('news-date')) {
-                currentPubDate = parseDateString($child.text().trim(), ctx);
+                currentPubDate = parseDateString($child.text(), ctx);
                 return [];
             }
 
@@ -54,7 +52,7 @@ function processNewsList($: CheerioInstance, $newsList: CheerioSelection, ctx: D
                 const $link = $child.find('h2 a');
                 const title = $link.text().trim();
                 const link = $link.attr('href');
-                const description = $child.find('p.text-muted').html() || '';
+                const description = $child.find('p.text-muted').html();
 
                 if (!link) {
                     return [];
@@ -84,7 +82,7 @@ async function handler(): Promise<Data> {
     const $firstNewsList = $('.news-list').first();
 
     const dateCtx: DateContext = {
-        currentYear: new Date().getFullYear(),
+        currentYear: Temporal.Now.zonedDateTimeISO('UTC').year,
         prevMonth: 0,
         prevDay: 0,
     };
@@ -94,7 +92,7 @@ async function handler(): Promise<Data> {
     return {
         title: '每日AI资讯 | AI工具集',
         link: 'https://ai-bot.cn/daily-ai-news/',
-        item: items,
+        item: items.filter((item, index, items) => items.findIndex((candidate) => candidate.link === item.link) === index),
     };
 }
 

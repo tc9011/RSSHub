@@ -1,7 +1,8 @@
+import pMap from 'p-map';
+
 import type { Route } from '@/types';
 import ofetch from '@/utils/ofetch';
 
-import type { Article } from './types';
 import { getCollection, parseList, ProcessFeed } from './utils';
 
 export const route: Route = {
@@ -28,7 +29,6 @@ export const route: Route = {
     handler,
 };
 
-// 获取所有收藏夹文章内容
 async function getArticleList(collectionId) {
     const collectPage = await getCollection(collectionId);
 
@@ -37,14 +37,21 @@ async function getArticleList(collectionId) {
 
 async function handler(ctx) {
     const userId = ctx.req.param('userId');
-    const response = await ofetch(`https://api.juejin.cn/interact_api/v1/collectionSet/list?user_id=${userId}&cursor=0&limit=20`);
+    const response = await ofetch<{ data: Array<{ tag_id: string }> }>(`https://api.juejin.cn/interact_api/v1/collectionSet/list?user_id=${userId}&cursor=0&limit=20`);
 
-    // 获取用户所有收藏夹id
+    // Collection IDs from the first source page.
     const collectionId = response.data.map((item) => item.tag_id);
 
-    const temp = (await Promise.all(collectionId.map((id) => getArticleList(id)))) as Article[][];
+    const temp = await pMap(collectionId, getArticleList, { concurrency: 3 });
     const posts = temp.flat().filter(Boolean);
-    const list = parseList(posts);
+    const links = new Set<string>();
+    const list = parseList(posts).filter((item) => {
+        if (links.has(item.link)) {
+            return false;
+        }
+        links.add(item.link);
+        return true;
+    });
 
     const result = await ProcessFeed(list);
 
@@ -53,6 +60,5 @@ async function handler(ctx) {
         link: `https://juejin.im/user/${userId}/collections`,
         description: '掘金，指定用户整个收藏集',
         item: result,
-        allowEmpty: true,
     };
 }

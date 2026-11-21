@@ -1,12 +1,11 @@
+import { decodeXML } from 'entities';
 import Parser from 'rss-parser';
 import sanitizeHtml from 'sanitize-html';
 
 import type { Route } from '@/types';
 import { ViewType } from '@/types';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
-
-const parser = new Parser();
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/activity/:user',
@@ -35,11 +34,12 @@ export const route: Route = {
     ],
     handler: async (ctx) => {
         const { user } = ctx.req.param();
-        const response = (await ofetch(`https://github.com/${user}.atom`)) as Blob;
+        const response = await ofetch<Blob>(`https://github.com/${user}.atom`);
         const raw = await response.text();
         // <media:thumbnail height="30" width="30" url="https://avatars.githubusercontent.com/u/8266075?s=30&amp;v=4"/>
-        const image = raw.match(/<media:thumbnail height="30" width="30" url="(.+?)"/)?.[1];
-        const feed = await parser.parseString(raw);
+        const rawImage = raw.match(/<media:thumbnail height="30" width="30" url="(.+?)"/)?.[1];
+        const image = rawImage ? decodeXML(rawImage) : undefined;
+        const feed = await new Parser().parseString(raw);
         return {
             title: `${user}'s GitHub activities`,
             link: feed.link,
@@ -47,13 +47,12 @@ export const route: Route = {
             item: feed.items.map((item) => ({
                 title: item.title ?? '',
                 link: item.link,
-                description: sanitizeHtml(item.content?.replaceAll(/href="\/(.+?)"/g, `href="https://github.com/$1"`) ?? '', { allowedTags: [...sanitizeHtml.defaults.allowedTags, 'img'] }),
+                description: sanitizeHtml(item.content ?? '', { allowedTags: [...sanitizeHtml.defaults.allowedTags, 'img'] }),
                 pubDate: item.pubDate ? parseDate(item.pubDate) : undefined,
                 author: item.author,
                 guid: item.id,
                 image,
             })),
-            allowEmpty: true,
         };
     },
 };

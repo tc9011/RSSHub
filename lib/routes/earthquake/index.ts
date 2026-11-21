@@ -1,7 +1,6 @@
 import type { Route } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/:region?',
@@ -26,7 +25,7 @@ export const route: Route = {
     maintainers: ['LogicJake'],
     handler,
     url: 'www.cea.gov.cn/cea/xwzx/zqsd/index.html',
-    description: `可通过全局过滤参数订阅您感兴趣的地区.`,
+    description: '可通过全局过滤参数订阅您感兴趣的地区.',
 };
 
 async function handler(ctx) {
@@ -54,7 +53,7 @@ async function handler(ctx) {
         return {
             title: `${epicenter}发生${num}级地震`,
             link: `https://www.cea.gov.cn/eportal/ui?struts.portlet.mode=view&struts.portlet.action=/portlet/expressEarthquake!toNewInfoView.action&pageId=366521&id=${id}`,
-            pubDate: timezone(parseDate(date, 'YYYY-MM-DD HH:mm:ss'), +8),
+            pubDate: parseDate(date, 'YYYY-MM-DD HH:mm:ss', 8),
             description,
         };
     });

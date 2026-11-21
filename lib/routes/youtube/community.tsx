@@ -1,12 +1,21 @@
 import { load } from 'cheerio';
+import { escapeText } from 'entities';
 import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
 
 import type { Route } from '@/types';
 import ofetch from '@/utils/ofetch';
-import { parseRelativeDate } from '@/utils/parse-date';
+import { parseRelativeDate } from '@/utils/time';
 
 import { isYouTubeChannelId } from './utils';
+
+const parsePostDate = (value: string | undefined) => {
+    const dateText = value?.split('(', 1)[0].trim();
+    if (!dateText) {
+        return;
+    }
+    return parseRelativeDate(dateText);
+};
 
 const renderCommunityDescription = (runs, media) =>
     renderToString(
@@ -17,7 +26,7 @@ const renderCommunityDescription = (runs, media) =>
                       if (url) {
                           return <a href={url.startsWith('https://') ? url : `https://www.youtube.com${url}`}>{run.text}</a>;
                       }
-                      return <>{raw((run?.text ?? '').replaceAll('\n', '<br>'))}</>;
+                      return <>{raw(escapeText(run?.text ?? '').replaceAll('\n', '<br>'))}</>;
                   })
                 : null}
             {media?.length ? (
@@ -52,7 +61,7 @@ async function handler(ctx) {
     const ytInitialData = JSON.parse(
         $('script')
             .text()
-            .match(/ytInitialData = ({.*?});/)?.[1] ?? '{}'
+            .match(/ytInitialData = (\{.*?\});/)?.[1] ?? '{}'
     );
 
     const channelMetadata = ytInitialData.metadata.channelMetadataRenderer;
@@ -76,7 +85,7 @@ async function handler(ctx) {
                 description: renderCommunityDescription(post.contentText.runs, media),
                 link: `https://www.youtube.com/post/${post.postId}`,
                 author: post.authorText.runs[0].text,
-                pubDate: parseRelativeDate(post.publishedTimeText.runs[0].text.split('(')[0]),
+                pubDate: parsePostDate(post.publishedTimeText?.runs?.[0]?.text),
             };
         });
 

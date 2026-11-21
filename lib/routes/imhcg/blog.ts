@@ -30,19 +30,22 @@ async function handler() {
             const title = $(item).find('a.article-title').text();
             const link = $(item).find('a.article-title').attr('href');
             const author = $(item).find('p.article-author').text();
-            const time = $(item).find('p.article-time').text();
+            const category = $(item)
+                .find('.article-tags .tag-item')
+                .toArray()
+                .map((tag) => $(tag).text());
             const description = $(item).find('p.article-text').text();
             return {
                 title,
                 link,
                 author,
-                time,
+                category,
                 description,
             };
         });
 
     return {
-        title: `Engineering Blogs`,
+        title: 'Engineering Blogs',
         link: 'https://infos.imhcg.cn/',
         item: items,
     };

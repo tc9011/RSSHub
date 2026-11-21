@@ -1,8 +1,7 @@
 import type { Context } from 'hono';
 
 import type { Data, Route } from '@/types';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 import { getResently, getUserInfo } from './api';
 import { INDEX_URL, REQUIRE_CONFIG } from './constant';
@@ -25,7 +24,7 @@ async function handler(ctx: Context) {
 
     const uid = ctx.req.param('uid');
 
-    const [resently, userInfo] = await Promise.all([getResently(uid), getUserInfo(uid)]);
+    const [resently, userInfo] = await Promise.all([getResently(uid!), getUserInfo(uid!)]);
 
     return {
         title: `石之家 - ${userInfo.character_name}@${userInfo.group_name} 的游戏近况`,
@@ -33,8 +32,8 @@ async function handler(ctx: Context) {
         image: userInfo.avatar,
         item: resently.map((i) => ({
             title: `${i.event_type} - ${i.detail}`,
-            pubDate: timezone(parseDate(i.log_time), +8),
+            pubDate: parseDate(i.log_time, 8),
             guid: `sdo/ff14risingstones/resently:${uid}-${i.detail}`,
         })),
-    } as Data;
+    } satisfies Data;
 }

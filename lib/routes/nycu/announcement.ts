@@ -4,7 +4,7 @@ import type { Context } from 'hono';
 
 import type { Data, Route } from '@/types';
 import ofetch from '@/utils/ofetch';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 async function handler(ctx: Context): Promise<Data> {
     const type = ctx.req.param('type') ?? '5';
@@ -25,12 +25,12 @@ async function handler(ctx: Context): Promise<Data> {
     const item = $('.category-style tr .style2')
         .toArray()
         .map((titleEle) => {
-            const date = $(titleEle).parent().next().find('td').text().split('-')[0]?.trim();
+            const date = $(titleEle).parent().next().find('td').text().split('-', 1)[0];
 
             return {
-                title: $(titleEle).attr('title')?.trim() || '',
-                link: $(titleEle).find('a').attr('href') || '',
-                pubDate: date ? timezone(date, 8) : undefined,
+                title: $(titleEle).find('a').attr('title') || $(titleEle).find('a').text(),
+                link: new URL($(titleEle).find('a').attr('href') || '', url).href,
+                pubDate: date ? parseDate(date, 8) : undefined,
             };
         });
 
@@ -55,7 +55,7 @@ export const route: Route = {
 | 校園徵才 |   9   |
 | 其他活動 |   8   |
 | 電子公文 |   3   |
-| 校外訊息 |  10   |`,
+| 校外訊息 |   10  |`,
     path: '/announcement/:type',
     parameters: { type: '類型，見下表' },
     example: '/nycu/announcement/5',

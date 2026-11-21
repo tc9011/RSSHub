@@ -1,11 +1,11 @@
-import MarkdownIt from 'markdown-it';
 import queryString from 'query-string';
 
 import { config } from '@/config';
 import type { Route } from '@/types';
 import { ViewType } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import MarkdownIt from '@/utils/markdown-it';
+import { parseDate } from '@/utils/time';
 
 const md = MarkdownIt({
     html: true,
@@ -56,15 +56,20 @@ async function handler(ctx) {
     const repo = ctx.req.param('repo');
     const state = ctx.req.param('state');
     const labels = ctx.req.param('labels');
-    const limit = ctx.req.query('limit') ? Math.min(Number.parseInt(ctx.req.query('limit')), 100) : 100;
+    const limit = Math.max(100, Number.parseInt(ctx.req.query('limit') ?? '') || 100);
 
     const host = `https://github.com/${user}/${repo}/issues`;
-    const url = `https://api.github.com/repos/${user}/${repo}/issues`;
+    const url = `https://api.github.com/repos/${encodeURIComponent(user)}/${encodeURIComponent(repo)}/issues`;
 
-    const headers = { Accept: 'application/vnd.github.v3+json' };
-    if (config.github && config.github.access_token) {
-        headers.Authorization = `token ${config.github.access_token}`;
-    }
+    const headers =
+        config.github && config.github.access_token
+            ? {
+                  Accept: 'application/vnd.github.v3+json',
+                  Authorization: `token ${config.github.access_token}`,
+              }
+            : {
+                  Accept: 'application/vnd.github.v3+json',
+              };
     const response = await got({
         method: 'get',
         url,

@@ -1,22 +1,23 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import parser from '@/utils/rss-parser';
 
 const getArticleDetail = (link) =>
-    cache.tryGet(link, async () => {
+    cache.tryGet(link, async (): Promise<any> => {
         const response = await got(link);
         const $ = load(response.data);
 
         // Prefer tags to slug
         let categories = $('.tag')
             .toArray()
-            .map((el) => $(el).text().trim());
+            .map((el) => $(el).text());
 
         if (categories.length < 1) {
-            const slug = $('.slug a').contents().first().text().trim();
+            const slug = $('.slug a').contents().first().text();
 
             if (slug) {
                 categories = [slug];
@@ -31,7 +32,7 @@ const getArticleDetail = (link) =>
         // handle multiple audios
         for (const x of $('.audio-module').toArray()) {
             const audioLink = $($(x).find('.audio-tool-download a')).attr('href');
-            const audio_tag = `<audio controls><source src="${audioLink}" type="audio/mp3"></audio>`;
+            const audio_tag = `<audio controls><source src="${audioLink}" type="audio/mpeg"></audio>`;
             $(x).replaceWith(audio_tag);
         }
 
@@ -91,7 +92,7 @@ export const route: Route = {
     name: 'News',
     maintainers: ['bennyyip'],
     handler,
-    description: `Provide full article RSS for CBC topics.`,
+    description: 'Provide full article RSS for NPR topics.',
 };
 
 async function handler(ctx) {
@@ -99,8 +100,9 @@ async function handler(ctx) {
     const feed = await parser.parseURL(`https://feeds.npr.org/${endpoint}/rss.xml`);
 
     const items = (
-        await Promise.all(
-            feed.items.map(async (item) => {
+        await pMap(
+            feed.items,
+            async (item) => {
                 const itemDetails = await getArticleDetail(item.link);
                 if (itemDetails === null) {
                     return null;
@@ -110,15 +112,16 @@ async function handler(ctx) {
                     description: itemDetails.article,
                     category: itemDetails.categories,
                 };
-            })
+            },
+            { concurrency: 3 }
         )
-    ).filter(Boolean);
+    ).filter((item) => item !== null);
 
     return {
-        title: feed.title,
+        title: feed.title!,
         link: feed.link,
         description: feed.description,
         icon: 'https://media.npr.org/images/podcasts/primary/npr_generic_image_300.jpg?s=200',
-        item: items,
+        item: items as DataItem[],
     };
 }

@@ -3,8 +3,7 @@ import { load } from 'cheerio';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 import { cookieJar, processArticle } from './utils';
 
@@ -48,12 +47,12 @@ async function handler(ctx) {
     let items = $('.fallsBox')
         .toArray()
         .map((item) => {
-            item = $(item);
+            const $item = $(item);
             return {
-                title: item.find('.ftitle a').attr('title'),
-                link: item.find('.ftitle a').attr('href'),
-                pubDate: timezone(parseDate(item.find('.dateBox').text(), 'YYYY-MM-DD HH:mm'), 8),
-                author: item.find('.dateBox span a').eq(0).text().trim(),
+                title: $item.find('.ftitle a').attr('title')!,
+                link: $item.find('.ftitle a').attr('href'),
+                pubDate: parseDate($item.find('.dateBox').text(), 'YYYY-MM-DD HH:mm', 8),
+                author: $item.find('.dateBox span a').eq(0).text().trim(),
             };
         });
 
@@ -63,6 +62,6 @@ async function handler(ctx) {
         title: $('head title').text(),
         link: url,
         item: items,
-        language: 'zh-TW',
+        language: 'zh-TW' as const,
     };
 }

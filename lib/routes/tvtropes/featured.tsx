@@ -1,7 +1,8 @@
 import { load } from 'cheerio';
 import { renderToString } from 'hono/jsx/dom/server';
 
-import type { Route } from '@/types';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
+import type { Language, Route } from '@/types';
 import got from '@/utils/got';
 
 const categories = {
@@ -32,6 +33,9 @@ export const route: Route = {
 
 async function handler(ctx) {
     const { category = 'today' } = ctx.req.param();
+    if (!Object.hasOwn(categories, category)) {
+        throw new InvalidParameterError(`Unsupported category "${category}", please choose from: ${Object.keys(categories).join(', ')}`);
+    }
 
     const rootUrl = 'https://tvtropes.org';
 
@@ -41,20 +45,23 @@ async function handler(ctx) {
 
     const item = $(`div#featured-tropes div.${categories[category]}`);
 
-    const link = new URL(item.find('h2.entry-title a').prop('href'), rootUrl).href;
+    const link = new URL(item.find('h2.entry-title a').prop('href')!, rootUrl).href;
 
     const { data: detailResponse } = await got(link);
 
     const content = load(detailResponse);
 
-    content('div.folderlabel').remove();
+    content('div.folderlabel[onclick="toggleAllFolders();"]').remove();
+    content('div.folderlabel[onclick^="togglefolder("]').each((_, element) => {
+        content(element).replaceWith(`<h2>${content(element).html()}</h2>`);
+    });
 
     content('div.lazy_load_img_box').each((_, el) => {
-        el = content(el);
+        const $el = content(el);
 
-        const image = el.find('img');
+        const image = $el.find('img');
 
-        el.replaceWith(
+        $el.replaceWith(
             renderToString(
                 <figure>
                     <img src={image.prop('src')} alt={image.prop('alt')} width={image.prop('width')} height={image.prop('height')} />
@@ -71,15 +78,17 @@ async function handler(ctx) {
         },
     ];
 
-    const image = new URL($('img.logo-big').prop('src'), rootUrl).href;
+    const image = new URL($('img.logo-big').prop('src')!, rootUrl).href;
     const icon = $('link[rel="shortcut icon"]').prop('href');
+
+    const language = $('html').prop('lang') as Language;
 
     return {
         item: items,
         title: `${$('title').text()} - ${item.find('span.box-title').text()}`,
         link: rootUrl,
         description: $('meta[name="description"]').prop('content'),
-        language: $('html').prop('lang'),
+        language,
         image,
         icon,
         logo: icon,

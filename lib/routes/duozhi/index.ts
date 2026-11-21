@@ -2,33 +2,33 @@ import type { Cheerio, CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
 import type { Element } from 'domhandler';
 import type { Context } from 'hono';
+import pMap from 'p-map';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { getRouteLimit } from '@/utils/route-limit';
+import { parseDate } from '@/utils/time';
 
 import { renderDescription } from './templates/description';
 
 export const handler = async (ctx: Context): Promise<Data> => {
     const { category } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '30', 10);
+    const limit = getRouteLimit(ctx, 30);
 
     const baseUrl = 'http://www.duozhi.com';
-    const targetUrl: string = new URL(category && category.endsWith('/') ? category : category ? `${category}/` : '', baseUrl).href;
+    const targetUrl = `${baseUrl}/${category && category.endsWith('/') ? category : category ? `${category}/` : ''}`;
 
     const response = await ofetch(targetUrl);
     const $: CheerioAPI = load(response);
-    const language = $('html').attr('lang') ?? 'zh';
+    const language = ($('html').attr('lang') ?? 'zh') as Language;
 
-    let items: DataItem[] = [];
-
-    items = $('div.post-item')
-        .slice(0, limit)
+    let items: DataItem[] = $('div.post-item')
+        // entries are siblings; one nested in another would only read the same subtree again
+        .not('div.post-item div.post-item')
         .toArray()
-        .map((el): Element => {
+        .map((el) => {
             const $el: Cheerio<Element> = $(el);
             const $aEl: Cheerio<Element> = $el.find('a.post-title');
 
@@ -47,13 +47,12 @@ export const handler = async (ctx: Context): Promise<Data> => {
                       ]
                     : undefined,
             });
-            const pubDateStr: string | undefined = $el.find('div.post-attr').text().split(/\|/)[0]?.trim();
+            const attrText: string = $el.find('div.post-attr').first().text();
+            const pubDateStr: string | undefined = attrText.split(/\|/, 1)[0]?.trim();
             const linkUrl: string | undefined = $aEl.attr('href');
             const categoryEls: Element[] = $el.find('span.post-tag a.link-tag').toArray();
             const categories: string[] = [...new Set(categoryEls.map((el) => $(el).text()).filter(Boolean))];
-            const authors: DataItem['author'] = $el
-                .find('div.post-attr')
-                .text()
+            const authors: DataItem['author'] = attrText
                 .split(/by/)
                 ?.pop()
                 ?.split(/\s+/)
@@ -63,36 +62,53 @@ export const handler = async (ctx: Context): Promise<Data> => {
                     url: undefined,
                     avatar: undefined,
                 }));
-            const upDatedStr: string | undefined = pubDateStr;
 
             const processedItem: DataItem = {
                 title,
                 description,
                 pubDate: pubDateStr ? parseDate(pubDateStr) : undefined,
-                link: linkUrl,
+                link: linkUrl ? new URL(linkUrl, targetUrl).href : undefined,
                 category: categories,
                 author: authors,
                 content: {
                     html: description,
-                    text: description,
+                    text: $el.find('p.post-desc').text(),
                 },
                 image,
                 banner: image,
-                updated: upDatedStr ? parseDate(upDatedStr) : undefined,
                 language,
             };
 
             return processedItem;
         });
 
-    items = await Promise.all(
-        items.map((item) => {
+    if (ctx.req.query('sorted') === 'false') {
+        items = items.slice(0, limit);
+    } else if (items.every((item) => item.pubDate)) {
+        items.sort((a, b) => Temporal.Instant.compare(b.pubDate as Temporal.Instant, a.pubDate as Temporal.Instant));
+        // List dates have day precision; include the entire boundary day before detail timestamps are sorted.
+        const boundaryDate = items[limit - 1]?.pubDate;
+        if (boundaryDate) {
+            items = items.filter((item) => Temporal.Instant.compare(item.pubDate as Temporal.Instant, boundaryDate as Temporal.Instant) >= 0);
+        }
+    } else {
+        items = items.slice(0, Math.max(30, limit));
+    }
+
+    items = await pMap(
+        items,
+        (item) => {
             if (!item.link) {
+                return item;
+            }
+            // only follow links on the site itself
+            const { protocol, hostname } = new URL(item.link);
+            if (!['http:', 'https:'].includes(protocol) || (hostname !== 'duozhi.com' && !hostname.endsWith('.duozhi.com'))) {
                 return item;
             }
 
             return cache.tryGet(item.link, async (): Promise<DataItem> => {
-                const detailResponse = await ofetch(item.link);
+                const detailResponse = await ofetch(item.link!);
                 const $$: CheerioAPI = load(detailResponse);
 
                 const title: string = $$('h1.subject-title').text();
@@ -107,14 +123,12 @@ export const handler = async (ctx: Context): Promise<Data> => {
                           ]
                         : undefined,
                     intro: $$('div.subject-desc').text(),
-                    description: $$('div.subject-content').html(),
+                    description: $$('div.subject-content').html() ?? undefined,
                 });
-                const pubDateStr: string | undefined = $$('div.subject-meta')
-                    .text()
-                    ?.split(/发布/)[0];
+                const pubDateStr: string | undefined = $$('div.subject-meta').text()?.split(/发布/, 1)[0];
                 const categories: string[] = [
                     ...new Set([
-                        ...(item.category ?? []),
+                        ...[item.category ?? []].flat(),
                         ...($$('meta[name="keywords"]')
                             .attr('content')
                             ?.split(',')
@@ -132,21 +146,19 @@ export const handler = async (ctx: Context): Promise<Data> => {
                         url: undefined,
                         avatar: undefined,
                     }));
-                const upDatedStr: string | undefined = pubDateStr;
 
                 const processedItem: DataItem = {
                     title,
                     description,
-                    pubDate: pubDateStr ? timezone(parseDate(pubDateStr), +8) : item.pubDate,
+                    pubDate: pubDateStr ? parseDate(pubDateStr, 8) : item.pubDate,
                     category: categories,
                     author: authors,
                     content: {
                         html: description,
-                        text: description,
+                        text: $$('div.subject-content').text(),
                     },
                     image,
                     banner: image,
-                    updated: upDatedStr ? timezone(parseDate(upDatedStr), +8) : item.updated,
                     language,
                 };
 
@@ -155,7 +167,8 @@ export const handler = async (ctx: Context): Promise<Data> => {
                     ...processedItem,
                 };
             });
-        })
+        },
+        { concurrency: 4 }
     );
 
     return {
@@ -175,7 +188,7 @@ export const route: Route = {
     path: '/:category{.+}?',
     name: '分类',
     url: 'www.duozhi.com',
-    maintainers: ['nczitzk'],
+    maintainers: ['WenryXu', 'nczitzk'],
     handler,
     example: '/duozhi/industry',
     parameters: {
@@ -237,25 +250,23 @@ export const route: Route = {
             ],
         },
     },
-    description: `:::tip
+    description: `::: tip
 订阅 [行业](http://www.duozhi.com/industry/)，其源网址为 \`http://www.duozhi.com/industry/\`，请参考该 URL 指定部分构成参数，此时路由为 [\`/duozhi/industry\`](http://rsshub.app/duozhi/industry)。
 :::
 
-  | [行业](http://www.duozhi.com/industry/)        | [多知商学院](http://www.duozhi.com/DBS/) | [OpenTalk](http://www.duozhi.com/opentalk/)    |
-  | ---------------------------------------------- | ---------------------------------------- | ---------------------------------------------- |
-  | [industry](https://rsshub.app/duozhi/industry) | [DBS](https://rsshub.app/duozhi/DBS)     | [opentalk](https://rsshub.app/duozhi/opentalk) |
+| [行业](http://www.duozhi.com/industry/)        | [多知商学院](http://www.duozhi.com/DBS/) | [OpenTalk](http://www.duozhi.com/opentalk/)    |
+| ---------------------------------------------- | ---------------------------------------- | ---------------------------------------------- |
+| [industry](https://rsshub.app/duozhi/industry) | [DBS](https://rsshub.app/duozhi/DBS)     | [opentalk](https://rsshub.app/duozhi/opentalk) |
 
-  #### [行业](http://www.duozhi.com/industry/)
+#### [行业](http://www.duozhi.com/industry/)
 
-  | [观察](http://www.duozhi.com/industry/insight/)                | [早幼教](http://www.duozhi.com/industry/preschool/)                | [家庭教育](http://www.duozhi.com/industry/jiatingjiaoyu/)                  | [K12](http://www.duozhi.com/industry/K12/)             | [素质教育](http://www.duozhi.com/industry/qualityedu/)               |
-  | -------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------- |
-  | [industry/insight](https://rsshub.app/duozhi/industry/insight) | [industry/preschool](https://rsshub.app/duozhi/industry/preschool) | [industry/jiatingjiaoyu](https://rsshub.app/duozhi/industry/jiatingjiaoyu) | [industry/K12](https://rsshub.app/duozhi/industry/K12) | [industry/qualityedu](https://rsshub.app/duozhi/industry/qualityedu) |
+| [观察](http://www.duozhi.com/industry/insight/)                | [早幼教](http://www.duozhi.com/industry/preschool/)                | [家庭教育](http://www.duozhi.com/industry/jiatingjiaoyu/)                  | [K12](http://www.duozhi.com/industry/K12/)             | [素质教育](http://www.duozhi.com/industry/qualityedu/)               |
+| -------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------- |
+| [industry/insight](https://rsshub.app/duozhi/industry/insight) | [industry/preschool](https://rsshub.app/duozhi/industry/preschool) | [industry/jiatingjiaoyu](https://rsshub.app/duozhi/industry/jiatingjiaoyu) | [industry/K12](https://rsshub.app/duozhi/industry/K12) | [industry/qualityedu](https://rsshub.app/duozhi/industry/qualityedu) |
 
-  | [职教/大学生](http://www.duozhi.com/industry/adult/)       | [教育信息化](http://www.duozhi.com/industry/EduInformatization/)                     | [财报](http://www.duozhi.com/industry/earnings/)                 | [民办学校](http://www.duozhi.com/industry/privateschools/)                   | [留学](http://www.duozhi.com/industry/overseas/)                 |
-  | ---------------------------------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-  | [industry/adult](https://rsshub.app/duozhi/industry/adult) | [industry/EduInformatization](https://rsshub.app/duozhi/industry/EduInformatization) | [industry/earnings](https://rsshub.app/duozhi/industry/earnings) | [industry/privateschools](https://rsshub.app/duozhi/industry/privateschools) | [industry/overseas](https://rsshub.app/duozhi/industry/overseas) |
-
-`,
+| [职教 / 大学生](http://www.duozhi.com/industry/adult/)     | [教育信息化](http://www.duozhi.com/industry/EduInformatization/)                     | [财报](http://www.duozhi.com/industry/earnings/)                 | [民办学校](http://www.duozhi.com/industry/privateschools/)                   | [留学](http://www.duozhi.com/industry/overseas/)                 |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------------------------------- | ---------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| [industry/adult](https://rsshub.app/duozhi/industry/adult) | [industry/EduInformatization](https://rsshub.app/duozhi/industry/EduInformatization) | [industry/earnings](https://rsshub.app/duozhi/industry/earnings) | [industry/privateschools](https://rsshub.app/duozhi/industry/privateschools) | [industry/overseas](https://rsshub.app/duozhi/industry/overseas) |`,
     categories: ['new-media'],
     features: {
         requireConfig: false,

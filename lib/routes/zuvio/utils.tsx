@@ -1,5 +1,7 @@
 import { renderToString } from 'hono/jsx/dom/server';
 
+import { renderYoutube } from '@/routes/youtube/utils';
+import cache from '@/utils/cache';
 import got from '@/utils/got';
 
 const token =
@@ -21,7 +23,7 @@ const renderSections = (sections) => {
     for (const section of sections) {
         switch (section.type) {
             case 'text':
-                output += section.content.replaceAll('\n', '<br>');
+                output += renderTextSection(section);
 
                 break;
 
@@ -47,8 +49,8 @@ const renderSections = (sections) => {
     return output;
 };
 
-const getBoards = (tryGet) =>
-    tryGet('zuvio:boards', async () => {
+const getBoards = () =>
+    cache.tryGet('zuvio:boards', async () => {
         const { data } = await got(`${apiUrl}/board`, {
             searchParams: {
                 api_token: token,
@@ -64,19 +66,19 @@ const getBoards = (tryGet) =>
         }));
     });
 
-export { apiUrl, getBoards, renderDesc, renderSections, rootUrl, token };
+export { apiUrl, getBoards, renderDesc, rootUrl, token };
 
-const renderRefArticle = (ref_article): string =>
+const renderRefArticle = (refArticle): string =>
     renderToString(
         <>
             引用自：
-            <a href={ref_article.id}>
-                <img src={ref_article.user_icon} />
+            <a href={`${rootUrl}/article/${refArticle.id}`}>
+                <img src={refArticle.user_icon} />
                 <div>
-                    {ref_article.university} {ref_article.user_name} {ref_article.board_name}
+                    {refArticle.university} {refArticle.user_name} {refArticle.board_name}
                 </div>
-                <div>{ref_article.title}</div>
-                <div>{ref_article.abstract}</div>
+                <div>{refArticle.title}</div>
+                <div>{refArticle.abstract}</div>
             </a>
             <hr />
         </>
@@ -90,13 +92,9 @@ const renderImageSection = (section): string =>
         </>
     );
 
-const renderYouTubeSection = (section): string =>
-    renderToString(
-        <>
-            <iframe width="672" height="377" src={`https://www.youtube-nocookie.com/embed/${section.youtube_id}`} frameborder="0" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>
-            <br />
-        </>
-    );
+const renderTextSection = (section): string => renderToString(<>{section.content}</>).replaceAll('\n', '<br>');
+
+const renderYouTubeSection = (section): string => renderYoutube(true, section.youtube_id, undefined, undefined);
 
 const renderLinkSection = (section): string =>
     renderToString(

@@ -13,7 +13,7 @@ export const renderVideoMedia = ({ stream, mp4, coverUrl, caption }: VideoMediaD
         <figure>
             <video
                 controls
-                playsinline="true"
+                playsinline
                 webkit-playsinline="true"
                 x5-playsinline="true"
                 x5-video-player-type="h5"
@@ -28,7 +28,7 @@ export const renderVideoMedia = ({ stream, mp4, coverUrl, caption }: VideoMediaD
             </video>
             {caption ? (
                 <figcaption>
-                    <div class="caption">{raw(caption)}</div>
+                    <div className="caption">{raw(caption)}</div>
                 </figcaption>
             ) : null}
         </figure>

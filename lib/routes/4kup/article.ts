@@ -1,6 +1,6 @@
 import { load } from 'cheerio';
 
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 import type { WPPost } from './types';
 
@@ -22,8 +22,8 @@ function loadArticle(item: WPPost) {
 
     return {
         title: item.title.rendered,
-        description: article.html() ?? '',
-        pubDate: parseDate(item.date_gmt),
+        description: article.html(),
+        pubDate: parseDate(`${item.date_gmt}Z`),
         link: item.link,
     };
 }

@@ -2,6 +2,7 @@ import { renderToString } from 'hono/jsx/dom/server';
 
 import type { Route } from '@/types';
 import got from '@/utils/got';
+import { parseDate } from '@/utils/time';
 
 const renderDescription = ({ description, pics }) => {
     const lines = (description ?? '').split('\n');
@@ -23,6 +24,16 @@ const renderDescription = ({ description, pics }) => {
 export const route: Route = {
     path: '/music/user/events/:id',
     categories: ['multimedia'],
+    example: '/163/music/user/events/585804522',
+    parameters: {
+        id: '用户 uid, 可在用户主页 URL 中找到',
+    },
+    radar: [
+        {
+            source: ['music.163.com/user/event'],
+            target: '/music/user/events/:id',
+        },
+    ],
     name: '用户动态',
     maintainers: ['Master-Hash'],
     handler,
@@ -31,13 +42,7 @@ export const route: Route = {
 async function handler(ctx) {
     const id = ctx.req.param('id');
 
-    const response = await got(`https://music.163.com/api/event/get/${id}`, {
-        headers: {
-            Referer: 'https://music.163.com/',
-        },
-    });
-
-    const { data } = response;
+    const { data } = await got(`https://music.163.com/api/event/get/${id}`);
     const { nickname, signature, avatarUrl } = data.events[0].user;
 
     return {
@@ -66,8 +71,8 @@ async function handler(ctx) {
                 title,
                 description: renderDescription({ description, pics }),
                 link: `https://music.163.com/#/event?id=${eventId}&uid=${userId}`,
-                pubDate: new Date(item.eventTime),
-                published: new Date(item.eventTime),
+                pubDate: parseDate(item.eventTime),
+                published: parseDate(item.eventTime),
                 author: nickname,
                 upvotes: item.info.likedCount,
                 comments: item.info.commentCount,

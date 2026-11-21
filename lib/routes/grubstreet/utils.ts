@@ -1,7 +1,10 @@
 import { load } from 'cheerio';
 
+import type { DataItem } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
+import { getRouteLimit } from '@/utils/route-limit';
+import { compareDates, parseDate } from '@/utils/time';
 
 async function loadContent(link) {
     const response = await got(link);
@@ -23,7 +26,7 @@ async function loadContent(link) {
     };
 }
 
-function ProcessFeed(list, caches) {
+function processFeed(list, caches) {
     return Promise.all(
         list.map((item) =>
             caches.tryGet(item.canonicalUrl, async () => {
@@ -39,21 +42,18 @@ function ProcessFeed(list, caches) {
                         if (bylineNames && bylineNames.length > 0) {
                             const bylineNamesString = bylineNames.join(', ');
 
-                            bylineString = 'by ' + bylineNamesString;
+                            bylineString = bylineNamesString;
                         }
                     }
                 }
 
-                const single = {
+                const single: DataItem = {
                     title: item.plaintextPrimaryHeadline,
                     link: itemUrl,
                     guid: itemUrl,
-                    pubDate: item.date,
+                    pubDate: item.date ? parseDate(item.date) : undefined,
+                    author: bylineString,
                 };
-
-                if (bylineString) {
-                    single.author = bylineString;
-                }
 
                 const { description } = await loadContent(itemUrl);
                 single.description = description;
@@ -69,13 +69,18 @@ const getData = async (ctx, url, title, description) => {
 
     const data = response.data;
 
-    // limit the list to only 25 articles, to make sure that load times remain reasonable
-    const list = data.articles.slice(0, ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 25);
-    const result = await ProcessFeed(list, cache);
+    const limit = getRouteLimit(ctx, 25);
+    const datesKnown = data.articles.every((article) => article.date && parseDate(article.date));
+    if (ctx.req.query('sorted') !== 'false' && datesKnown) {
+        data.articles.sort((a, b) => compareDates(parseDate(b.date), parseDate(a.date)));
+    }
+    const list = data.articles.slice(0, datesKnown || ctx.req.query('sorted') === 'false' ? limit : Math.max(25, limit));
+    const result = await processFeed(list, cache);
 
     return {
         title,
-        link: url,
+        link: 'https://www.grubstreet.com/',
+        language: 'en' as const,
         description,
         item: result,
     };

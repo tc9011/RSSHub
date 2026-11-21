@@ -3,11 +3,12 @@ import { load } from 'cheerio';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/articles/:id?',
     categories: ['new-media'],
-    example: '/articles/9', // 示例路径更新
+    example: '/dedao/articles/9',
     parameters: { id: '文章类型 ID，8 为得到头条，9 为得到精选，默认为 8' },
     features: {
         requireConfig: false,
@@ -29,7 +30,21 @@ export const route: Route = {
     url: 'www.igetget.com',
 };
 
-function handleParagraph(data) {
+interface ArticleNode {
+    type?: string;
+    contents?: ArticleNode[];
+    text?: {
+        content?: string;
+        bold?: boolean;
+        highlight?: boolean;
+    };
+    image?: {
+        src?: string;
+        alt?: string;
+    };
+}
+
+function handleParagraph(data: ArticleNode) {
     let html = '<p>';
     if (data.contents && Array.isArray(data.contents)) {
         html += data.contents.map((data) => extractArticleContent(data)).join('');
@@ -38,7 +53,7 @@ function handleParagraph(data) {
     return html;
 }
 
-function handleText(data) {
+function handleText(data: ArticleNode) {
     let content = data.text?.content || '';
     if (data.text?.bold || data.text?.highlight) {
         content = `<strong>${content}</strong>`;
@@ -46,7 +61,7 @@ function handleText(data) {
     return content;
 }
 
-function handleImage(data) {
+function handleImage(data: ArticleNode) {
     return data.image?.src ? `<img src="${data.image.src}" alt="${data.image.alt || ''}" />` : '';
 }
 
@@ -54,8 +69,8 @@ function handleHr() {
     return '<hr />';
 }
 
-function extractArticleContent(data) {
-    if (!data || typeof data !== 'object') {
+function extractArticleContent(data: ArticleNode | null | undefined): string {
+    if (!data) {
         return '';
     }
 
@@ -79,7 +94,7 @@ async function handler(ctx) {
     const headers = {
         Accept: 'application/json, text/plain, */*',
         'Content-Type': 'application/json;charset=UTF-8',
-        Referer: `https://m.igetget.com/share/course/free/detail?id=nb9L2q1e3OxKBPNsdoJrgN8P0Rwo6B`,
+        Referer: 'https://m.igetget.com/share/course/free/detail?id=nb9L2q1e3OxKBPNsdoJrgN8P0Rwo6B',
         Origin: 'https://m.igetget.com',
     };
     const max_id = 0;
@@ -110,9 +125,9 @@ async function handler(ctx) {
         articles.map((article) => {
             const postUrl = `https://m.igetget.com/share/course/article/article_id/${article.id}`;
             const postTitle = article.title;
-            const postTime = new Date(article.publish_time * 1000).toUTCString();
+            const postTime = parseDate(article.publish_time, 'X');
 
-            return cache.tryGet(postUrl, async () => {
+            return cache.tryGet<any>(postUrl, async () => {
                 const detailResponse = await got.get(postUrl, { headers });
                 const $ = load(detailResponse.body);
 

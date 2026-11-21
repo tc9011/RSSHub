@@ -1,10 +1,11 @@
 import { load } from 'cheerio';
+import { FetchError } from 'ofetch';
+import pMap from 'p-map';
 
 import type { Data, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 const rootUrl = 'https://www.qztc.edu.cn/jwc/';
 const host = 'www.qztc.edu.cn';
@@ -32,10 +33,10 @@ export const route: Route = {
             target: '/jwc/:type',
         },
     ],
-    description: `| 板块 | 参数 |
-| ------- | ------- |
+    description: `| 板块     | 参数 |
+| -------- | ---- |
 | 教务动态 | jwdt |
-| 首 页 | 1020 |
+| 首 页    | 1020 |
 | 岗位介绍 | 1021 |
 | 管理文件 | 1022 |
 | 教学教改 | 1023 |
@@ -44,8 +45,7 @@ export const route: Route = {
 | 下载中心 | 1026 |
 | 对外交流 | 1027 |
 | 政策文件 | 1028 |
-| 会议纪要 | 1029 |
-`,
+| 会议纪要 | 1029 |`,
     // | 学院简介 | 1949 |
     // | 学院领导 | 1950 |
     // | 组织机构 | 1951 |
@@ -63,59 +63,51 @@ async function handler(ctx) {
             const cheerioItem = $(item);
             const a = cheerioItem.find('a');
 
-            try {
-                const title = a.attr('title') || '';
-                let link = a.attr('href');
-                if (!link) {
-                    link = '';
-                } else if (!link.startsWith('http')) {
-                    link = rootUrl.slice(0, -1) + link;
-                }
-                const pubDate = timezone(parseDate(cheerioItem.find('.news_meta').text()), +8);
-
-                return {
-                    title,
-                    link,
-                    pubDate,
-                };
-            } catch {
-                return {
-                    title: '',
-                    link: '',
-                    pubDate: Date.now(),
-                };
+            const title = a.attr('title') || '';
+            let link = a.attr('href');
+            if (!link) {
+                link = '';
+            } else if (!link.startsWith('http')) {
+                link = new URL(link, rootUrl).href;
             }
+            const pubDate = parseDate(cheerioItem.find('.news_meta').text(), 8);
+
+            return {
+                title,
+                link,
+                pubDate,
+            };
         })
         .filter((item) => item.title && item.link);
 
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
-                const newItem = {
-                    ...item,
-                    description: '',
-                };
-                if (host === new URL(item.link).hostname) {
-                    if (new URL(item.link).pathname.startsWith('/_upload')) {
-                        // 链接为一个文件，直接返回链接
-                        newItem.description = item.link;
-                    } else {
-                        const response = await ofetch(item.link);
-                        const $ = load(response);
-                        newItem.description = $('.wp_articlecontent').html() || '';
-                    }
-                } else {
-                    // 涉及到其他站点，不方便做统一的 html 解析，直接返回链接
-                    newItem.description = item.link;
+    const items = await pMap(
+        list,
+        async (item) => ({
+            ...item,
+            description: await cache.tryGet(`qztc:jwc:article:v2:${item.link}`, async () => {
+                const url = new URL(item.link);
+                if (url.hostname !== host || url.pathname.startsWith('/_upload')) {
+                    return item.link;
                 }
-                return newItem;
-            })
-        )
+                try {
+                    const response = await ofetch(item.link);
+                    const $ = load(response);
+                    return $('.wp_articlecontent').html() ?? '';
+                } catch (error) {
+                    if (error instanceof FetchError && error.statusCode === 403) {
+                        // Keep the public listing metadata when a detail page forbids anonymous access.
+                        return;
+                    }
+                    throw error;
+                }
+            }),
+        }),
+        { concurrency: 3 }
     );
 
     return {
         title: $('head > title').text() + ' - 泉州师范学院-教务处',
         link: rootUrl + type + '/list.htm',
         item: items,
-    } as Data;
+    } satisfies Data;
 }

@@ -3,8 +3,7 @@ import { renderToString } from 'hono/jsx/dom/server';
 
 import type { Route } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 const renderDesc = (item) =>
     renderToString(
@@ -45,17 +44,17 @@ async function handler() {
     const list = $('#videolistss li')
         .toArray()
         .map((item) => {
-            item = $(item);
+            const $item = $(item);
 
-            const title = item.find('span.t1').text();
-            const link = item.find('input[name=data-url]').attr('value');
-            const videoUrl = item.find('input[name=video]').attr('value');
-            const posterUrl = item.find('input[name=videoimage]').attr('value');
+            const title = $item.find('span.t1').text();
+            const link = $item.find('input[name=data-url]').attr('value');
+            const videoUrl = $item.find('input[name=video]').attr('value');
+            const posterUrl = $item.find('input[name=videoimage]').attr('value');
 
             return {
                 title,
                 link,
-                pubDate: timezone(parseDate(item.find('span.t2').text() + ' 16:30', 'YYYY-MM-DD hh:mm'), +8),
+                pubDate: parseDate($item.find('span.t2').text() + ' 16:30', 'YYYY-MM-DD hh:mm', 8),
                 description: renderDesc({ title, videoUrl, posterUrl }),
             };
         });

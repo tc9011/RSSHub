@@ -3,7 +3,7 @@ import { renderToString } from 'hono/jsx/dom/server';
 
 import type { Route } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 import { parseJSONP } from './jsonp-helper';
 
@@ -75,7 +75,7 @@ async function handler() {
                 </>
             ),
             // the article publish time
-            pubDate: parseDate(item.releaseDate),
+            pubDate: item.releaseDate ? parseDate(item.releaseDate.replaceAll('.', '-'), 0) : undefined,
             // the article link
             link: `${url}/${item.referID}`,
         })),

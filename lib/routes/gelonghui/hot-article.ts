@@ -1,8 +1,8 @@
 import { load } from 'cheerio';
 
+import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Route } from '@/types';
 import { ViewType } from '@/types';
-import cache from '@/utils/cache';
 import got from '@/utils/got';
 
 import { parseItem } from './utils';
@@ -42,8 +42,12 @@ export const route: Route = {
 };
 
 async function handler(ctx) {
-    const type = ctx.req.param('type') === 'week' ? 1 : 0;
-    const baseUrl = `https://www.gelonghui.com`;
+    const period = ctx.req.param('type') ?? 'day';
+    if (period !== 'day' && period !== 'week') {
+        throw new InvalidParameterError('type must be day or week.');
+    }
+    const type = period === 'week' ? 1 : 0;
+    const baseUrl = 'https://www.gelonghui.com';
     const { data: response } = await got(baseUrl);
     const $ = load(response);
 
@@ -52,15 +56,15 @@ async function handler(ctx) {
         .find('li')
         .toArray()
         .map((item) => {
-            item = $(item);
-            const a = item.find('a');
+            const $item = $(item);
+            const a = $item.find('a');
             return {
                 title: a.text(),
                 link: `${baseUrl}${a.attr('href')}`,
             };
         });
 
-    const items = await Promise.all(list.map((item) => parseItem(item, cache.tryGet)));
+    const items = await Promise.all(list.map((item) => parseItem(item)));
 
     return {
         title: `最热文章 - ${type === 0 ? '日排行' : '周排行'} - 格隆汇`,

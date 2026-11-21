@@ -3,6 +3,13 @@ import jsBeautify from 'js-beautify';
 const routeTestFailed = 'auto: not ready to review';
 const readyToReview = 'auto: ready to review';
 
+/**
+ * @param {{ github: ReturnType<typeof import('@actions/github').getOctokit>, context: typeof import('@actions/github').context, core: typeof import('@actions/core') }} githubScript
+ * @param {string} baseUrl
+ * @param {string[]} routes
+ * @param {number} number
+ * @returns {Promise<void>}
+ */
 export default async function test({ github, context, core }, baseUrl, routes, number) {
     if (routes[0] === 'NOROUTE') {
         return;
@@ -18,13 +25,14 @@ export default async function test({ github, context, core }, baseUrl, routes, n
     let failCount = 0;
     let comment = `Successfully [generated](${process.env.GITHUB_SERVER_URL}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) as following:\n`;
 
-    for await (const lks of links) {
+    for (const lks of links) {
         core.info(`testing route:  ${lks}`);
-        // Intended, one at a time
         let success = false;
         let detail;
 
+        // oxlint-disable-next-line no-await-in-loop - intended, one at a time
         const res = await fetch(lks);
+        // oxlint-disable-next-line no-await-in-loop - intended, one at a time
         const body = await res.text();
         if (res.ok) {
             success = true;
@@ -79,52 +87,55 @@ ${detail.slice(0, 65300 - routeFeedback.length)}
         const resultLabel = failCount === links.length || successCount <= failCount ? routeTestFailed : readyToReview;
 
         if (resultLabel === routeTestFailed) {
-            const { data: issue } = await github.rest.issues
-                .get({
+            let issue;
+            try {
+                const response = await github.rest.issues.get({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
                     issue_number: number,
-                })
-                .catch((error) => {
-                    core.warning(error);
                 });
+                issue = response.data;
+            } catch (error) {
+                core.warning(error);
+                throw error;
+            }
             if (issue.labels.some((l) => l.name === readyToReview)) {
-                await github.rest.issues
-                    .removeLabel({
+                try {
+                    await github.rest.issues.removeLabel({
                         issue_number: number,
                         owner: context.repo.owner,
                         repo: context.repo.repo,
                         name: readyToReview,
-                    })
-                    .catch((error) => {
-                        core.warning(error);
                     });
+                } catch (error) {
+                    core.warning(error);
+                }
             }
         }
 
-        await github.rest.issues
-            .addLabels({
+        try {
+            await github.rest.issues.addLabels({
                 issue_number: number,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 labels: [resultLabel],
-            })
-            .catch((error) => {
-                core.warning(error);
             });
+        } catch (error) {
+            core.warning(error);
+        }
     }
 
-    for await (const comment of commentList) {
-        // Intended, one at a time
-        await github.rest.issues
-            .createComment({
+    for (const comment of commentList) {
+        try {
+            // oxlint-disable-next-line no-await-in-loop - intended, one at a time
+            await github.rest.issues.createComment({
                 issue_number: number,
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 body: comment,
-            })
-            .catch((error) => {
-                core.warning(error);
             });
+        } catch (error) {
+            core.warning(error);
+        }
     }
 }

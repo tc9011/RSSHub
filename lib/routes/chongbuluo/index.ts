@@ -3,7 +3,7 @@ import { load } from 'cheerio';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/newthread',
@@ -41,22 +41,22 @@ async function handler() {
             .map(async (element) => {
                 const item = $(element);
                 const titleElement = item.find('th.common a.xst');
-                const title = titleElement.text().trim();
+                const title = titleElement.text();
                 const href = titleElement.attr('href') || '';
                 const threadLink = href.startsWith('http') ? href : `${baseUrl}/${href}`;
 
-                const author = item.find('td.by cite a').text().trim();
-
-                const pubDateText = item.find('td.by em a span').attr('title') || item.find('td.by em a').text().trim();
-                const pubDate = parseDate(pubDateText);
+                const author = item.find('td.by cite a').text();
 
                 return await cache.tryGet(threadLink, async () => {
                     try {
                         const threadResponse = await ofetch(threadLink);
                         const $thread = load(threadResponse);
 
-                        // 查找第一个帖子内容
-                        const content = $thread('.t_f').first().html()?.trim() || '';
+                        // Extract the first post, rather than the last reply shown in the thread list.
+                        const content = $thread('.t_f').first().html()?.trim();
+                        const postDate = $thread('[id^="authorposton"]').first();
+                        const pubDateText = postDate.find('span').attr('title') || postDate.text().replace('发表于', '').trim();
+                        const pubDate = pubDateText ? parseDate(pubDateText, 8) : undefined;
 
                         return {
                             title,
@@ -70,7 +70,6 @@ async function handler() {
                             title,
                             link: threadLink,
                             description: '内容获取失败',
-                            pubDate,
                             author,
                         };
                     }

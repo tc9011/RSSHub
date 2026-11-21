@@ -1,5 +1,5 @@
 import InvalidParameterError from '@/errors/types/invalid-parameter';
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 
@@ -20,7 +20,7 @@ export const route: Route = {
         nsfw: true,
     },
     name: 'Search Results',
-    maintainers: ['SnowAgar25'],
+    maintainers: ['Tsuyumi25'],
     handler,
     description: 'Get the search results for works on Skeb',
 };
@@ -34,7 +34,7 @@ async function handler(ctx): Promise<Data> {
 
     const url = 'https://hb1jt3kre9-dsn.algolia.net/1/indexes/*/queries';
 
-    const items = await cache.tryGet(`skeb:search:${keyword}`, async () => {
+    const items = await cache.tryGet(`skeb:search:v2:${keyword}`, async () => {
         const data = await ofetch(url, {
             method: 'POST',
             headers: {
@@ -68,12 +68,12 @@ async function handler(ctx): Promise<Data> {
             throw new TypeError('Invalid hits data received from API');
         }
 
-        return works.map((item) => processWork(item)).filter(Boolean);
+        return works.map((item) => processWork(item)).filter((item) => item !== null);
     });
 
     return {
         title: `Skeb - Search Results for "${keyword}"`,
         link: `${baseUrl}/search?q=${encodeURIComponent(keyword)}`,
-        item: items as DataItem[],
+        item: items,
     };
 }

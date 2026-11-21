@@ -1,9 +1,9 @@
 import { load } from 'cheerio';
 
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
-async function loadArticle(link) {
+export const loadArticle = async (link) => {
     const resp = await got(link);
     const article = load(resp.body);
 
@@ -47,6 +47,4 @@ async function loadArticle(link) {
         pubDate,
         link,
     };
-}
-
-export default loadArticle;
+};

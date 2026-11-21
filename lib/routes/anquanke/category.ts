@@ -3,8 +3,7 @@ import { load } from 'cheerio';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/:category/:fulltext?',
@@ -45,10 +44,10 @@ async function handler(ctx) {
                         ? await cache.tryGet(art_url, async () => {
                               const { data: res } = await got(art_url);
                               const content = load(res);
-                              return content('#js-article').html();
+                              return content('#js-article').html() ?? '';
                           })
                         : item.desc,
-                pubDate: timezone(parseDate(item.date), +8),
+                pubDate: parseDate(item.date, 8),
                 link: art_url,
                 author: item.author.nickname,
             };

@@ -4,6 +4,7 @@ import iconv from 'iconv-lite';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import util from './utils';
 
@@ -69,13 +70,13 @@ async function handler(ctx) {
     const data = response.data;
     let $ = load(iconv.decode(data, 'utf-8'));
     const charset = $('meta[http-equiv="Content-Type"]')
-        .attr('content')
+        .attr('content')!
         .match(/charset=(.*)/)?.[1];
     if (charset?.toLowerCase() !== 'utf-8') {
         $ = load(iconv.decode(data, charset ?? 'utf-8'));
     }
 
-    const list = $('.news_ul li').slice(0, 12).toArray();
+    const list = $('.news_ul li').slice(0, getRouteLimit(ctx, 12)).toArray();
 
     const result = await util.ProcessFeed(base, list, cache); // 感谢@hoilc指导
 

@@ -2,6 +2,8 @@ import { load } from 'cheerio';
 
 import type { Route } from '@/types';
 import got from '@/utils/got';
+import { getRouteLimit } from '@/utils/route-limit';
+import { parseDate, parseDateStrict } from '@/utils/time';
 
 export const route: Route = {
     path: '/xuan/:type',
@@ -21,13 +23,28 @@ export const route: Route = {
             source: ['www5.zzu.edu.cn/xuan/'],
         },
     ],
-    name: '郑大党委宣传部',
+    name: '党委宣传部',
     maintainers: ['amandus1990'],
     handler,
     description: `| 工作动态 | 通知公告 |
 | -------- | -------- |
 | gzdt     | tzgg     |`,
 };
+
+function parsePublishedDate(value?: string) {
+    if (!value) {
+        return;
+    }
+    const match = value.match(/^\s*(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:\s|T|$)/);
+    if (!match) {
+        return;
+    }
+    const calendarDate = `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`;
+    if (!parseDateStrict(calendarDate, 'YYYY-MM-DD')) {
+        return;
+    }
+    return parseDate(value);
+}
 
 async function handler(ctx) {
     const type = ctx.req.param('type');
@@ -45,13 +62,13 @@ async function handler(ctx) {
 
     // 解析页面内容并提取文章信息
     const list = $('.list ul li')
-        .slice(0, 18)
+        .slice(0, Math.max(18, getRouteLimit(ctx, 18)))
         .toArray()
         .map((element) => {
             const $element = $(element);
             const $link = $element.find('a').first();
-            const link = new URL($link.attr('href'), typeDict[type][1]).href;
-            const title = $link.attr('title') || $link.text().trim();
+            const link = new URL($link.attr('href')!, typeDict[type][1]).href;
+            const title = $link.attr('title') || $link.text();
 
             // 尝试获取发布时间
             const pubDateText = $element.find('i').text().trim();
@@ -59,7 +76,7 @@ async function handler(ctx) {
             return {
                 title,
                 link,
-                pubDate: pubDateText || null,
+                pubDate: parsePublishedDate(pubDateText),
             };
         });
 

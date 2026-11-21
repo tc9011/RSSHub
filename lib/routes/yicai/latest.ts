@@ -1,7 +1,7 @@
 import type { Route } from '@/types';
-import cache from '@/utils/cache';
+import { getRouteLimit } from '@/utils/route-limit';
 
-import { ProcessItems, rootUrl } from './utils';
+import { processItems, rootUrl } from './utils';
 
 export const route: Route = {
     path: '/latest',
@@ -28,9 +28,9 @@ export const route: Route = {
 };
 
 async function handler(ctx) {
-    const apiUrl = `${rootUrl}/api/ajax/getlatest?page=1&pagesize=${ctx.req.query('limit') ?? 30}`;
+    const apiUrl = `${rootUrl}/api/ajax/getlatest?page=1&pagesize=${getRouteLimit(ctx, 30)}`;
 
-    const items = await ProcessItems(apiUrl, cache.tryGet);
+    const items = await processItems(apiUrl);
 
     return {
         title: '第一财经 - 最新',

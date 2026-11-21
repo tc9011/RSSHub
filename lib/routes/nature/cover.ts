@@ -1,4 +1,5 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 import { CookieJar } from 'tough-cookie';
 
 import type { Route } from '@/types';
@@ -19,7 +20,7 @@ import cache from '@/utils/cache';
 // natastron:        Nature Astronomy
 // nphys             Nature Physics
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 import { baseUrl, journalMap } from './utils';
 
@@ -45,7 +46,7 @@ export const route: Route = {
     maintainers: ['y9c', 'pseudoyu'],
     handler,
     url: 'nature.com/',
-    description: `Subscribe to the cover images of the Nature journals, and get the latest publication updates in time.`,
+    description: 'Subscribe to the cover images of the Nature journals, and get the latest publication updates in time.',
 };
 
 async function handler() {
@@ -60,9 +61,10 @@ async function handler() {
             link: `${baseUrl}/${j.title}/current-issue`,
         }));
 
-    const out = await Promise.all(
-        journals.map((journal) =>
-            cache.tryGet(journal.link, async () => {
+    const out = await pMap(
+        journals,
+        (journal) =>
+            cache.tryGet(`nature:cover:v2:${journal.link}`, async () => {
                 const { id, name, link } = journal;
 
                 const response = await got(link, { cookieJar });
@@ -75,17 +77,17 @@ async function handler() {
                 const imageUrl = `https://media.springernature.com/full/springer-static/cover-hires/journal/${id}/${volume}/${issue}?as=webp`;
                 const contents = `<div align="center"><img src="${imageUrl}" alt="Volume ${volume} Issue ${issue}"></div>`;
 
-                const date = $('title').text().split(',')[1].trim();
+                const date = $('title').text().split(',', 2)[1]?.trim();
                 const issueDescription = $('div[data-test=issue-description]').html() ?? '';
 
                 return {
                     title: `${name} | Volume ${volume} Issue ${issue}`,
                     description: contents + issueDescription,
-                    link: response.url,
-                    pubDate: parseDate(date, 'MMMM YYYY'),
+                    link: ogUrl ?? link,
+                    pubDate: date ? parseDate(date, ['D MMMM YYYY', 'MMMM YYYY'], 0) : undefined,
                 };
-            })
-        )
+            }),
+        { concurrency: 3 }
     );
 
     return {

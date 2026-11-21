@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
 import { renderToString } from 'hono/jsx/dom/server';
 
+import NotFoundError from '@/errors/types/not-found';
 import type { Route } from '@/types';
 import got from '@/utils/got';
 
@@ -26,7 +27,6 @@ export const route: Route = {
     handler,
     description: `#### 总览 {#zhong-guo-guang-da-yin-hang-wai-hui-pai-jia-zong-lan}
 
-
 #### 历史牌价 {#zhong-guo-guang-da-yin-hang-wai-hui-pai-jia-li-shi-pai-jia}
 
 | 美元 | 英镑 | 港币 | 瑞士法郎 | 瑞典克郎 | 丹麦克郎 | 挪威克郎 | 日元 | 加拿大元 | 澳大利亚元 | 新加坡元 | 欧元 | 澳门元 | 泰国铢 | 新西兰元 | 韩圆 |
@@ -36,6 +36,9 @@ export const route: Route = {
 
 async function handler(ctx) {
     const type = ctx.req.param('type');
+    if (!Object.hasOwn(TYPE, type)) {
+        throw new NotFoundError(`Invalid currency. Supported currencies: ${Object.keys(TYPE).join(', ')}.`);
+    }
     const url = `https://www.cebbank.com/eportal/ui?struts.portlet.action=/portlet/whpjFront!toView.action&moduleId=12094&pageId=477260&currcode=${TYPE[type].id}&currentPagebak=1&currentPage=1`;
     const res = await got({
         method: 'get',
@@ -45,12 +48,10 @@ async function handler(ctx) {
     const $ = load(res.data);
 
     const items = $('.lczj_box tbody tr')
+        .slice(2)
         .toArray()
-        .map((e, i) => {
-            if (i < 2) {
-                return null;
-            }
-            const c = load(e, { decodeEntities: false });
+        .map((e) => {
+            const c = load(e);
             return {
                 title: c('td:nth-child(1)').text(),
                 description: renderToString(

@@ -2,7 +2,7 @@ import { load } from 'cheerio';
 
 import type { Route } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/scripts/:script/feedback',
@@ -41,14 +41,15 @@ async function handler(ctx) {
         item: $('.script-discussion-list .discussion-list-container .discussion-list-item')
             .toArray()
             .map((item) => {
-                item = $(item);
-                const metaItem = item.find('.discussion-meta .discussion-meta-item').eq(0);
-                const discussionTitle = item.find('.discussion-title');
+                const $item = $(item);
+                const metaItem = $item.find('.discussion-meta .discussion-meta-item').eq(0);
+                const discussionTitle = $item.find('.discussion-title');
+                const date = metaItem.find('relative-time, gf-relative-time').attr('datetime');
 
                 return {
                     title: discussionTitle.text().trim(),
                     author: metaItem.find('a').text(),
-                    pubDate: parseDate(metaItem.find('gf-relative-time').attr('datetime')),
+                    pubDate: date ? parseDate(date) : undefined,
                     link: rootUrl + discussionTitle.attr('href'),
                 };
             }),

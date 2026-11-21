@@ -1,7 +1,7 @@
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 import { renderLive } from './templates/live';
 
@@ -24,7 +24,7 @@ export const route: Route = {
         },
     ],
     name: '整理報導',
-    maintainers: [],
+    maintainers: ['nczitzk'],
     handler,
 };
 

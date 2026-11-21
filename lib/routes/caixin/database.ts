@@ -1,10 +1,9 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 import { renderArticle } from './templates/article';
 
@@ -23,13 +22,13 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['k.caixin.com/web', 'k.caixin.com/'],
+            source: ['database.caixin.com/news/', 'database.caixin.com/'],
         },
     ],
     name: '财新数据通',
     maintainers: ['nczitzk'],
     handler,
-    url: 'k.caixin.com/web',
+    url: 'database.caixin.com/news/',
 };
 
 async function handler() {
@@ -41,21 +40,21 @@ async function handler() {
 
     const list = $('h4 a')
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem => {
+            const $item = $(item);
             return {
-                title: item.text(),
-                link: item.attr('href').replace('http://', 'https://'),
+                title: $item.text(),
+                link: $item.attr('href')!.replace('http://', 'https://'),
             };
         });
 
     const items = await Promise.all(
         list.map((item) =>
-            cache.tryGet(item.link, async () => {
+            cache.tryGet(item.link!, async () => {
                 const detailResponse = await got(item.link);
                 const content = load(detailResponse.data);
 
-                item.pubDate = timezone(parseDate(content('#pubtime_baidu').text()), +8);
+                item.pubDate = parseDate(content('#pubtime_baidu').text(), 8);
                 item.description = renderArticle({
                     item,
                     $: content,

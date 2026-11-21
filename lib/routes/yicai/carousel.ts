@@ -1,7 +1,6 @@
 import { load } from 'cheerio';
 
 import type { Route } from '@/types';
-import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 
 import { fetchFullArticles, rootUrl } from './utils';
@@ -33,13 +32,10 @@ export const route: Route = {
 async function handler() {
     const res = await ofetch(rootUrl);
     const $ = load(res);
-    const items = await Promise.all(
-        fetchFullArticles(
-            $('#breaknews a')
-                .toArray()
-                .map((e) => ({ link: new URL($(e).attr('href'), rootUrl).href, title: $(e).text() })),
-            cache.tryGet
-        )
+    const items = await fetchFullArticles(
+        $('#breaknews a')
+            .toArray()
+            .map((e) => ({ link: new URL($(e).attr('href')!, rootUrl).href, title: $(e).text() }))
     );
 
     return {

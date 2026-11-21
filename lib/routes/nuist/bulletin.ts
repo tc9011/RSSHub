@@ -1,8 +1,8 @@
 import { load } from 'cheerio';
 
 import type { Route } from '@/types';
-import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+
+import got, { parseCampusDate } from './utils';
 
 const baseTitle = '南信大信息公告栏';
 const rootUrl = 'https://bulletin.nuist.edu.cn';
@@ -38,31 +38,25 @@ export const route: Route = {
         supportPodcast: false,
         supportScihub: false,
     },
-    radar: [
-        {
-            source: ['bulletin.nuist.edu.cn/:filename'],
-            target: (params) => {
-                const filename = params.filename.replace(/\.htm$/i, '');
-                return `/nuist${filename === 'index' ? '/bulletin' : `/bulletin/${filename}`}`;
-            },
-        },
-    ],
+    radar: Object.entries(map).map(([category, { file }]) => ({
+        source: [`bulletin.nuist.edu.cn/${file}`],
+        target: category === 'default' ? '/bulletin' : `/bulletin/${category}`,
+    })),
     name: '南信大信息公告栏',
     maintainers: ['gylidian', 'QianYu-u'],
     handler,
-    description: `
-| 参数 | 含义 |
-| :--- | :--- |
-| default | 全部 |
-| wjgg | 文件公告 |
-| kyxx | 科研信息 |
-| zbxx | 招标信息 |
-| jxks | 教学考试 |
-| dzsw | 党政事务 |
-| ... | (支持官网对应栏目的拼音简写) |
+    description: `| 参数    | 含义                         |
+| :------ | :--------------------------- |
+| default | 全部                         |
+| wjgg    | 文件公告                     |
+| kyxx    | 科研信息                     |
+| zbxx    | 招标信息                     |
+| jxks    | 教学考试                     |
+| dzsw    | 党政事务                     |
+| ...     | (支持官网对应栏目的拼音简写) |
 
 ::: warning
-  全文内容需使用 校园网或[VPN](http://vpn.nuist.edu.cn) 获取
+全文内容需使用 校园网或[VPN](http://vpn.nuist.edu.cn) 获取
 :::`,
 };
 
@@ -81,7 +75,7 @@ async function handler(ctx) {
             const item = $(element);
 
             // 从内部找 a 标签
-            const a = item.find('.btt a').first();
+            const a = item.find('.btt a');
             const href = a.attr('href');
 
             if (!href) {
@@ -94,7 +88,7 @@ async function handler(ctx) {
             // 从 li 的文本中提取
             const allText = item.text();
             const dateMatch = allText.match(/(\d{4}-\d{2}-\d{2})/);
-            const pubDate = dateMatch ? parseDate(dateMatch[1]) : null;
+            const pubDate = dateMatch ? parseCampusDate(dateMatch[1]) : undefined;
 
             // 尝试从 .wjj 提取分类，如果提取不到则回退到 map 中的标题
             const categoryText = item.find('.wjj a').attr('title') || item.find('.wjj a').text().trim();
@@ -111,7 +105,8 @@ async function handler(ctx) {
                 category,
             };
         })
-        .filter((item) => item && item.title && item.pubDate);
+        .filter((item) => item !== null)
+        .filter((item) => item.title);
 
     return {
         title: `${baseTitle} - ${info.title}`,

@@ -2,7 +2,7 @@ import { load } from 'cheerio';
 
 import type { Route } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 async function getArticles() {
     const url = 'https://www.cs.cmu.edu/~pavlo/blog/index.html';
@@ -18,10 +18,10 @@ async function getArticles() {
             const $description = $item.find('p');
 
             return {
-                title: $title.text().trim(),
+                title: $title.text(),
                 link: $title.attr('href'),
-                description: $description.text().trim(),
-                pubDate: parseDate($date.attr('title')),
+                description: $description.text(),
+                pubDate: parseDate($date.attr('title')!),
                 guid: $title.attr('href'),
             };
         });

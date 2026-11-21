@@ -18,7 +18,8 @@ interface IHistogramAttributes extends IMetricAttributes {
 
 const METRIC_PREFIX = 'rsshub';
 
-const exporter = new PrometheusExporter({});
+// metrics are served by lib/routes/metrics.ts on the app port, the exporter needs no server of its own
+const exporter = new PrometheusExporter({ preventServerStart: true });
 
 const provider = new MeterProvider({
     resource: resourceFromAttributes({
@@ -55,14 +56,7 @@ export const requestMetric = {
     },
 };
 
-export const getContext = () =>
-    new Promise<string>((resolve, reject) => {
-        exporter
-            .collect()
-            .then((value) => {
-                resolve(serializer.serialize(value.resourceMetrics));
-            })
-            .finally(() => {
-                reject('');
-            });
-    });
+export const getContext = async (): Promise<string> => {
+    const value = await exporter.collect();
+    return serializer.serialize(value.resourceMetrics);
+};

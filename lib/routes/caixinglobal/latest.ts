@@ -1,9 +1,10 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { Data, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/latest',
@@ -29,14 +30,14 @@ export const route: Route = {
     url: 'caixinglobal.com/news',
 };
 
-async function handler(ctx) {
+async function handler(ctx): Promise<Data> {
     const { data } = await got('https://gateway.caixin.com/api/extapi/homeInterface.jsp', {
         searchParams: {
             subject: '100990318;100990314;100990311',
             start: 0,
-            count: ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 20,
+            count: getRouteLimit(ctx, 20),
             type: '2',
-            _: Date.now(),
+            _: Temporal.Now.instant().epochMilliseconds,
         },
     });
 
@@ -44,7 +45,7 @@ async function handler(ctx) {
         title: e.desc,
         description: e.summ,
         link: e.link,
-        pubDate: parseDate(e.time),
+        pubDate: e.time ? parseDate(e.time, 'YYYY-MM-DD HH:mm:ss', 8) : undefined,
         category: e.tags.map((t) => t.name),
         nid: e.nid,
         attr: e.attr,
@@ -59,6 +60,13 @@ async function handler(ctx) {
                 const { data } = await got(item.link);
                 const $ = load(data);
                 $('.loadingBox, .cons-pay-tip').remove();
+                const author = $('.cons-author-txt a')
+                    .toArray()
+                    .map((element) => $(element).text())
+                    .join(', ');
+                if (author) {
+                    item.author = author;
+                }
 
                 let content = $('#appContent').prop('outerHTML');
 
@@ -68,13 +76,13 @@ async function handler(ctx) {
                             id: item.nid,
                             source: '',
                             url: item.link,
-                            _: Date.now(),
+                            _: Temporal.Now.instant().epochMilliseconds,
                         },
                     });
                     content = data.data.content;
                 }
 
-                item.description = $('.cons-photo').prop('outerHTML') + content;
+                item.description = $('.cons-photo').prop('outerHTML')! + content!;
 
                 return item;
             })

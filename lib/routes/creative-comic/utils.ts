@@ -1,5 +1,6 @@
 import CryptoJS from 'crypto-js';
 
+import cache from '@/utils/cache';
 import got from '@/utils/got';
 
 const apiHost = 'https://api.creative-comic.tw';
@@ -37,7 +38,7 @@ const getImgEncrypted = async (pageId, quality) => {
         },
         responseType: 'buffer',
     });
-    return Buffer.from(res).toString('base64');
+    return Buffer.from(res).toBase64();
 };
 
 const getImgKey = (pageId, uuid) =>
@@ -48,8 +49,8 @@ const getImgKey = (pageId, uuid) =>
         },
     });
 
-const getUuid = (tryGet) =>
-    tryGet('creative-comic:uuid', async () => {
+const getUuid = () =>
+    cache.tryGet('creative-comic:uuid', async () => {
         const { data } = await got(`${apiHost}/guest`, {
             headers: {
                 device,
@@ -83,4 +84,4 @@ const getRealKey = (imgKey, token = DEFAULT_TOKEN) => {
     };
 };
 
-export { apiHost, decrypt, getBook, getChapter, getChapters, getImgEncrypted, getImgKey, getRealKey, getUuid, token2Key };
+export { apiHost, decrypt, getBook, getChapter, getChapters, getImgEncrypted, getImgKey, getRealKey, getUuid };

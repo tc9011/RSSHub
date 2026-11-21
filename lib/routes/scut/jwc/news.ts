@@ -3,6 +3,7 @@ import querystring from 'node:querystring';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
+import { parseDate } from '@/utils/time';
 
 const baseUrl = 'http://jw.scut.edu.cn';
 const refererUrl = baseUrl + '/dist/';
@@ -14,26 +15,11 @@ const articleApiUrl = baseUrl + '/zhinan/jw/api/v2/getArticleInfo.do';
 const getArticleUrlById = (id) => `${baseUrl}/zhinan/cms/article/view.do?type=posts&id=${id}`;
 const getArticleMobileUrlById = (id) => `${baseUrl}/dist/#/detail/index?id=${id}&type=news`;
 
-const convertTimezoneToCST = (date) => {
-    const timeZone = 8;
-    const serverOffset = date.getTimezoneOffset() / 60;
-
-    return new Date(date.getTime() - 60 * 60 * 1000 * (timeZone + serverOffset));
-};
-
-const generateArticlePubDate = (createDateStr) => {
-    const date = new Date(createDateStr);
-    date.setHours(8);
-    date.setMinutes(0);
-    date.setSeconds(0);
-    date.setMilliseconds(0);
-
-    return convertTimezoneToCST(date);
-};
+const generateArticlePubDate = (createDateStr) => parseDate(createDateStr)?.toZonedDateTimeISO('UTC').toPlainDate().toZonedDateTime({ timeZone: '+08:00', plainTime: '08:00' }).toInstant();
 
 const isRedirectPage = (data) => !!data.link;
 
-const resolveRelativeUrl = (html) => html.replaceAll('src="/', `src="${new URL('.', baseUrl).href}`).replaceAll('href="/', `href="${new URL('.', baseUrl).href}`);
+const resolveRelativeUrl = (html) => html.replaceAll('src="/', () => `src="${new URL('.', baseUrl).href}`).replaceAll('href="/', () => `href="${new URL('.', baseUrl).href}`);
 
 const apiSuccessAssert = (data) => {
     if (!data.success) {
@@ -106,7 +92,7 @@ async function handler() {
             const articleData = articleApiResponse.data.data;
             articleData.id = articleMeta.id;
 
-            let articleFullText = null;
+            let articleFullText: string | null = null;
             if (!isRedirectPage(articleData)) {
                 articleFullText = generateArticleFullText(articleData);
             }
@@ -115,7 +101,7 @@ async function handler() {
                 title: articleData.name,
                 link: articleUrl,
                 description: articleFullText,
-                pubDate: generateArticlePubDate(articleData.createDate).toUTCString(),
+                pubDate: generateArticlePubDate(articleData.createDate),
             };
 
             cache.set(articleUrl, JSON.stringify(item));

@@ -2,14 +2,15 @@ import type { Context } from 'hono';
 
 import type { Route } from '@/types';
 import got from '@/utils/got';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/version/:versionType?/:linkType?',
     categories: ['game'],
     example: '/minecraft/version',
     parameters: {
-        versionType: `Game version type, \`all\` by default`,
-        linkType: `Link added to feed, \`official\` by default`,
+        versionType: 'Game version type, `all` by default',
+        linkType: 'Link added to feed, `official` by default',
     },
     features: {
         requireConfig: false,
@@ -28,19 +29,17 @@ export const route: Route = {
     maintainers: ['TheresaQWQ', 'xtexChooser'],
     handler,
     url: 'minecraft.net/',
-    description: `
-| Version                    | versionType |
+    description: `| Version                    | versionType |
 | -------------------------- | ----------- |
 | 正式版                     | release     |
 | 快照                       | snapshot    |
-| Alpha 及更早的版本         | old_alpha  |
-| Beta 版                    | old_beta   |
+| Alpha 及更早的版本         | old\\_alpha  |
+| Beta 版                    | old\\_beta   |
 | Target                     | linkType    |
 | -------------------------- | --------    |
 | minecraft.net              | official    |
 | 英文 Minecraft Wiki 版本页 | enwiki      |
-| 中文 Minecraft Wiki 版本页 | zhwiki      |
-`,
+| 中文 Minecraft Wiki 版本页 | zhwiki      |`,
     zh: {
         name: 'Java版游戏更新',
     },
@@ -60,7 +59,7 @@ const typeName = {
 };
 
 const linkFormatter: any = {
-    official: () => `https://www.minecraft.net`,
+    official: () => 'https://www.minecraft.net',
     enwiki: (item: VersionInManifest) => {
         let id = item.id;
         if (item.type === 'old_beta' && id.startsWith('b')) {
@@ -72,7 +71,7 @@ const linkFormatter: any = {
             } else if (id.startsWith('c')) {
                 id = `Classic ${id.slice(1)}`;
             } else if (id.startsWith('inf-')) {
-                id = `Infdev`;
+                id = 'Infdev';
             } else if (id.startsWith('rd-')) {
                 id = `pre-Classic ${id}`;
             }
@@ -93,7 +92,7 @@ const linkFormatter: any = {
             } else if (id.startsWith('c')) {
                 id = `Java版Classic ${id.slice(1)}`;
             } else if (id.startsWith('inf-')) {
-                id = `Java版Infdev`;
+                id = 'Java版Infdev';
             } else if (id.startsWith('rd-')) {
                 id = `Java版pre-Classic ${id}`;
             }
@@ -103,7 +102,7 @@ const linkFormatter: any = {
 };
 
 async function handler(ctx?: Context) {
-    const url = ctx?.req.query('mcmanifest') ?? 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json';
+    const url = 'https://piston-meta.mojang.com/mc/game/version_manifest_v2.json';
 
     const response: any = await got({
         method: 'get',
@@ -125,12 +124,12 @@ async function handler(ctx?: Context) {
 
     return {
         title,
-        link: `https://www.minecraft.net/`,
+        link: 'https://www.minecraft.net/',
         description: title,
         item: data.map((item) => ({
             title: `${item.id} ${typeName[item.type] || ''}更新`,
             description: `${item.id} ${typeName[item.type] || ''}更新`,
-            pubDate: new Date(item.releaseTime).toUTCString(),
+            pubDate: parseDate(item.releaseTime),
             link: linker(item),
             guid: item.id + item.type,
         })),

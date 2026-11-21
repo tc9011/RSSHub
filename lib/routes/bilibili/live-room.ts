@@ -2,8 +2,7 @@ import { decodeHTML } from 'entities';
 
 import type { DataItem, Route } from '@/types';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 import cache from './cache';
 
@@ -34,7 +33,7 @@ async function handler(ctx) {
     let roomID = ctx.req.param('roomID');
 
     // 短号查询长号
-    if (Number.parseInt(roomID, 10) < 10000) {
+    if (Number(roomID) < 10000) {
         roomID = await cache.getLiveIDFromShortID(roomID);
     }
     const info = await cache.getUserInfoFromLiveID(roomID);
@@ -52,7 +51,7 @@ async function handler(ctx) {
         liveItem.push({
             title: `${data.title} ${data.live_time}`,
             description: `<img src="${data.keyframe}"><br>${decodeHTML(data.description)}`,
-            pubDate: timezone(parseDate(data.live_time), 8),
+            pubDate: parseDate(data.live_time, 8),
             guid: `https://live.bilibili.com/${roomID} ${data.live_time}`,
             link: `https://live.bilibili.com/${roomID}`,
         });

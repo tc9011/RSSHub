@@ -4,8 +4,7 @@ import { config } from '@/config';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/bbs/hot',
@@ -30,13 +29,13 @@ export const route: Route = {
     handler,
     url: 'bbs.pku.edu.cn/v2/hot-topic.php',
     description: `::: warning
-  论坛部分帖子正文内容的获取需要用户登录后的 Cookie 值，详情见部署页面的配置模块。
+论坛部分帖子正文内容的获取需要用户登录后的 Cookie 值，详情见部署页面的配置模块。
 :::`,
 };
 
 async function handler() {
     const cookie = config.pkubbs.cookie;
-    const headers = {};
+    const headers: Record<string, string> = {};
     if (cookie) {
         headers.cookie = cookie;
     }
@@ -45,7 +44,7 @@ async function handler() {
     const listItems = $('#list-content .list-item')
         .toArray()
         .map((element) => ({
-            url: new URL($(element).find('> a.link').attr('href'), 'https://bbs.pku.edu.cn/v2/').href,
+            url: new URL($(element).find('> a.link').attr('href')!, 'https://bbs.pku.edu.cn/v2/').href,
             title: $(element).find('.title').text(),
         }))
         .slice(0, 10);
@@ -63,7 +62,7 @@ async function handler() {
                         description: $('.post-card:first-child .content').html(),
                         link: url,
                         guid: url,
-                        pubDate: timezone(parseDate(date, '发表于YYYY-MM-DD HH:mm:ss'), +8),
+                        pubDate: parseDate(date, '发表于YYYY-MM-DD HH:mm:ss', 8),
                     };
                 } catch {
                     return {

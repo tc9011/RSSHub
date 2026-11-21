@@ -2,7 +2,14 @@ import { load } from 'cheerio';
 
 import type { Route } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { formatDate, parseDate } from '@/utils/time';
+
+function getPublicationDate(value?: string) {
+    if (!value) {
+        return;
+    }
+    return parseDate(value);
+}
 
 export const route: Route = {
     path: '/daily-papers/:cycle?/:voteFliter?',
@@ -55,10 +62,10 @@ async function handler(ctx) {
             break;
         case 'week':
             // We don't actually need to get the week number, because huggingface.co/papers/week/YYYY-W52 will redirect to the latest week
-            url = `https://huggingface.co/papers/week/${new Date().getFullYear()}-W52`;
+            url = `https://huggingface.co/papers/week/${Temporal.Now.zonedDateTimeISO('UTC').year}-W52`;
             break;
         case 'month':
-            url = `https://huggingface.co/papers/month/${new Date().toISOString().slice(0, 7)}`;
+            url = `https://huggingface.co/papers/month/${formatDate(Temporal.Now.instant(), 'YYYY-MM')}`;
             break;
         default:
             throw new Error(`Invalid cycle: ${cycle}`);
@@ -66,7 +73,11 @@ async function handler(ctx) {
 
     const { body: response } = await got(url);
     const $ = load(response);
-    const papers = $('div[data-target="DailyPapers"]').data('props') as PapersData;
+    const props = $('div[data-target="DailyPapers"]').attr('data-props');
+    if (!props) {
+        throw new Error(`Daily papers data not found on ${url}`);
+    }
+    const papers: PapersData = JSON.parse(props);
 
     const items = papers.dailyPapers
         .filter((item) => item.paper.upvotes >= voteFliter)
@@ -74,14 +85,13 @@ async function handler(ctx) {
             title: item.title,
             link: `https://arxiv.org/abs/${item.paper.id}`,
             description: item.paper.summary.replaceAll('\n', ' '),
-            pubDate: parseDate(item.publishedAt),
+            pubDate: getPublicationDate(item.publishedAt),
             author: item.paper.authors.map((author) => author.name).join(', '),
             upvotes: item.paper.upvotes,
         }))
         .toSorted((a, b) => b.upvotes - a.upvotes);
 
     return {
-        allowEmpty: true,
         title: 'Huggingface Daily Papers',
         link: 'https://huggingface.co/papers',
         item: items,

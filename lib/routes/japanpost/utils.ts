@@ -1,48 +1,12 @@
 import crypto from 'node:crypto';
 
 import cityTimezones from 'city-timezones';
-import dayjs from 'dayjs';
-import customParseFormat from 'dayjs/plugin/customParseFormat.js';
-import timezone from 'dayjs/plugin/timezone.js';
-import utc from 'dayjs/plugin/utc.js';
 
-dayjs.extend(customParseFormat);
-dayjs.extend(utc);
-dayjs.extend(timezone);
+import { parseDate, parseDateStrict } from '@/utils/time';
 
 const utils = {
-    expandOdd: (c) => {
-        c.prototype.odd = function () {
-            const odds = [];
-            this.each((index, item) => {
-                if (index % 2 === 1) {
-                    odds.push(item);
-                }
-            });
-            return c(odds);
-        };
-    },
-    expandEven: (c) => {
-        c.prototype.even = function () {
-            const evens = [];
-            this.each((index, item) => {
-                if (index % 2 === 0) {
-                    evens.push(item);
-                }
-            });
-            return c(evens);
-        };
-    },
-    expandReverse: (c) => {
-        c.prototype.reverse = function () {
-            const reverses = [];
-            this.each((index, item) => {
-                reverses.push(item);
-            });
-            reverses.reverse();
-            return c(reverses);
-        };
-    },
+    even: (collection) => collection.filter((index) => index % 2 === 0),
+    odd: (collection) => collection.filter((index) => index % 2 === 1),
     generateGuid: (t) => {
         const hash = crypto.createHash('sha512');
         hash.update(t);
@@ -58,10 +22,10 @@ const utils = {
 
         switch (l) {
             case 'ja':
-                customFormat = dayjs(t, formatJaDate, true).isValid() ? formatJaDate : dayjs(t, formatJaDateTime, true).isValid() ? formatJaDateTime : undefined;
+                customFormat = parseDateStrict(t, formatJaDate) ? formatJaDate : parseDateStrict(t, formatJaDateTime) ? formatJaDateTime : undefined;
                 break;
             case 'en':
-                customFormat = dayjs(t, formatEnDate, true).isValid() ? formatEnDate : dayjs(t, formatEnDateTime, true).isValid() ? formatEnDateTime : undefined;
+                customFormat = parseDateStrict(t, formatEnDate) ? formatEnDate : parseDateStrict(t, formatEnDateTime) ? formatEnDateTime : undefined;
                 break;
             default:
             // empty
@@ -85,7 +49,7 @@ const utils = {
             }
         }
 
-        return customFormat ? [dayjs.tz(t, customFormat, tz).valueOf(), tz] : [new Date(t).getTime(), tz];
+        return customFormat ? [parseDateStrict(t, customFormat, tz)?.epochMilliseconds, tz] : [parseDate(t)?.epochMilliseconds, tz];
     },
 };
 

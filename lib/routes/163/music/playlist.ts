@@ -1,6 +1,7 @@
 import { config } from '@/config';
 import type { Route } from '@/types';
 import got from '@/utils/got';
+import { parseDate } from '@/utils/time';
 
 import { renderPlaylistDescription } from '../templates/music/playlist';
 
@@ -19,10 +20,17 @@ export const route: Route = {
         ],
         requirePuppeteer: false,
         antiCrawler: true,
+        supportRadar: true,
         supportBT: false,
         supportPodcast: false,
         supportScihub: false,
     },
+    radar: [
+        {
+            source: ['music.163.com/playlist'],
+            target: '/music/playlist/:id',
+        },
+    ],
     name: '歌单歌曲',
     maintainers: ['DIYgod'],
     handler,
@@ -33,16 +41,12 @@ async function handler(ctx) {
 
     const response = await got.get(`https://music.163.com/api/v3/playlist/detail?id=${id}`, {
         headers: {
-            Referer: 'https://music.163.com/',
             Cookie: config.ncm.cookies,
         },
     });
 
     const data = response.data.playlist;
     const songinfo = await got('https://music.163.com/api/song/detail', {
-        headers: {
-            Referer: 'https://music.163.com',
-        },
         searchParams: {
             ids: `[${data.trackIds.slice(0, 201).map((item) => item.id)}]`,
         },
@@ -55,18 +59,22 @@ async function handler(ctx) {
         description: `网易云音乐歌单 - ${data.name}`,
         item: data.trackIds.slice(0, 201).map((item) => {
             const thisSong = songs.find((element) => element.id === item.id);
-            const singer = thisSong.artists.length === 1 ? thisSong.artists[0].name : thisSong.artists.reduce((prev, cur) => (prev.name || prev) + '/' + cur.name);
+            let singer = thisSong.artists[0].name;
+            for (const artist of thisSong.artists.slice(1)) {
+                singer += '/' + artist.name;
+            }
             return {
                 title: `${thisSong.name} - ${singer}`,
                 description: renderPlaylistDescription({
+                    songId: item.id,
                     singer,
                     album: thisSong.album.name,
-                    date: new Date(thisSong.album.publishTime).toLocaleDateString(),
+                    date: parseDate(thisSong.album.publishTime)?.toLocaleString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'UTC' }),
                     picUrl: thisSong.album.picUrl,
                 }),
                 link: `https://music.163.com/song?id=${item.id}`,
                 guid: `https://music.163.com/#/song?id=${item.id}`,
-                pubDate: new Date(item.at),
+                pubDate: parseDate(item.at),
                 author: singer,
             };
         }),

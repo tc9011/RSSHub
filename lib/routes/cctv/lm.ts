@@ -3,8 +3,8 @@ import { load } from 'cheerio';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { getRouteLimit } from '@/utils/route-limit';
+import { compareDates, parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/lm/:id?',
@@ -21,8 +21,12 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['news.cctv.com/:category'],
-            target: '/:category',
+            source: ['tv.cctv.com/lm/:id', 'tv.cctv.com/lm/:id/*'],
+            target: '/lm/:id',
+        },
+        {
+            source: ['tv.cctv.com/lm'],
+            target: '/lm',
         },
     ],
     name: '栏目',
@@ -37,7 +41,7 @@ export const route: Route = {
 | zdzy     | jjbxs      | dydhly       |
 
 ::: tip
-  更多栏目请看 [这里](https://tv.cctv.com/lm)
+更多栏目请看 [这里](https://tv.cctv.com/lm)
 :::`,
 };
 
@@ -65,15 +69,22 @@ async function handler(ctx) {
         url: apiUrl,
     });
 
-    const list = response.data.data.list.map((item) => ({
+    let list = response.data.data.list.map((item) => ({
         url: item.url,
         guid: item.guid,
         image: item.image,
         title: item.title,
-        pubDate: timezone(parseDate(item.time), +8),
+        pubDate: parseDate(item.time, 8),
         link: `${vdnRootUrl}/api/getHttpVideoInfo.do?pid=${item.guid}`,
         description: `<p>${item.brief.replaceAll('\r\n', '</p><p>')}</p>`,
     }));
+    const limit = getRouteLimit(ctx);
+    if (limit !== undefined) {
+        if (ctx.req.query('sorted') !== 'false') {
+            list.sort((a, b) => compareDates(b.pubDate, a.pubDate));
+        }
+        list = list.slice(0, limit);
+    }
 
     const items = await Promise.all(
         list.map((item) =>
@@ -90,8 +101,12 @@ async function handler(ctx) {
                     item.description += `<video src="${c.url}" controls="controls" poster="${c.image}" width="100%"></video><br>`;
                 }
 
-                for (let i = 2; data.video[`chapters${i}`]; i++) {
-                    for (const c of data.video[`chapters${i}`]) {
+                for (let i = 2; ; i++) {
+                    const chapters = data.video[`chapters${i}`];
+                    if (!chapters) {
+                        break;
+                    }
+                    for (const c of chapters) {
                         item.description += `<video src="${c.url}" controls="controls" poster="${c.image}" width="100%"></video><br>`;
                     }
                 }

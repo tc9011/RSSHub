@@ -1,12 +1,18 @@
-import MarkdownIt from 'markdown-it';
-
-import type { Route } from '@/types';
+import type { Data, Route } from '@/types';
+import MarkdownIt from '@/utils/markdown-it';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 const md = MarkdownIt({
     html: true,
 });
+
+function getPublicationDate(value?: string) {
+    if (!value) {
+        return;
+    }
+    return parseDate(value);
+}
 
 export const route: Route = {
     path: '/developer/harmonyos/sample-code',
@@ -23,7 +29,7 @@ export const route: Route = {
     radar: [
         {
             source: ['developer.huawei.com/consumer/cn/samples'],
-            target: '/huawei/developer/harmonyos/sample-code',
+            target: '/developer/harmonyos/sample-code',
         },
     ],
     name: 'HarmonyOS 示例代码',
@@ -31,7 +37,7 @@ export const route: Route = {
     handler,
 };
 
-async function handler() {
+async function handler(): Promise<Data> {
     const response = await ofetch('https://svc-drcn.developer.huawei.com/community/servlet/consumer/partnerCommunityService/v1/servlet/samplecode/getSampleCodes', {
         method: 'POST',
         headers: {
@@ -54,7 +60,7 @@ async function handler() {
         link: item.link,
         description: md.render(item.description),
         category: item.keywords,
-        pubDate: parseDate(item.updateTime),
+        pubDate: getPublicationDate(item.updateTime),
         author: 'HarmonyOS',
         id: item.id,
         image: item.effectPictureUrl,

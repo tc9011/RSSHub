@@ -2,6 +2,7 @@ import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import util from './utils';
 
@@ -31,11 +32,11 @@ export const route: Route = {
     url: 'nintendoswitch.com.cn/',
 };
 
-async function handler() {
+async function handler(ctx) {
     const response = await got(news_url);
 
     // 获取Nuxt对象
-    const result = await util.nuxtReader(response.data);
+    const result: any = await util.nuxtReader(response.data);
 
     /* newsList[]
         imgUrl: "https://metadata-images.nintendoswitch.com.cn/formal/8332123215251-EAFBA647-9772-DB4B-3C1A-FE0CC41A3966-封面图(1).jpg"
@@ -47,7 +48,7 @@ async function handler() {
         throw new InvalidParameterError('新闻信息不存在，请报告这个问题');
     }
 
-    let data = result.newsList.map((item) => ({
+    let data = result.newsList.slice(0, getRouteLimit(ctx, 30)).map((item) => ({
         title: item.title,
         description: util.generateImageLink(item.imgUrl),
         link: `${news_url}/topics/${item.jumpUrl}`,

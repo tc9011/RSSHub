@@ -1,9 +1,9 @@
 import { load } from 'cheerio';
 
+import type { DataItem } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 const getAritlces = async (category, url, cache) => {
     const { data } = await got(url);
@@ -11,15 +11,15 @@ const getAritlces = async (category, url, cache) => {
     const spiderResult = $('ul.article-list')
         .children()
         .toArray()
-        .map((item) => {
-            item = $(item);
-            const a = item.find('a');
+        .map((item): DataItem => {
+            const $item = $(item);
+            const a = $item.find('a');
             const link = a.attr('href');
 
             return {
                 title: a.text(),
                 link,
-                pubDate: timezone(parseDate(item.find('span.time').text()), +8),
+                pubDate: parseDate($item.find('span.time').text(), 8),
                 category,
             };
         })
@@ -39,7 +39,7 @@ const getAritlces = async (category, url, cache) => {
 };
 
 const getItemsFromURLs = async (URLs, cache) => {
-    let items = Object.keys(URLs).map((key) => getAritlces(key, URLs[key], cache));
+    let items: any[] = Object.entries(URLs).map(([key, value]) => getAritlces(key, value, cache));
     items = await Promise.all(items);
     items = items.flat();
     return items;

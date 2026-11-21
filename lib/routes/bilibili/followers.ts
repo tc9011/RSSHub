@@ -2,6 +2,7 @@ import { config } from '@/config';
 import ConfigNotFoundError from '@/errors/types/config-not-found';
 import type { Route } from '@/types';
 import got from '@/utils/got';
+import { parseDate } from '@/utils/time';
 
 import cache from './cache';
 
@@ -37,7 +38,7 @@ export const route: Route = {
     maintainers: ['Qixingchen'],
     handler,
     description: `::: warning
-  UP 主粉丝现在需要 b 站登录后的 Cookie 值，所以只能自建，详情见部署页面的配置模块。
+UP 主粉丝现在需要 b 站登录后的 Cookie 值，所以只能自建，详情见部署页面的配置模块。
 :::`,
 };
 
@@ -81,7 +82,7 @@ async function handler(ctx) {
         item: data.map((item) => ({
             title: `${name} 新粉丝 ${item.uname}`,
             description: `${item.uname}<br>${item.sign}<br>总计${count}`,
-            pubDate: new Date(item.mtime * 1000),
+            pubDate: parseDate(item.mtime * 1000),
             link: `https://space.bilibili.com/${item.mid}`,
         })),
     };

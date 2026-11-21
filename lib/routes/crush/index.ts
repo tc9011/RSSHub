@@ -4,8 +4,7 @@ import { load } from 'cheerio';
 import type { Data, DataItem, Route } from '@/types';
 import md5 from '@/utils/md5';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 const baseUrl = 'https://www.crush.ninja';
 
@@ -46,22 +45,24 @@ async function handler(ctx): Promise<Data> {
             const $el = $(el);
 
             const p1 = $el.find('.p-1').first();
-            const description = (p1.text() || '').trim();
+            const description = p1.text().trim();
 
             const publishedDiv = $el.children('div').last();
-            const publishedRaw = (publishedDiv.text() || '').trim();
+            const publishedRaw = publishedDiv.text();
 
             // Example
             // Published at: September 20, 2025 12:44:36 PM
             const postedAtText = publishedRaw.replace('Published at: ', '');
-            const pubDate = timezone(parseDate(postedAtText), 0);
+            const pubDate = parseDate(postedAtText, 'MMMM D, YYYY h:mm:ss A', 0);
 
-            const guid = `${targetUrl}#${md5(description)}`;
+            const nativeTag = $el.attr('ng-click')?.match(/^tag\('([^']+)'\)$/)?.[1];
+            const guid = nativeTag ? `crush:${nativeTag}` : `${targetUrl}#${md5(description)}`;
 
             const item: DataItem = {
                 title: description,
                 description,
                 pubDate,
+                link: targetUrl,
                 guid,
             };
 

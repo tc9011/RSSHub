@@ -1,10 +1,9 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDateStrict } from '@/utils/time';
 
 const baseUrl = 'https://www.kimlaw.or.kr';
 
@@ -39,27 +38,29 @@ async function handler() {
     const $ = load(response);
     const list = $('.li_body')
         .toArray()
-        .map((item) => {
-            item = $(item);
-            const a = item.find('a.list_text_title');
+        .map((item): DataItem => {
+            const $item = $(item);
+            const a = $item.find('a.list_text_title');
+            const sourceDate = $item.find('.time').attr('title');
+            const date = sourceDate ? parseDateStrict(sourceDate, 'YYYY-MM-DD HH:mm', 9) : undefined;
             return {
                 title: a.text(),
                 link: `${baseUrl}${a.attr('href')}`,
-                author: item.find('.name').text(),
-                pubDate: timezone(parseDate(item.find('.time').attr('title')), 9),
+                author: $item.find('.name').text(),
+                pubDate: date,
             };
         });
 
     const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
+        list.map(async (item) => {
+            const description = await cache.tryGet(`kimlaw:body:${item.link}`, async () => {
                 const { data: response } = await got(item.link);
                 const $ = load(response);
 
-                item.description = $('.board_txt_area').html();
-                return item;
-            })
-        )
+                return $('.board_txt_area').html();
+            });
+            return { ...item, description };
+        })
     );
 
     return {

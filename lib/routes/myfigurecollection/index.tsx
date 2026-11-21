@@ -2,10 +2,10 @@ import { load } from 'cheerio';
 import { renderToString } from 'hono/jsx/dom/server';
 
 import InvalidParameterError from '@/errors/types/invalid-parameter';
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { isValidHost } from '@/utils/valid-host';
+import { isOnSite, isValidHost } from '@/utils/valid-host';
 
 const shortcuts = {
     potd: 'picture/browse/potd/',
@@ -43,6 +43,8 @@ export const route: Route = {
 async function handler(ctx) {
     const language = ctx.req.param('language') ?? '';
     const category = ctx.req.param('category') ?? 'figure';
+    const requestedLimit = Number(ctx.req.query('limit'));
+    const limit = Number.isSafeInteger(requestedLimit) && requestedLimit > 0 ? requestedLimit : 25;
     if (language && !isValidHost(language)) {
         throw new InvalidParameterError('Invalid language');
     }
@@ -58,21 +60,27 @@ async function handler(ctx) {
     const $ = load(response.data);
 
     let items = $('.item-icon, .picture-icon')
-        .slice(0, ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit')) : 25)
+        .slice(0, limit)
         .toArray()
-        .map((item) => {
-            item = $(item).find('a');
+        .map((item): DataItem => {
+            const $item = $(item).find('a');
 
-            const link = item.attr('href');
+            const link = $item.attr('href')!;
 
             return {
-                link: link.startsWith('http') ? link : `${rootUrl}${link}`,
+                link: new URL(link, currentUrl).href,
+                title: '',
             };
         });
 
     items = await Promise.all(
         items.map((item) =>
-            cache.tryGet(item.link, async () => {
+            cache.tryGet(item.link!, async () => {
+                // only follow links on the site itself
+                if (!isOnSite(item.link, 'myfigurecollection.net')) {
+                    return item;
+                }
+
                 try {
                     const detailResponse = await got({
                         method: 'get',
@@ -82,8 +90,11 @@ async function handler(ctx) {
                     const content = load(detailResponse.data);
 
                     item.title = content('.headline').text();
+                    const pictures = /myfigurecollection\.net\/picture\//.test(item.link!)
+                        ? [{ src: content('meta[property="og:image"]').attr('content') }]
+                        : JSON.parse(decodeURIComponent(content('meta[name="pictures"]').attr('content')!));
                     item.description = renderDescription(
-                        /myfigurecollection\.net\/picture\//.test(item.link) ? [{ src: content('meta[property="og:image"]').attr('content') }] : JSON.parse(decodeURIComponent(content('meta[name="pictures"]').attr('content'))),
+                        pictures,
                         content('.form-field')
                             .toArray()
                             .map((f) => ({
@@ -92,7 +103,7 @@ async function handler(ctx) {
                             }))
                     );
                 } catch {
-                    item.title = `Item #${item.link.split('/').pop()}`;
+                    item.title = `Item #${item.link!.split('/').pop()}`;
                 }
 
                 return item;
@@ -113,7 +124,7 @@ const renderDescription = (pictures: Array<{ src?: string; w?: string; h?: strin
     renderToString(
         <>
             {pictures?.map((picture, index) => (
-                <img key={`${picture.src}-${index}`} src={picture.src} weight={picture.w} height={picture.h} />
+                <img key={`${picture.src}-${index}`} src={picture.src} width={picture.w} height={picture.h} />
             ))}
             {fields.length ? (
                 <table>

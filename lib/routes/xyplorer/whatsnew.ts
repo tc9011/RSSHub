@@ -1,0 +1,45 @@
+import { load } from 'cheerio';
+
+import type { Route } from '@/types';
+import ofetch from '@/utils/ofetch';
+import { parseDateStrict } from '@/utils/time';
+
+export const route: Route = {
+    path: '/whatsnew',
+    categories: ['program-update'],
+    example: '/xyplorer/whatsnew',
+    name: "What's New",
+    maintainers: ['nczitzk'],
+    handler,
+};
+
+async function handler() {
+    const rootUrl = 'https://www.xyplorer.com';
+    const currentUrl = `${rootUrl}/whatsnew.php`;
+
+    const response = await ofetch(currentUrl);
+    const $ = load(response);
+
+    const items = $('.waznu')
+        .toArray()
+        .filter((item) => $(item).prev().is('p.date') && $(item).prev().prev().is('h3'))
+        .map((item) => {
+            const $item = $(item);
+            const title = $item.prev().prev().text();
+            const date = $item.prev().text().replace('released ', '');
+            const pubDate = date ? parseDateStrict(date, 'DD-MMM-YYYY') : undefined;
+            return {
+                guid: `${currentUrl}#${encodeURIComponent(title)}`,
+                link: currentUrl,
+                description: `<ul>${$item.html()}</ul>`,
+                title,
+                pubDate,
+            };
+        });
+
+    return {
+        title: $('title').text(),
+        link: currentUrl,
+        item: items,
+    };
+}

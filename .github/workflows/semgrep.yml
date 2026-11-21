@@ -12,6 +12,12 @@ on:
         # random HH:MM to avoid a load spike on GitHub Actions at 00:00
         - cron: 21 20 * * *
 
+# A new push to a pull request cancels the scan of the previous push.
+# Every other run gets its own group per branch and commit, so a push to master is never cancelled or replaced.
+concurrency:
+    group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || format('{0}-{1}', github.ref, github.sha) }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
+
 jobs:
     semgrep:
         name: Scan
@@ -22,7 +28,7 @@ jobs:
         permissions:
             security-events: write
         steps:
-            - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
             - run: semgrep ci --sarif > semgrep.sarif
               env:
                   SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}

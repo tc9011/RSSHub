@@ -1,7 +1,6 @@
 import { load } from 'cheerio';
-import dayjs from 'dayjs';
 
-import { Job } from './models';
+import type { DataItem } from '@/types';
 
 /**
  * Constants
@@ -48,7 +47,7 @@ function parseParamsToSearchParams(params, map) {
         return '';
     } // Handle undefined params
 
-    const validParamValues = params.split('-').filter((v) => v in map);
+    const validParamValues = params.split('-').filter((v) => Object.hasOwn(map, v));
     return validParamValues.join(',');
 }
 
@@ -68,7 +67,7 @@ function parseParamsToString(params, map) {
 
     const validParamValues = params
         .split('-')
-        .filter((v) => v in map)
+        .filter((v) => Object.hasOwn(map, v))
         .map((v) => map[v]);
     return validParamValues.join(',');
 }
@@ -82,7 +81,7 @@ function parseParamsToString(params, map) {
  * Example page: https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=Software%20Engineer&location=United%20States&locationId=&geoId=103644278&sortBy=R&f_TPR=&position=1&pageNum=0
  *
  * @param {String} data HTML string of job search page
- * @returns {Job[]} Array of jobs with data filled
+ * @returns Array of jobs with data filled
  */
 function parseJobSearch(data) {
     const $ = load(data);
@@ -90,38 +89,21 @@ function parseJobSearch(data) {
     // Parse data
     const jobs = $('li')
         .toArray()
-        .map((elem) => {
+        .map((elem): DataItem & { company: string; location: string } => {
             const elemHtml = $(elem);
-            const link = elemHtml.find('a.base-card__full-link, a.base-card--link')?.attr('href')?.split('?')[0];
+            const link = elemHtml.find('a.base-card__full-link, a.base-card--link')?.attr('href')?.split('?', 1)[0];
             const title = elemHtml.find('h3.base-search-card__title')?.text()?.trim();
             const company = elemHtml.find('h4.base-search-card__subtitle')?.text()?.trim();
             const location = elemHtml.find('span.job-search-card__location')?.text()?.trim();
             const pubDate = elemHtml.find('time')?.attr('datetime');
 
-            return new Job(title, link, company, location, pubDate);
+            return { title, link, company, location, pubDate };
         });
     return jobs;
 }
 
-/**
- * Parse job detail page
- * Example page: https://www.linkedin.com/jobs/view/software-engineer-backend-junior-at-genies-3429649821?trk=public_jobs_topcard-title
- *
- * @param {String} data HTML string of job detail page
- * @returns {Job} Job details
- */
-function parseJobDetail(data) {
-    const job = new Job();
-    const $ = load(data);
-
-    job.recruiter = $('a.message-the-recruiter__cta').attr(`href`);
-    job.description = $('div.description__text description__text--rich').text();
-
-    return job;
-}
-
 const parseRouteParam = (searchParam: string | null): string => {
-    if (!searchParam || typeof searchParam !== 'string') {
+    if (!searchParam) {
         return 'all';
     }
     return encodeURIComponent(searchParam.split(',').join('-'));
@@ -139,9 +121,18 @@ function parseCompanyPosts($) {
         .toArray() // Convert the Cheerio object to a plain array
         .map((elem) => {
             const elemHtml = $(elem);
-            const link = elemHtml.find('a.main-feed-card__overlay-link').attr('href');
+            let link = elemHtml.find('a.main-feed-card__overlay-link').attr('href');
+
+            // Reposts don't have an overlay link — construct URL from the activity URN
+            if (!link) {
+                const activityUrn = elemHtml.find('article[data-activity-urn]').attr('data-activity-urn');
+                if (activityUrn) {
+                    link = `https://www.linkedin.com/feed/update/${activityUrn}`;
+                }
+            }
+
             const text = elemHtml.find('p.attributed-text-segment-list__content').text().trim();
-            const date = parseRelativeShorthandDate(elemHtml.find('time').text().trim());
+            const date = parseRelativeShorthandDate(elemHtml.find('time').first().text().trim());
 
             return { link, text, date };
         });
@@ -161,41 +152,30 @@ function parseCompanyName($) {
 }
 
 /**
- * Parse relative date shorthand string into a Date object
+ * Parse relative date shorthand string into a Temporal.Instant
  *
  * @param {String} shorthand The shorthand string representing the date
- * @returns {Date|null} The parsed date or null if the format is invalid
+ * @returns {Temporal.Instant|null} The parsed date or null if the format is invalid
  */
 function parseRelativeShorthandDate(shorthand) {
-    const match = shorthand.match(/^(\d+)([wdmyh])$/);
+    const match = /^(\d+)(mo|[wdmyh])\b/.exec(shorthand);
     if (!match) {
         return null;
     }
 
     const [, amount, unit] = match;
     const unitMap = {
-        w: 'week',
-        d: 'day',
-        m: 'month',
-        y: 'year',
-        h: 'hour',
+        w: 'weeks',
+        d: 'days',
+        mo: 'months',
+        m: 'minutes',
+        y: 'years',
+        h: 'hours',
     };
 
-    return dayjs().subtract(Number.parseInt(amount), unitMap[unit]);
+    return Temporal.Now.zonedDateTimeISO('UTC')
+        .subtract({ [unitMap[unit]]: Number.parseInt(amount) })
+        .toInstant();
 }
 
-export {
-    BASE_URL,
-    EXP_LEVELS,
-    EXP_LEVELS_QUERY_KEY,
-    JOB_TYPES,
-    JOB_TYPES_QUERY_KEY,
-    KEYWORDS_QUERY_KEY,
-    parseCompanyName,
-    parseCompanyPosts,
-    parseJobDetail,
-    parseJobSearch,
-    parseParamsToSearchParams,
-    parseParamsToString,
-    parseRouteParam,
-};
+export { BASE_URL, EXP_LEVELS, EXP_LEVELS_QUERY_KEY, JOB_TYPES, JOB_TYPES_QUERY_KEY, KEYWORDS_QUERY_KEY, parseCompanyName, parseCompanyPosts, parseJobSearch, parseParamsToSearchParams, parseParamsToString, parseRouteParam };

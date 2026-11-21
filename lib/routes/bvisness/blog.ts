@@ -2,7 +2,7 @@ import { load } from 'cheerio';
 
 import type { Route } from '@/types';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     name: 'Blog',
@@ -26,12 +26,12 @@ async function handler() {
     const items = $('article')
         .toArray()
         .map((item) => {
-            item = $(item);
-            const a = item.find('a').first();
+            const $item = $(item);
+            const a = $item.find('a').first();
             return {
                 title: a.text(),
-                link: new URL(a.attr('href'), 'https://bvisness.me/').href,
-                pubDate: parseDate(item.find('time').attr('datetime')),
+                link: new URL(a.attr('href')!, 'https://bvisness.me/').href,
+                pubDate: parseDate($item.find('time').attr('datetime')!),
             };
         });
 
