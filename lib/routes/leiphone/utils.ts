@@ -1,13 +1,15 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 const ProcessFeed = async (list, cache) => {
     const host = 'https://www.leiphone.com';
 
-    const items = await Promise.all(
-        list.map(async (e) => {
+    const items = await pMap(
+        list,
+        async (e: string) => {
             const link = new URL(e, host).href;
 
             const single = await cache.tryGet(link, async () => {
@@ -30,7 +32,8 @@ const ProcessFeed = async (list, cache) => {
             });
 
             return single;
-        })
+        },
+        { concurrency: 3 }
     );
 
     return items;

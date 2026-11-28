@@ -29,18 +29,18 @@ async function handler() {
         .map((item): DataItem => {
             const c = $(item);
             const id = c.attr('id')!;
-            const title = c.find('span.paper').text().trim();
-            const author = c.find('span.author').text().trim();
-            const other = c.find('span.other').text().trim();
+            const title = c.find('span.paper').text();
+            const author = c.find('span.author').text();
+            const other = c.find('span.other').text();
             const download = c.find("img.icon[title='Download paper']").parent().attr('href');
-            const downloadBibTex = c.find("img.icon[title='Download BibTeX']").parent().attr('href');
+            const downloadBibTex = c.find('a.bibtex-link').attr('href');
             const linkToPaper = c.find("img.icon[title='Link to paper']").parent().attr('href');
             return {
                 title,
-                description: `${other}<br/><br/><a href='${download}'>Download</a><br/><a href='${downloadBibTex}'>Download BibTex</a>`,
+                description: [other, $('<a>').attr('href', download).text('Download').toString(), $('<a>').attr('href', downloadBibTex).text('BibTeX').toString()].join('<br/><br/>'),
                 author,
                 guid: id,
-                link: linkToPaper,
+                link: new URL(linkToPaper!, url).href,
             };
         });
 

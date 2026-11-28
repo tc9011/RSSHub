@@ -1,9 +1,10 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/changelog',
@@ -29,33 +30,34 @@ export const route: Route = {
     url: 'support.typora.io/',
 };
 
+async function getArticleItem(item: DataItem & { link: string }): Promise<DataItem> {
+    const details = await cache.tryGet<Pick<DataItem, 'pubDate' | 'description'>>(`typora:changelog:${item.link}`, async () => {
+        const { data } = await got(item.link);
+        const $ = load(data);
+        const publication = $('#header .post-meta > div').filter((_, element) => $(element).children('div').first().text() === 'Published');
+        return {
+            pubDate: parseDate(publication.find('time').text(), 'MMMM D, YYYY', 0),
+            description: $('#post-content').html(),
+        };
+    });
+    return { ...item, pubDate: details.pubDate, description: details.description };
+}
+
 async function handler() {
     const host = 'https://support.typora.io';
 
     const { data } = await got(`${host}/store/`);
 
-    const list = Object.values(data)
+    const list = Object.values<{ category: string; title: string; author: string; content: DataItem['description']; url: string }>(data)
         .filter((i) => i.category === 'new')
-        .map((i) => ({
+        .map((i): DataItem & { link: string } => ({
             title: i.title,
             author: i.author,
             description: i.content,
             link: `${host}${i.url}`,
         }));
 
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
-                const { data } = await got(item.link);
-                const $ = load(data);
-
-                item.pubDate = parseDate($('.post-meta time').text());
-                item.description = $('#post-content').html();
-
-                return item;
-            })
-        )
-    );
+    const items = await pMap(list, getArticleItem, { concurrency: 3 });
 
     return {
         title: 'Typora Changelog',

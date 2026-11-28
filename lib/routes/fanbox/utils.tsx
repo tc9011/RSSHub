@@ -1,26 +1,40 @@
 import { renderToString } from 'hono/jsx/dom/server';
 
 import { config } from '@/config';
+import { renderYoutube } from '@/routes/youtube/utils';
 import type { DataItem } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 import type { ArticlePost, FilePost, ImagePost, PostDetailResponse, PostItem, TextPost, VideoPost } from './types';
 
 export function getHeaders() {
-    const sessionid = config.fanbox.session;
-    const cookie = sessionid ? `FANBOXSESSID=${sessionid}` : '';
     return {
         origin: 'https://fanbox.cc',
-        cookie,
+        cookie: getCookieString(),
     };
+}
+
+function getCookieString() {
+    const sessionid = config.fanbox.session;
+    return sessionid ? `FANBOXSESSID=${sessionid}` : '';
 }
 
 function embedUrlMap(urlEmbed: ArticlePost['body']['urlEmbedMap'][string]) {
     switch (urlEmbed.type) {
         case 'html':
+        case 'html.card':
             return urlEmbed.html;
+        case 'default':
+            return renderToString(<a href={urlEmbed.url}>{urlEmbed.url}</a>);
+        case 'fanbox.creator':
+            return renderToString(
+                <a href={`https://${urlEmbed.profile.creatorId}.fanbox.cc`}>
+                    <img src={urlEmbed.profile.user.iconUrl} alt={urlEmbed.profile.user.name} />
+                    {urlEmbed.profile.user.name}
+                </a>
+            );
         case 'fanbox.post':
             return renderToString(
                 <a href={`https://${urlEmbed.postInfo.creatorId}.fanbox.cc/posts/${urlEmbed.postInfo.id}`}>
@@ -42,8 +56,8 @@ function passageConv(p) {
         p.styles.map((s) => {
             switch (s.type) {
                 case 'bold':
-                    seg[s.offset] = `<b>` + seg[s.offset];
-                    seg[s.offset + s.length - 1] += `</b>`;
+                    seg[s.offset] = '<b>' + seg[s.offset];
+                    seg[s.offset + s.length - 1] += '</b>';
                     break;
                 default:
             }
@@ -53,7 +67,7 @@ function passageConv(p) {
     if (p.links) {
         p.links.map((l) => {
             seg[l.offset] = `<a href="${l.url}">` + seg[l.offset];
-            seg[l.offset + l.length - 1] += `</a>`;
+            seg[l.offset + l.length - 1] += '</a>';
             return l;
         });
     }
@@ -88,7 +102,7 @@ async function parseVideo(body: VideoPost['body']) {
             ret += await getSoundCloudEmbedUrl(body.video.videoId);
             break;
         case 'youtube':
-            ret += `<iframe src="https://www.youtube-nocookie.com/embed/${body.video.videoId}" frameborder="0" referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+            ret += renderYoutube(true, body.video.videoId);
             break;
         case 'vimeo':
             ret += `<iframe src="https://player.vimeo.com/video/${body.video.videoId}" frameborder="0"></iframe>`;
@@ -99,8 +113,8 @@ async function parseVideo(body: VideoPost['body']) {
     return ret;
 }
 
-async function parseArtile(body: ArticlePost['body']) {
-    let ret: string[] = [];
+function parseArtile(body: ArticlePost['body']) {
+    const ret: string[] = [];
     for (const b of body.blocks) {
         ret.push('<p>');
 
@@ -127,11 +141,10 @@ async function parseArtile(body: ArticlePost['body']) {
             default:
         }
     }
-    ret = await Promise.all(ret);
     return ret.join('');
 }
 
-async function parseDetail(i: PostDetailResponse['body']) {
+async function parseDetail(i: PostDetailResponse['body']['post']) {
     let ret = '';
     if (i.feeRequired !== 0) {
         ret += `Fee Required: <b>${i.feeRequired} JPY/month</b><hr>`;
@@ -159,7 +172,7 @@ async function parseDetail(i: PostDetailResponse['body']) {
             ret += await parseVideo(i.body);
             break;
         case 'article':
-            ret += await parseArtile(i.body);
+            ret += parseArtile(i.body);
             break;
         default:
             ret += '<b>Unsupported content (RSSHub)</b>';
@@ -168,16 +181,19 @@ async function parseDetail(i: PostDetailResponse['body']) {
 }
 
 export function parseItem(item: PostItem) {
-    return cache.tryGet(`fanbox-${item.id}-${item.updatedDatetime}`, async () => {
-        const postDetail = (await ofetch(`https://api.fanbox.cc/post.info?postId=${item.id}`, { headers: { ...getHeaders(), 'User-Agent': config.trueUA } })) as PostDetailResponse;
+    return cache.tryGet<DataItem>(`fanbox-${item.id}-${item.updatedDatetime}`, async () => {
+        const postDetail = await ofetch<PostDetailResponse>(`https://api.fanbox.cc/post.info?postId=${item.id}`, { headers: getHeaders() });
+
         return {
-            title: item.title || `No title`,
-            description: await parseDetail(postDetail.body),
-            pubDate: parseDate(item.updatedDatetime),
+            title: item.title || 'No title',
+            description: await parseDetail(postDetail.body.post),
+            pubDate: parseDate(item.publishedDatetime),
+            updated: parseDate(item.updatedDatetime),
+            author: item.user.name,
             link: `https://${item.creatorId}.fanbox.cc/posts/${item.id}`,
             category: item.tags,
         };
-    }) as Promise<DataItem>;
+    });
 }
 
 async function getSoundCloudEmbedUrl(videoId: string) {

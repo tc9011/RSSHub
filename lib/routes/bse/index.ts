@@ -1,7 +1,8 @@
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import ofetch from '@/utils/ofetch';
+import { getRouteLimit } from '@/utils/route-limit';
+import { parseDate } from '@/utils/time';
 
 const nodes = {
     important_news: {
@@ -142,25 +143,25 @@ export const route: Route = {
     maintainers: ['nczitzk'],
     handler,
     url: 'bse.cn/',
-    description: `| 本所要闻        | 人才招聘 | 采购信息 | 业务通知   |
-| --------------- | -------- | -------- | ---------- |
+    description: `| 本所要闻       | 人才招聘 | 采购信息 | 业务通知  |
+| -------------- | -------- | -------- | --------- |
 | important_news | recruit  | purchase | news_list |
 
-| 法律法规  | 公开征求意见    | 部门规章         | 发行融资   |
-| --------- | --------------- | ---------------- | ---------- |
+| 法律法规 | 公开征求意见   | 部门规章        | 发行融资  |
+| -------- | -------------- | --------------- | --------- |
 | law_list | public_opinion | regulation_list | fxrz_list |
 
-| 持续监管   | 交易管理   | 市场管理   | 上市委会议公告  |
-| ---------- | ---------- | ---------- | --------------- |
+| 持续监管  | 交易管理  | 市场管理  | 上市委会议公告 |
+| --------- | --------- | --------- | -------------- |
 | cxjg_list | jygl_list | scgl_list | meeting_notice |
 
 | 上市委会议结果公告 | 上市委会议变更公告 | 并购重组委会议公告 |
 | ------------------ | ------------------ | ------------------ |
-| meeting_result    | meeting_change    | bgcz_notice       |
+| meeting_result     | meeting_change     | bgcz_notice        |
 
-| 并购重组委会议结果公告 | 并购重组委会议变更公告 | 终止审核           | 注册结果      |
-| ---------------------- | ---------------------- | ------------------ | ------------- |
-| bgcz_result           | bgcz_change           | termination_audit | audit_result |`,
+| 并购重组委会议结果公告 | 并购重组委会议变更公告 | 终止审核          | 注册结果     |
+| ---------------------- | ---------------------- | ----------------- | ------------ |
+| bgcz_result            | bgcz_change            | termination_audit | audit_result |`,
 };
 
 async function handler(ctx) {
@@ -168,24 +169,31 @@ async function handler(ctx) {
     const keyword = ctx.req.param('keyword') ?? '';
 
     const type = nodes[category].type;
-    const rootUrl = 'http://www.bse.cn';
+    const rootUrl = 'https://www.bse.cn';
     const currentUrl = `${rootUrl}${type}.do`;
+
+    const challenge = await ofetch.raw(currentUrl, { method: 'POST', redirect: 'manual', ignoreResponseError: true });
+    const cookie = challenge.headers
+        .getSetCookie()
+        .map((c) => c.split(';', 1)[0])
+        .join('; ');
 
     const response = await got({
         method: 'post',
         url: currentUrl,
+        headers: { cookie },
         form: {
             page: 0,
-            pageSize: ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit')) : 50,
+            pageSize: getRouteLimit(ctx, 50),
             keywords: keyword,
             'nodeIds[]': type === '/info/listse' ? nodes[category].id : undefined,
             disclosureSubtype: type === '/info/listse' ? undefined : nodes[category].id,
         },
     });
 
-    const data = JSON.parse(response.data.match(/null\(\[({.*})]\)/)[1]);
+    const data = JSON.parse(response.data.match(/null\(\[(\{.*\})\]\)/)[1]);
 
-    let items = [];
+    let items: DataItem[];
 
     switch (type) {
         case '/info/listse':
@@ -194,7 +202,7 @@ async function handler(ctx) {
                 category: item.tags,
                 description: item.text,
                 link: `${rootUrl}${item.htmlUrl}`,
-                pubDate: timezone(parseDate(item.publishDate), +8),
+                pubDate: parseDate(item.publishDate, 8),
             }));
             break;
 

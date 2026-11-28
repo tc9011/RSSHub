@@ -1,10 +1,9 @@
 import { load } from 'cheerio'; // An HTML parser with an API similar to jQuery
 
-import type { Route } from '@/types';
+import type { Data, Route } from '@/types';
 // import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch'; // Unified request library used
-// import puppeteer from '@/utils/puppeteer';
-// import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/section/:section',
@@ -13,13 +12,14 @@ export const route: Route = {
     parameters: { section: 'target section' },
     radar: [
         {
-            source: ['dealstreetasia.com/'],
+            source: ['dealstreetasia.com/section/:section/'],
+            target: '/section/:section',
         },
     ],
     name: 'Section',
     maintainers: ['jack2game'],
     handler,
-    url: 'dealstreetasia.com/',
+    url: 'www.dealstreetasia.com/',
 };
 
 async function handler(ctx) {
@@ -29,8 +29,8 @@ async function handler(ctx) {
     return items;
 }
 
-async function fetchPage(section: string) {
-    const baseUrl = 'https://dealstreetasia.com'; // Define base URL
+async function fetchPage(section: string): Promise<Data> {
+    const baseUrl = 'https://www.dealstreetasia.com'; // Define base URL
 
     const response = await ofetch(`${baseUrl}/section/${section}/`);
     const $ = load(response);
@@ -44,7 +44,7 @@ async function fetchPage(section: string) {
         title: item.title || 'No Title',
         link: item.uri ? `https://www.dealstreetasia.com${item.uri}` : '',
         description: item.excerpt || '', // Default to empty string if undefined
-        pubDate: item.post_date ? new Date(item.post_date).toUTCString() : '',
+        pubDate: item.post_date ? parseDate(item.post_date) : '',
         category: item.sections.nodes.map((section) => section.name),
         image: item.featuredImage?.node?.mediaItemUrl.replace(/\?.*$/, ''), // Use .replace to sanitize the image URL
     }));
@@ -53,6 +53,6 @@ async function fetchPage(section: string) {
         title: 'Deal Street Asia - ' + headingText,
         language: 'en',
         item: feedItems,
-        link: 'https://dealstreetasia.com/section/' + section + '/',
+        link: 'https://www.dealstreetasia.com/section/' + section + '/',
     };
 }

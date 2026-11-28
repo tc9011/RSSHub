@@ -1,26 +1,24 @@
+import crypto from 'node:crypto';
+
 import { load } from 'cheerio';
 
 import cache from '@/utils/cache';
-import got from '@/utils/got';
+import { md5 } from '@/utils/hash';
 import logger from '@/utils/logger';
-import md5 from '@/utils/md5';
-import { parseDate } from '@/utils/parse-date';
+import ofetch from '@/utils/ofetch';
+import { parseDate } from '@/utils/time';
 
 const dynamicTpye = { 0: '基本动态', 8: '酷图', 9: '评论', 10: '提问', 11: '回答', 12: '图文', 15: '二手', 17: '观点', 20: '交易动态' };
 
-const getRandomDEVICE_ID = () => {
-    let id = [10, 6, 6, 6, 14];
-    id = id.map((i) => Math.random().toString(36).slice(2, i));
-    return id.join('-');
-};
+const getRandomDEVICE_ID = () => crypto.randomUUID();
 
 const get_app_token = () => {
     const DEVICE_ID = getRandomDEVICE_ID();
-    const now = Math.round(Date.now() / 1000);
+    const now = Math.round(Temporal.Now.instant().epochMilliseconds / 1000);
     const hex_now = '0x' + now.toString(16);
     const md5_now = md5(now.toString());
     const s = 'token://com.coolapk.market/c67ef5943784d09750dcfbb31020f0ab?' + md5_now + '$' + DEVICE_ID + '&com.coolapk.market';
-    const md5_s = md5(Buffer.from(s).toString('base64'));
+    const md5_s = md5(Buffer.from(s).toBase64());
     const token = md5_s + DEVICE_ID + hex_now;
     return token;
 };
@@ -63,6 +61,8 @@ const parseTuwenFromRaw = (raw) =>
         }
     });
 
+const selectDynamics = (items) => items.filter((item) => item.entityType !== 'sponsorCard' && item.url);
+
 const parseDynamic = async (item) => {
     const pubDate = parseDate(item.dateline, 'X');
     if (item.entityType === 'sponsorCard' || !item.url) {
@@ -87,16 +87,19 @@ const parseDynamic = async (item) => {
             if (item.issummary) {
                 // 需要爬内容
                 description = await cache.tryGet(itemUrl, async () => {
-                    const result = await got(itemUrl, {
+                    const result = await ofetch(itemUrl, {
                         headers: getHeaders(),
                     });
-                    const message = `<p>` + result.data.data?.message.split('\n').join('<br>') + `</p>`;
+                    if (!result.data) {
+                        return;
+                    }
+                    const message = '<p>' + result.data.message.split('\n').join('<br>') + '</p>';
                     const picArr = item.picArr.filter(Boolean).map((i) => `<img src="${i}">`); // 若无图片，item.picArr=[""]
                     return message + picArr.join('');
                 });
             } else {
                 const picArr = item.picArr.filter(Boolean).map((i) => `<img src="${i}">`);
-                description = `<p>` + item.message + `</p>` + picArr.join('');
+                description = '<p>' + item.message + '</p>' + picArr.join('');
             }
             const $ = load('<div class="title-filter">' + description + '</div>');
             title = $('.title-filter').text().trim(); // no need to perform substring because it's will be handled by RSSHub 'TITLE_LENGTH_LIMIT'
@@ -105,7 +108,7 @@ const parseDynamic = async (item) => {
 
             if (type === 17) {
                 const keys = item.extra_key.split(',');
-                description += `<p>` + item.vote.message_title + ` 已选${keys.length}项</p>`;
+                description += '<p>' + item.vote.message_title + ` 已选${keys.length}项</p>`;
                 for (const i of item.vote.options) {
                     if (keys.includes(String(i.id))) {
                         description += `<p>${i.title}√</p>`;
@@ -120,15 +123,19 @@ const parseDynamic = async (item) => {
         case 12:
             title = item.title;
             description = await cache.tryGet(itemUrl, async () => {
-                const result = await got(itemUrl, {
+                const result = await ofetch(itemUrl, {
                     headers: getHeaders(),
                 });
 
-                const raw = JSON.parse(result.data.data.message_raw_output);
+                if (!result.data) {
+                    return;
+                }
+
+                const raw = JSON.parse(result.data.message_raw_output);
 
                 const tags = parseTuwenFromRaw(raw);
 
-                return `<img src="${result.data.data.pic}"><hr>` + tags.join('');
+                return `<img src="${result.data.pic}"><hr>` + tags.join('');
             });
             break;
 
@@ -138,6 +145,10 @@ const parseDynamic = async (item) => {
             break;
     }
 
+    if (description === undefined) {
+        return;
+    }
+
     return {
         title,
         description,
@@ -145,7 +156,8 @@ const parseDynamic = async (item) => {
         link: `https://www.coolapk.com${item.url}`,
         // guid: itemUrl,
         author: item.username,
+        category: item.tags?.match(/#([^#]+)#/g)?.map((tag: string) => tag.slice(1, -1)),
     };
 };
 
-export default { get_app_token, base_url, getHeaders, parseDynamic, dynamicTpye };
+export default { get_app_token, base_url, getHeaders, parseDynamic, selectDynamics, dynamicTpye };

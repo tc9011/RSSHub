@@ -2,6 +2,7 @@ import { load } from 'cheerio';
 
 import type { Data, DataItem, Route } from '@/types';
 import ofetch from '@/utils/ofetch';
+import { parseDateStrict } from '@/utils/time';
 
 import { baseUrl } from './utils';
 
@@ -40,26 +41,37 @@ async function handler(): Promise<Data> {
         language: 'en',
         item: items,
         image: `${baseUrl}/current-affairs/images/news-today-logo.svg`,
-        icon: `https://cdn.visionias.in/new-system-assets/images/home_page/home/vision-logo-footer.png`,
-        logo: `https://cdn.visionias.in/new-system-assets/images/home_page/home/vision-logo-footer.png`,
-        allowEmpty: true,
+        icon: 'https://cdn.visionias.in/new-system-assets/images/home_page/home/vision-logo-footer.png',
+        logo: 'https://cdn.visionias.in/new-system-assets/images/home_page/home/vision-logo-footer.png',
     };
 }
 
-function processNews(page) {
+function processNews(page: string) {
     const $ = load(page);
-    const items = $(`#quiz-start div[x-data="{ isExpanded: false }"]`)
+    const items = $('#quiz-start div[x-data="{ isExpanded: false }"]')
         .toArray()
-        .map((item) => {
-            const title = $(item).find('a>h5').text().trim();
-            const content = $(item).find('a>div').html() ?? '';
+        .map((item): DataItem => {
+            const title = $(item).find('a>h5').text();
+            const content = $(item).find('a>div');
+            const metadata = content.children('ul').first().children('li');
+            const category = [
+                metadata.eq(1).text(),
+                ...content
+                    .children('ul')
+                    .eq(1)
+                    .children('li')
+                    .toArray()
+                    .map((tag) => $(tag).text()),
+            ];
             const link = $(item).find('div>p>a').attr('href') || '';
             return {
                 title,
                 link,
                 guid: link,
-                description: content,
-            } as DataItem;
+                description: content.children('div[x-show]').html(),
+                pubDate: parseDateStrict(metadata.eq(2).text(), 'YYYY-MM-DD'),
+                category,
+            };
         });
 
     return items;

@@ -26,9 +26,9 @@ export const route: Route = {
     parameters: {
         category: {
             description: 'Category, can be found on the [official page](https://www.nytimes.com/books/best-sellers/)',
-            options: Object.keys(categoryList).map((key) => ({
+            options: Object.entries(categoryList).map(([key, value]) => ({
                 value: key,
-                label: categoryList[key],
+                label: value,
             })),
             default: 'combined-print-and-e-book-nonfiction',
         },
@@ -58,9 +58,9 @@ async function handler(ctx) {
 
     const url = `https://www.nytimes.com/books/best-sellers/${category}`;
 
-    let items = [];
+    let items: any[] = [];
     let dataTitle = '';
-    if (categoryList[category]) {
+    if (Object.hasOwn(categoryList, category)) {
         const response = await got({
             method: 'get',
             url,
@@ -95,7 +95,7 @@ async function handler(ctx) {
                 return {
                     title: `${index + 1}: ${$name.text()}`,
                     author,
-                    description: `<figure><img src="${imageLink}" alt="test"/><figcaption><span>${description}</span></figcaption></figure><br/>${firstInfo}<br/>Author: ${author}<br/>Publisher: ${publisher}`,
+                    description: `<figure><img src="${imageLink}" alt="test"/><figcaption><span>${description}</span></figcaption></figure><br/>${firstInfo}<br/>Publisher: ${publisher}`,
                     link: primaryLink,
                 };
             });

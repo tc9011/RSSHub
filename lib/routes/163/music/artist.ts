@@ -1,5 +1,6 @@
 import type { Route } from '@/types';
 import got from '@/utils/got';
+import { parseDate } from '@/utils/time';
 
 import { renderPlaylistDescription } from '../templates/music/playlist';
 
@@ -12,10 +13,17 @@ export const route: Route = {
         requireConfig: false,
         requirePuppeteer: false,
         antiCrawler: false,
+        supportRadar: true,
         supportBT: false,
         supportPodcast: false,
         supportScihub: false,
     },
+    radar: [
+        {
+            source: ['music.163.com/artist/album'],
+            target: '/music/artist/:id',
+        },
+    ],
     name: '歌手专辑',
     maintainers: ['metowolf'],
     handler,
@@ -24,11 +32,7 @@ export const route: Route = {
 async function handler(ctx) {
     const id = ctx.req.param('id');
 
-    const response = await got(`https://music.163.com/api/artist/albums/${id}`, {
-        headers: {
-            Referer: 'https://music.163.com/',
-        },
-    });
+    const response = await got(`https://music.163.com/api/artist/albums/${id}`);
 
     const data = response.data;
 
@@ -38,18 +42,21 @@ async function handler(ctx) {
         description: `网易云音乐歌手专辑 - ${data.artist.name}`,
         image: data.artist.img1v1Url || data.artist.picUrl,
         item: data.hotAlbums.map((item) => {
-            const singer = item.artists.length === 1 ? item.artists[0].name : item.artists.reduce((prev, cur) => (prev.name || prev) + '/' + cur.name);
+            let singer = item.artists[0].name;
+            for (const artist of item.artists.slice(1)) {
+                singer += '/' + artist.name;
+            }
             return {
                 title: `${item.name} - ${singer}`,
                 description: renderPlaylistDescription({
                     singer,
                     album: item.name,
-                    date: new Date(item.publishTime).toLocaleDateString(),
+                    date: parseDate(item.publishTime)?.toLocaleString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric', timeZone: 'UTC' }),
                     picUrl: item.picUrl,
                 }),
                 link: `https://music.163.com/#/album?id=${item.id}`,
-                pubDate: new Date(item.publishTime),
-                published: new Date(item.publishTime),
+                pubDate: parseDate(item.publishTime),
+                published: parseDate(item.publishTime),
                 category: item.subType,
                 author: singer,
             };

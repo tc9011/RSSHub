@@ -2,20 +2,22 @@ import { renderToString } from 'hono/jsx/dom/server';
 
 import type { Route } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/',
+    categories: ['picture'],
+    example: '/wallpaperhub',
     radar: [
         {
-            source: ['wallpaperhub.app/wallpaperhub', 'wallpaperhub.app/'],
+            source: ['wallpaperhub.app/wallpapers', 'wallpaperhub.app/'],
             target: '',
         },
     ],
-    name: 'Unknown',
+    name: 'Wallpapers',
     maintainers: ['nczitzk'],
     handler,
-    url: 'wallpaperhub.app/wallpaperhub',
+    url: 'wallpaperhub.app/wallpapers',
 };
 
 async function handler() {
@@ -34,6 +36,7 @@ async function handler() {
             </>
         ),
         pubDate: parseDate(item.entity.created),
+        category: item.entity.tags,
         link: `https://wallpaperhub.app/wallpapers/${item.entity.id}`,
     }));
 

@@ -1,9 +1,11 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/news',
@@ -23,8 +25,8 @@ export const route: Route = {
             source: ['hinatazaka46.com/s/official/news/list', 'hinatazaka46.com/'],
         },
     ],
-    name: 'Hinatazaka46 News 日向坂 46 新闻',
-    maintainers: ['crispgm', 'akashigakki'],
+    name: '新闻',
+    maintainers: ['crispgm', 'AkashiGakki'],
     handler,
     url: 'hinatazaka46.com/s/official/news/list',
 };
@@ -40,22 +42,25 @@ async function handler(ctx) {
 
     const $ = load(response.data);
 
+    const limit = getRouteLimit(ctx, 30);
     let items = $('.p-news__list .p-news__item a')
-        .slice(0, ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit')) : 30)
+        .slice(0, limit)
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem & { link: string } => {
+            const $item = $(item);
 
             return {
-                title: item.find('.c-news__text').text(),
-                link: `${rootUrl}${item.attr('href').split('?')[0]}`,
-                pubDate: parseDate(item.find('.c-news__date').text()),
+                title: $item.find('.c-news__text').text(),
+                link: `${rootUrl}${$item.attr('href')!.split('?', 1)[0]}`,
+                pubDate: parseDate($item.find('.c-news__date').text(), 'YYYY.MM.DD', 9),
             };
         });
 
-    items = await Promise.all(
-        items.map((item) =>
-            cache.tryGet(item.link, async () => {
+    items = await pMap(
+        items,
+        async (item: (typeof items)[number]) => ({
+            ...item,
+            ...(await cache.tryGet(item.link, async () => {
                 const detailResponse = await got({
                     method: 'get',
                     url: item.link,
@@ -63,14 +68,16 @@ async function handler(ctx) {
 
                 const content = load(detailResponse.data);
 
-                item.description = content('.p-article__text').html();
+                const description = content('.p-article__text').html();
 
-                return item;
-            })
-        )
+                return { description };
+            })),
+        }),
+        { concurrency: 3 }
     );
 
     return {
+        language: 'ja' as const,
         title: $('title').text(),
         link: currentUrl,
         item: items,

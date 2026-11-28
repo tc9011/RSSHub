@@ -1,8 +1,8 @@
 import type { Route } from '@/types';
-import cache from '@/utils/cache';
 import got from '@/utils/got';
+import { getRouteLimit } from '@/utils/route-limit';
 
-import { apiMemberRootUrl, fetchData, processItems, rootUrl } from './util';
+import { apiMemberRootUrl, buildHuxiuRouteTitlePrefix, fetchMemberData, processItems } from './util';
 
 export const route: Route = {
     path: ['/author/:id/:type?', '/member/:id/:type?'],
@@ -27,11 +27,9 @@ export const route: Route = {
 
 async function handler(ctx) {
     const { id, type = 'article' } = ctx.req.param();
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 10;
+    const limit = getRouteLimit(ctx, 10);
 
     const apiUrl = new URL(`web/${type}/${type}List`, apiMemberRootUrl).href;
-    const currentUrl = new URL(`member/${id}${type === 'article' ? '' : `/${type}`}.html`, rootUrl).href;
-
     const { data: response } = await got.post(apiUrl, {
         form: {
             platform: 'www',
@@ -39,9 +37,9 @@ async function handler(ctx) {
         },
     });
 
-    const items = await processItems(response.data.datalist, limit, cache.tryGet);
+    const items = await processItems(response.data.datalist, limit);
 
-    const data = await fetchData(currentUrl);
+    const data = await fetchMemberData(id, type, response.data.datalist ?? [], buildHuxiuRouteTitlePrefix(route.name));
 
     return {
         item: items,

@@ -1,7 +1,8 @@
 import { load } from 'cheerio';
 
+import type { DataItem } from '@/types';
 import cache from '@/utils/cache';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 const ProcessImage = ($, e) => {
     const photo = $(e).find('figure').find('picture').find('img');
@@ -15,18 +16,21 @@ const ProcessImage = ($, e) => {
     return cover;
 };
 
-const PuppeterGetter = async (ctx, browser, link) => {
+const PuppeterGetter = async (ctx, context, link) => {
     const result = await cache.tryGet(`nyt: ${link}`, async () => {
-        const page = await browser.newPage();
-        await page.setRequestInterception(true);
-        page.on('request', (request) => {
-            request.resourceType() === 'document' ? request.continue() : request.abort();
-        });
-        await page.goto(link, {
-            waitUntil: 'domcontentloaded',
-        });
-        const response = await page.evaluate(() => document.querySelector('body').innerHTML);
-        return response;
+        const page = await context.newPage();
+        try {
+            await page.route('**/*', (route) => {
+                const request = route.request();
+                request.resourceType() === 'document' ? route.continue() : route.abort();
+            });
+            await page.goto(link, {
+                waitUntil: 'domcontentloaded',
+            });
+            return await page.evaluate(() => document.querySelector('body')!.getHTML());
+        } finally {
+            await page.close();
+        }
     });
     return result;
 };
@@ -35,12 +39,12 @@ const ProcessFeed = (data, hasEnVersion = false) => {
     const $ = load(data);
 
     let content;
-    const result = {};
+    const result: Pick<DataItem, 'description' | 'title' | 'author' | 'pubDate'> = { title: '' };
 
     // 处理 www.nytimes.com
     if (hasEnVersion) {
         content = $('section[name="articleBody"]');
-        result.title = `「英」${$('h1').text().trim()}`;
+        result.title = `「英」${$('h1').text()}`;
         result.author = $('article#story span[itemprop="name"]').text();
 
         // 处理封面图片
@@ -60,13 +64,7 @@ const ProcessFeed = (data, hasEnVersion = false) => {
         });
 
         // remove ad
-        content.find('#CNB').each((i, e) => {
-            $(e).next().remove();
-        });
-
-        content.find('div[id]').each((i, e) => {
-            $(e).remove();
-        });
+        content.find('#CNB').remove();
         // remove useless DOMs
         content.find('aside').each((i, e) => {
             $(e).remove();
@@ -90,12 +88,6 @@ const ProcessFeed = (data, hasEnVersion = false) => {
             // there is a cover photo
             const cover = $('figure.article-span-photo');
             $(cover).insertBefore(content[0].firstChild);
-        }
-
-        if ($('footer.author-info').length > 0) {
-            // credit to original author and translators
-            const footer = $('footer.author-info');
-            $(footer).insertAfter(content[0].lastChild);
         }
     }
 

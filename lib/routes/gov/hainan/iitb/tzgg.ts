@@ -1,12 +1,12 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
-    path: '/hainan/iitb/tzgg',
+    path: '/iitb/tzgg',
     categories: ['government'],
     example: '/gov/hainan/iitb/tzgg',
     url: 'iitb.hainan.gov.cn/iitb/tzgg/list2.shtml',
@@ -16,7 +16,6 @@ export const route: Route = {
 };
 
 async function handler() {
-    // The TLS cert is invalid, we are limited to use HTTP unfortunately.
     const baseUrl = 'https://iitb.hainan.gov.cn';
     const targetUrl = `${baseUrl}/iitb/tzgg/list2.shtml`;
 
@@ -29,19 +28,19 @@ async function handler() {
 
     const alist = $('.list_div');
 
-    const list = alist.toArray().map((item) => {
+    const list = alist.toArray().map((item): DataItem & { link: string } => {
         const elem = $(item);
 
         const titleElement = elem.find('.list-right_title a');
         const link = titleElement.attr('href') || '';
-        const title = titleElement.text().trim() || '';
+        const title = titleElement.text();
         const dateText = elem.find('td[align="left"]').text().replace('发布时间：', '').trim();
         const department = elem.find('.column-name').text().trim();
 
         return {
             title,
-            link: new URL(link, baseUrl).href,
-            pubDate: parseDate(dateText),
+            link: new URL(link, targetUrl).href,
+            pubDate: parseDate(dateText, 8),
             category: department,
         };
     });
@@ -61,7 +60,7 @@ async function handler() {
                 const content = $('ucapcontent').html();
 
                 item.author = author;
-                item.pubDate = parseDate(pubDate);
+                item.pubDate = parseDate(pubDate, 8);
                 item.description = content;
 
                 return item;

@@ -1,4 +1,5 @@
 import { load } from 'cheerio'; // html parser
+import pMap from 'p-map';
 
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
@@ -6,7 +7,7 @@ import cache from '@/utils/cache';
 // params:
 // type: notification type
 import got from '@/utils/got'; // get web content
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 import getArticle from './_article';
 
@@ -30,15 +31,15 @@ export const route: Route = {
 | ---------- | ---------- | -------- | -------- | -------- | -------- | -------- |
 | bkstz      | yjstz      | jgtz     | qttz     | xytz     | xyxw     | xyhd     |
 
-  注意: \`qttz\` 与 \`xytz\` 在原网站等价.`,
+注意: \`qttz\` 与 \`xytz\` 在原网站等价.`,
 };
 
 async function handler(ctx) {
     const baseUrl = 'https://sse.tongji.edu.cn';
     const type = ctx.req.param('type') || 'xytz';
-    const subType = ['bkstz', 'yjstz', 'jgtz', 'qttz'];
+    const subtype = ['bkstz', 'yjstz', 'jgtz', 'qttz'];
 
-    const listUrl = `${baseUrl}/xxzx/${subType.includes(type) ? `xytz/${type}` : type}.htm`;
+    const listUrl = `${baseUrl}/xxzx/${subtype.includes(type) ? `xytz/${type}` : type}.htm`;
     const response = await got({
         method: 'get',
         url: listUrl,
@@ -50,17 +51,17 @@ async function handler(ctx) {
     const detailUrls = $('.data-list li')
         .toArray()
         .map((item) => {
-            item = $(item);
-            const a = item.find('a');
+            const $item = $(item);
+            const a = $item.find('a');
             return {
                 title: a.text(),
-                link: new URL(a.attr('href'), baseUrl).href,
-                pubDate: parseDate(item.find('.data-list-time').text(), 'YYYY-MM-DD'),
+                link: new URL(a.attr('href')!, baseUrl).href,
+                pubDate: parseDate($item.find('.data-list-time').text(), 'YYYY-MM-DD', 8),
             };
         });
 
     // get articles
-    const articleList = await Promise.all(detailUrls.map((item) => cache.tryGet(item.link, () => getArticle(item))));
+    const articleList = await pMap(detailUrls, async (item) => ({ ...item, ...(await cache.tryGet(`tongji:sse:article:${item.link}`, () => getArticle(item.link))) }), { concurrency: 3 });
 
     // feed the data
     return {

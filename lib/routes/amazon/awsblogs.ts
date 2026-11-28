@@ -1,10 +1,18 @@
 import type { Route } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/awsblogs/:locale?',
-    name: 'Unknown',
+    categories: ['blog'],
+    example: '/amazon/awsblogs',
+    parameters: {
+        locale: 'Blog posts in a specified language, only the following options are supported. Default `zh_CN`',
+    },
+    description: `| zh_CN   | en_US   | fr_FR  | de_DE  | ja_JP    | ko_KR  | pt_BR      | es_ES   | ru_RU   | id_ID      | tr_TR   |
+| ------- | ------- | ------ | ------ | -------- | ------ | ---------- | ------- | ------- | ---------- | ------- |
+| Chinese | English | French | German | Japanese | Korean | Portuguese | Spanish | Russian | Indonesian | Turkish |`,
+    name: 'AWS Blogs',
     maintainers: ['HankChow'],
     handler,
 };

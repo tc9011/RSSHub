@@ -3,7 +3,7 @@ import { load } from 'cheerio';
 import type { Route } from '@/types';
 import { ViewType } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/:category',
@@ -54,14 +54,14 @@ async function handler(ctx) {
         title: $('head title').text(),
         link: url,
         item: list.toArray().map((item) => {
-            item = $(item);
-            const date = item.find('time').attr('datetime');
-            const pubDate = parseDate(date);
+            const $item = $(item);
+            const date = $item.find('time').attr('datetime');
+            const pubDate = parseDate(date!);
             return {
-                title: item.find('h2 a').text(),
-                link: item.find('h2 a').attr('href'),
+                title: $item.find('h2 a').text(),
+                link: $item.find('h2 a').attr('href'),
                 pubDate,
-                description: item.find('p').text(),
+                description: $item.find('p').text(),
             };
         }),
     };

@@ -1,10 +1,55 @@
+import type { CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
+import { fixArticleContent } from '@/utils/wechat-mp';
+
+function getWechatAuthor(content: CheerioAPI) {
+    const literal = content('script:contains("var author = ")')
+        .text()
+        .match(/\bvar\s+author\s*=\s*("(?:\\.|[^"\\])*")/)?.[1];
+    const author: string | undefined = literal ? JSON.parse(literal) : undefined;
+
+    return author?.trim() ? author : content('#js_name').text().trim();
+}
+
+function parseWechatPublication(content: string) {
+    const timestamp = /\bvar\s+ct\s*=\s*["'](\d+)["']\s*;/.exec(content)?.[1];
+    if (!timestamp) {
+        return;
+    }
+
+    return parseDate(timestamp, 'X');
+}
+
+async function fetchDetails(url: string): Promise<{ description?: string; pubDate?: Temporal.Instant; author?: string }> {
+    try {
+        const response = await ofetch(url);
+        const $ = load(response);
+        const wechatContent = $('#js_content');
+        if (wechatContent.length) {
+            return { description: fixArticleContent(wechatContent) || undefined, pubDate: parseWechatPublication(response), author: getWechatAuthor($) };
+        }
+
+        const content = $('.v_news_content');
+        if (!content.length) {
+            return {};
+        }
+
+        const attachments = $('form[name="_newscontent_fromname"] a[href*="DownloadAttachUrl"], .art-body a[href*="DownloadAttachUrl"]')
+            .toArray()
+            .map((link) => `<li>${$.html(link)}</li>`)
+            .join('');
+
+        return { description: `${content.html()}${attachments ? `<ul>${attachments}</ul>` : ''}` };
+    } catch {
+        return {};
+    }
+}
 
 export const route: Route = {
     path: '/index/tzgg',
@@ -53,60 +98,28 @@ async function handler() {
                 return null;
             }
 
-            const title = currentItem.find('.list-tx h3').text().trim();
+            const title = currentItem.find('.list-tx h3').text();
             const description = currentItem.find('.list-tx p').text().trim();
-            const day = currentItem.find('.date p').text().trim();
-            const yearMonth = currentItem.find('.date span').text().trim();
+            const day = currentItem.find('.date p').text();
+            const yearMonth = currentItem.find('.date span').text();
             const dateText = `${yearMonth}-${day.padStart(2, '0')}`;
 
             return {
                 title,
                 link: new URL(link, baseUrl).href,
-                description: description || title,
-                pubDate: timezone(parseDate(dateText, 'YYYY-MM-DD'), +8),
+                description: description || undefined,
+                pubDate: parseDate(dateText, 'YYYY-MM-DD', 8),
             };
         })
-        .filter(Boolean);
+        .filter((item) => item !== null);
 
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item?.link || '', async () => {
-                if (!item) {
-                    return '';
-                }
-                try {
-                    const detailResponse = await ofetch(item?.link);
-                    if (!detailResponse) {
-                        return {
-                            ...item,
-                            description: '该通知无法直接预览，请点击原文链接查看',
-                        };
-                    }
-
-                    const $$ = load(detailResponse);
-                    const content = $$('.v_news_content, .content, .article-content').html();
-
-                    if (content) {
-                        const $content = load(content);
-                        $content('a').each(function () {
-                            const a = $(this);
-                            const href = a.attr('href');
-                            if (href && !href.startsWith('http')) {
-                                a.attr('href', new URL(href, baseUrl).href);
-                            }
-                        });
-                        item.description = $content.html();
-                    }
-
-                    return item;
-                } catch {
-                    return {
-                        ...item,
-                        description: '该通知无法直接预览，请点击原文链接查看',
-                    };
-                }
-            })
-        )
+    const items = await pMap(
+        list,
+        async (item) => {
+            const details = await cache.tryGet(`xyu:notices:detail:v3:${item.link}`, () => fetchDetails(item.link));
+            return { ...item, description: details.description ?? item.description, pubDate: details.pubDate ?? item.pubDate, author: details.author };
+        },
+        { concurrency: 3 }
     );
 
     return {

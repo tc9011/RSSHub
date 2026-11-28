@@ -1,10 +1,10 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/news',
@@ -35,10 +35,10 @@ async function handler() {
     const list = $('.contents .news_wrap')
         .toArray()
         .map((item) => {
-            const title = $(item).find('.news_title').text().trim();
+            const title = $(item).find('.news_title').text();
             const link = new URL($(item).find('a').attr('href')!, baseUrl).href;
-            const date = $(item).find('time').text().trim();
-            const pubDate = timezone(parseDate(date), +9);
+            const date = $(item).find('time').text();
+            const pubDate = parseDate(date, 9);
             return {
                 title,
                 link,
@@ -47,15 +47,17 @@ async function handler() {
             };
         });
 
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
+    const items = await pMap(
+        list,
+        async (item) => ({
+            ...item,
+            description: await cache.tryGet(`${item.link}:body`, async () => {
                 const response = await ofetch(item.link);
                 const $ = load(response);
-                item.description = $('.news_contents_editor').html() ?? '';
-                return item;
-            })
-        )
+                return $('.news_contents_editor').html();
+            }),
+        }),
+        { concurrency: 3 }
     );
 
     return {

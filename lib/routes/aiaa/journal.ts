@@ -2,7 +2,7 @@ import { load } from 'cheerio';
 
 import type { DataItem, Route } from '@/types';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     name: 'ASR Articles',
@@ -38,9 +38,9 @@ async function handler(ctx) {
         .map((element) => {
             const $item = $(element);
             const title = $item.find(String.raw`dc\:title`).text();
-            const link = $item.find('link').text() || '';
-            const description = $item.find('description').text() || '';
-            const pubDate = parseDate($item.find(String.raw`dc\:date`).text() || '');
+            const link = $item.find('link').text();
+            const description = $item.find('description').text();
+            const pubDate = parseDate($item.find(String.raw`dc\:date`).text());
             const authors = $item
                 .find(String.raw`dc\:creator`)
                 .toArray()

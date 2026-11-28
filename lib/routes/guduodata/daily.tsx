@@ -1,4 +1,3 @@
-import dayjs from 'dayjs';
 import { renderToString } from 'hono/jsx/dom/server';
 
 import type { Route } from '@/types';
@@ -53,27 +52,27 @@ export const route: Route = {
 };
 
 async function handler() {
-    const now = dayjs().valueOf();
+    const now = Temporal.Now.instant().epochMilliseconds;
     // yestoday
-    const yestoday = dayjs().subtract(1, 'day').format('YYYY-MM-DD');
+    const yestoday = Temporal.Now.plainDateISO('UTC').subtract({ days: 1 }).toString();
     const renderRows = (rows) => renderToString(<GuduodataDailyTable rows={rows} />);
     const items = Object.keys(types).flatMap((key) =>
-        Object.keys(types[key].categories).map((category) => ({
+        Object.entries(types[key].categories).map(([category, categoryName]) => ({
             type: key,
-            name: `[${yestoday}] ${types[key].name} - ${types[key].categories[category]}`,
+            name: `[${yestoday}] ${types[key].name} - ${categoryName}`,
             category: category.toUpperCase(),
             url: `${host}/m/v3/billboard/list?type=DAILY&category=${category.toUpperCase()}&date=${yestoday}`,
         }))
     );
     return {
-        title: `骨朵数据 - 日榜`,
+        title: '骨朵数据 - 日榜',
         link: host,
         description: yestoday,
         item: await Promise.all(
             items.map((item) =>
                 cache.tryGet(item.url, async () => {
                     const response = await got.get(`${item.url}&t=${now}`, {
-                        headers: { Referer: `http://guduodata.com/` },
+                        headers: { Referer: 'http://guduodata.com/' },
                     });
                     const data = response.data.data;
                     return {
@@ -89,7 +88,7 @@ async function handler() {
 }
 
 const GuduodataDailyTable = ({ rows }: { rows: any[] }) => (
-    <table border="1" cellpadding="2" cellspacing="0">
+    <table border={1} cellpadding="2" cellspacing="0">
         <thead>
             <th>排名</th>
             <th>剧名</th>

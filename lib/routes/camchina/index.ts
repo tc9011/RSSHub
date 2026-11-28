@@ -1,8 +1,9 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
+import { getRouteLimit } from '@/utils/route-limit';
 
 export const route: Route = {
     path: '/:id?',
@@ -19,7 +20,7 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['cste.org.cn/categories/:id', 'cste.org.cn/'],
+            source: ['www.camchina.org.cn/categories/:id', 'www.camchina.org.cn/'],
         },
     ],
     name: '栏目',
@@ -32,7 +33,7 @@ export const route: Route = {
 
 async function handler(ctx) {
     const id = ctx.req.param('id') ?? '1';
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit')) : 50;
+    const limit = getRouteLimit(ctx, 50);
 
     const rootUrl = 'http://www.camchina.org.cn';
     const currentUrl = `${rootUrl}/categories/${id}`;
@@ -47,18 +48,18 @@ async function handler(ctx) {
     let items = $('.M-main-l p a')
         .slice(0, limit)
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem => {
+            const $item = $(item);
 
             return {
-                title: item.text(),
-                link: `${rootUrl}${item.attr('href')}`,
+                title: $item.text(),
+                link: `${rootUrl}${$item.attr('href')}`,
             };
         });
 
     items = await Promise.all(
         items.map((item) =>
-            cache.tryGet(item.link, async () => {
+            cache.tryGet(item.link!, async () => {
                 const detailResponse = await got({
                     method: 'get',
                     url: item.link,

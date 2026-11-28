@@ -5,19 +5,21 @@
         "moduleResolution": "bundler",
         "strict": true,
         "jsx": "react-jsx",
-        "jsxImportSource": "hono/jsx",
+        "jsxImportSource": "@/utils/jsx",
         "paths": {
             "@/*": ["./lib/*"]
         },
         "esModuleInterop": true,
+        "allowJs": true,
         "noImplicitAny": false,
         "outDir": "./dist",
         "skipLibCheck": true,
+        "types": ["node"],
         "noEmit": true,
         "incremental": true,
         "resolveJsonModule": true,
         "isolatedModules": true
     },
-    "include": ["./lib/**/*"],
+    "include": ["./lib/**/*", "./cloudflare.config.ts", "./wrangler.config.ts"],
     "exclude": ["node_modules", "*.test.*"]
 }

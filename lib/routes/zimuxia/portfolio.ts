@@ -44,24 +44,22 @@ async function handler(ctx) {
     const $ = load(response.data);
 
     const items = $('a')
-        .filter((_, el) => $(el).attr('href')?.match(new RegExp(linktype)))
+        .filter((_, el) => !!$(el).attr('href')?.match(new RegExp(linktype)))
         .toArray()
         .map((item) => {
-            item = $(item);
-            const tmpstr2match = $.html(item.parent().children()[item.prevAll('br').first().index() + 1]);
-            const tmphtml = item
+            const $item = $(item);
+            const tmpstr2match = $.html($item.parent().children()[$item.prevAll('br').first().index() + 1]);
+            const tmphtml = $item
                 .parent()
                 .contents()
                 .toArray()
                 .map((item) => $.html($(item)));
-            const title = tmphtml[tmphtml.indexOf(tmpstr2match) - 1].trim().replace(/\s.*|&nbsp;.*/, '');
+            const title = tmphtml[tmphtml.indexOf(tmpstr2match) - 1];
 
             return {
                 link: currentUrl,
                 title,
-                description: `<p>${item.parent().html()}</p>`,
-                enclosure_url: item.attr('href'),
-                enclosure_type: 'application/x-bittorrent',
+                description: `<p>${$item.parent().html()}</p>`,
                 guid: `${currentUrl}#${title}`,
             };
         })

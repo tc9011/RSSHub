@@ -5,7 +5,7 @@ import type { Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 import { getClientVal, sign } from './utils';
 
@@ -14,7 +14,7 @@ const renderAudio = (url) =>
         <>
             {url ? (
                 <audio controls>
-                    <source src={url} />
+                    <source src={url} type="audio/mp4" />
                 </audio>
             ) : null}
         </>
@@ -50,7 +50,7 @@ async function handler(ctx) {
     const mobileBaseUrl = 'https://mobile.tingtingfm.com';
 
     const params = {
-        version: 'h5_5.16',
+        version: 'h5_6.3.2',
         client: getClientVal(30),
         h_program_id: programId,
     };
@@ -89,8 +89,8 @@ async function handler(ctx) {
         false
     );
 
-    const audioList = await cache.tryGet(
-        `tingtingfm:play_audio:${programId}`,
+    const { radioCover, list } = await cache.tryGet(
+        `tingtingfm:play_audio:${programId}:${latestAudio.h_audio_id}`,
         async () => {
             const playAudioParams = {
                 // remove h_program_id from params
@@ -115,8 +115,6 @@ async function handler(ctx) {
         false
     );
 
-    const { radioCover, list } = audioList;
-
     const items = list.map((audio) => ({
         title: audio.title,
         link: `${mobileBaseUrl}/v3/vod/2/${audio.h_audio_id}`,
@@ -125,14 +123,14 @@ async function handler(ctx) {
         itunes_item_image: radioCover,
         itunes_duration: audio.duration,
         enclosure_url: audio.play_url,
-        enclosure_type: 'audio/x-m4a',
+        enclosure_type: 'audio/mp4',
     }));
 
     return {
         title: `${radioInfo.title} - ${radioInfo.belong_radio}${radioInfo.belong_fm}`,
         description: radioInfo.description,
         link: `${mobileBaseUrl}/v3/program/${programId}`,
-        image: radioInfo.cover.split('?x-oss')[0],
+        image: radioInfo.cover.split('?x-oss', 1)[0],
         itunes_author: radioInfo.anchor.join(', '),
         itunes_category: radioInfo.category,
         itunes_explicit: false,

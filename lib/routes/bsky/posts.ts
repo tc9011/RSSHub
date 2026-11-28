@@ -2,8 +2,7 @@ import querystring from 'node:querystring';
 
 import type { Route } from '@/types';
 import { ViewType } from '@/types';
-import cache from '@/utils/cache';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 import { renderPost } from './templates/post';
 import { getAuthorFeed, getProfile, resolveHandle } from './utils';
@@ -33,17 +32,17 @@ export const route: Route = {
     name: 'Post',
     maintainers: ['TonyRL'],
     handler,
-    description: `
-| Filter Value | Description |
-|--------------|-------------|
-| posts_with_replies | Includes Posts, Replies, and Reposts |
-| posts_no_replies | Includes Posts and Reposts, without Replies |
-| posts_with_media | Shows only Posts containing media |
+    description: `| Filter Value             | Description                                          |
+| ------------------------ | ---------------------------------------------------- |
+| posts_with_replies       | Includes Posts, Replies, and Reposts                 |
+| posts_no_replies         | Includes Posts and Reposts, without Replies          |
+| posts_with_media         | Shows only Posts containing media                    |
 | posts_and_author_threads | Shows Posts and Threads, without Replies and Reposts |
 
 Default value for filter is \`posts_and_author_threads\` if not specified.
 
 Example:
+
 - \`/bsky/profile/bsky.app/filter=posts_with_replies\``,
 };
 
@@ -52,20 +51,19 @@ async function handler(ctx) {
     const routeParams = querystring.parse(ctx.req.param('routeParams'));
     const filter = routeParams.filter || 'posts_and_author_threads';
 
-    const DID = await resolveHandle(handle, cache.tryGet);
-    const profile = await getProfile(DID, cache.tryGet);
-    const authorFeed = await getAuthorFeed(DID, filter, cache.tryGet);
+    const DID = await resolveHandle(handle);
+    const profile = await getProfile(DID);
+    const authorFeed = await getAuthorFeed(DID, filter);
 
     const items = authorFeed.feed.map(({ post }) => ({
-        title: post.record.text.split('\n')[0],
+        title: post.record.text,
         description: renderPost({
-            text: post.record.text.replaceAll('\n', '<br>'),
+            text: post.record.text,
             embed: post.embed,
-            // embed.$type "app.bsky.embed.record#view" and "app.bsky.embed.recordWithMedia#view" are not handled
         }),
         author: post.author.displayName,
         pubDate: parseDate(post.record.createdAt),
-        link: `https://bsky.app/profile/${post.author.handle}/post/${post.uri.split('app.bsky.feed.post/')[1]}`,
+        link: `https://bsky.app/profile/${post.author.handle}/post/${post.uri.split('app.bsky.feed.post/', 2)[1]}`,
         upvotes: post.likeCount,
         comments: post.replyCount,
     }));

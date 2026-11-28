@@ -2,14 +2,14 @@ import { load } from 'cheerio';
 
 import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Route } from '@/types';
-import { parseDate } from '@/utils/parse-date';
-import puppeteer from '@/utils/puppeteer';
+import { getPlaywrightPage } from '@/utils/playwright';
+import { parseDate } from '@/utils/time';
 
 const baseUrl = 'https://cqe.uestc.edu.cn/';
 
 const mapUrl = {
-    hdyg: 'xwgg/hdyg.htm', // 活动预告
-    tzgg: 'xwgg/tzgg.htm', // 通知公告
+    hdyg: 'xwgg/hdyg.htm', // Event announcements
+    tzgg: 'xwgg/gstz.htm', // Announcements
 };
 
 const mapTitle = {
@@ -47,22 +47,27 @@ export const route: Route = {
 
 async function handler(ctx) {
     const type = ctx.req.param('type') || 'tzgg';
-    const pageUrl = mapUrl[type];
-    if (!pageUrl) {
-        throw new InvalidParameterError('type not supported');
+    if (!Object.hasOwn(mapUrl, type)) {
+        throw new InvalidParameterError('Unsupported type. Use hdyg or tzgg.');
     }
+    const pageUrl = mapUrl[type];
 
-    const browser = await puppeteer();
-    const page = await browser.newPage();
-    await page.setRequestInterception(true);
-    page.on('request', (request) => {
-        request.resourceType() === 'document' || request.resourceType() === 'script' ? request.continue() : request.abort();
+    const { page, destroy } = await getPlaywrightPage(baseUrl + pageUrl, {
+        closeTimeout: 0,
+        gotoConfig: { waitUntil: 'networkidle' },
+        onBeforeLoad: async (page) => {
+            await page.route('**/*', (route) => {
+                const request = route.request();
+                return request.resourceType() === 'document' || request.resourceType() === 'script' ? route.continue() : route.abort();
+            });
+        },
     });
-    await page.goto(baseUrl + pageUrl, {
-        waitUntil: 'networkidle2',
-    });
-    const content = await page.content();
-    await browser.close();
+    let content: string;
+    try {
+        content = await page.content();
+    } finally {
+        await destroy();
+    }
 
     const $ = load(content);
 
@@ -71,13 +76,13 @@ async function handler(ctx) {
     const out = $(items)
         .toArray()
         .map((item) => {
-            item = $(item);
-            const newsTitle = item.find('a').attr('title');
-            const newsLink = baseUrl + item.find('a').attr('href').slice(3);
-            const newsPubDate = parseDate(item.find('span').text().slice(1, -1));
+            const $item = $(item);
+            const newsTitle = $item.find('a').attr('title');
+            const newsLink = baseUrl + $item.find('a').attr('href')!.slice(3);
+            const newsPubDate = parseDate($item.find('span').text().slice(1, -1), 8);
 
             return {
-                title: newsTitle,
+                title: newsTitle!,
                 link: newsLink,
                 pubDate: newsPubDate,
             };

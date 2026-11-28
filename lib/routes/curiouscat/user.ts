@@ -1,5 +1,6 @@
 import type { Route } from '@/types';
 import got from '@/utils/got';
+import { parseDate } from '@/utils/time';
 
 const fetchAPIByUser = async (user) => {
     const baseURL = 'https://curiouscat.me/api/v2/profile?username=';
@@ -9,12 +10,15 @@ const fetchAPIByUser = async (user) => {
 
 export const route: Route = {
     path: '/user/:id',
+    categories: ['social-media'],
+    example: '/curiouscat/user/username',
+    parameters: { id: 'username that is in the URL' },
     radar: [
         {
             source: ['curiouscat.live/:id'],
         },
     ],
-    name: 'Unknown',
+    name: 'User',
     maintainers: ['lucasew'],
     handler,
 };
@@ -33,7 +37,7 @@ async function handler(ctx) {
         ${media}
         <br>
         Likes: ${post.likes}`;
-        const pubDate = new Date(post.timestamp * 1000);
+        const pubDate = parseDate(post.timestamp, 'X');
         return {
             author,
             link,

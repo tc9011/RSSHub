@@ -1,9 +1,11 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
+import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 const types = {
     jinqigengxin: '近期更新',
@@ -24,7 +26,7 @@ const types = {
 export const route: Route = {
     path: '/novel/:type',
     name: '小说列表',
-    url: 'zxcs.info',
+    url: 'zxcs.click',
     maintainers: ['liaochuan'],
     example: '/zxcs/novel/jinqigengxin',
     parameters: { type: '小说类型, 可在对应类型页 URL 中找到' },
@@ -42,7 +44,7 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['zxcs.info/:type'],
+            source: ['zxcs.click/:type'],
             target: '/novel/:type',
         },
     ],
@@ -51,20 +53,23 @@ export const route: Route = {
 
 async function handler(ctx) {
     const { type } = ctx.req.param();
+    if (!Object.hasOwn(types, type)) {
+        throw new InvalidParameterError('Unsupported novel type. Use a type listed in the route description.');
+    }
 
-    const baseUrl = `https://www.zxcs.info`;
+    const baseUrl = 'https://www.zxcs.click';
     const link = `${baseUrl}/${type}`;
     const response = await ofetch(link);
     const $ = load(response);
 
     const list: DataItem[] = $('div.book-info')
         .toArray()
-        .map((item) => {
+        .map((item): DataItem => {
             const $item = $(item);
             const a = $item.find('a').first();
             return {
                 title: a.text(),
-                link: String(a.attr('href')),
+                link: a.attr('href'),
                 pubDate: parseDate($item.find('.update').text()),
                 category: [],
                 description: '',
@@ -73,19 +78,32 @@ async function handler(ctx) {
             };
         });
 
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(String(item.link), async () => {
-                const response = await ofetch(String(item.link));
+    const items = await pMap(
+        list,
+        async (item) => {
+            const detail = await cache.tryGet(item.link ?? '', async () => {
+                const response = await ofetch(item.link ?? '');
                 const $ = load(response);
-                const links = String(item.link).split('/');
-                item.category = [types[String(links.at(-2))]];
-                item.description = String($('.intro').first().html());
-                item.image = baseUrl + String($('.book-cover img').attr('src'));
-                item.author = $('.author').text();
-                return item;
-            })
-        )
+                const links = (item.link ?? '').split('/');
+                const imageUrl = $('.book-cover img').attr('src');
+                const category = [
+                    ...new Set([
+                        types[links.at(-2) ?? ''],
+                        ...$('.book-info__categories .category')
+                            .toArray()
+                            .map((tag) => $(tag).text()),
+                    ]),
+                ];
+                return {
+                    category,
+                    description: $('.intro-content').html(),
+                    image: imageUrl ? new URL(imageUrl, item.link).href : undefined,
+                    author: $('.author').text(),
+                };
+            });
+            return { ...item, description: detail.description, category: detail.category, image: detail.image, author: detail.author };
+        },
+        { concurrency: 3 }
     );
 
     return {

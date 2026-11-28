@@ -20,6 +20,7 @@ type Merchant = {
 };
 
 type DataPayload = {
+    title?: string;
     images?: string[];
     categories?: string[];
     description?: string;
@@ -36,11 +37,10 @@ type DescriptionParams = {
     data?: DataPayload;
     image?: ImagePayload;
     description?: string;
-    categoryToUrl?: (category: string) => string;
     mediaToUrl?: (media: string) => string;
 };
 
-export const renderDescription = ({ data, image, description, categoryToUrl, mediaToUrl }: DescriptionParams) =>
+export const renderDescription = ({ data, image, description, mediaToUrl }: DescriptionParams) =>
     renderToString(
         <>
             {data ? (
@@ -50,13 +50,6 @@ export const renderDescription = ({ data, image, description, categoryToUrl, med
                               <figure key={media}>
                                   <img src={mediaToUrl ? mediaToUrl(media) : media} />
                               </figure>
-                          ))
-                        : null}
-                    {data.categories?.length
-                        ? data.categories.map((category) => (
-                              <a href={categoryToUrl ? categoryToUrl(category) : category} key={category}>
-                                  {category}
-                              </a>
                           ))
                         : null}
                     {data.description ? <p>{data.description}</p> : null}
@@ -79,12 +72,12 @@ export const renderDescription = ({ data, image, description, categoryToUrl, med
                                                     <h3>有效期</h3>
                                                     {voucher.activateDate ? (
                                                         <>
-                                                            <b>{voucher.activateDate.split(/T/)[0]}</b> 起
+                                                            <b>{voucher.activateDate.split(/T/, 1)[0]}</b> 起
                                                         </>
                                                     ) : null}
                                                     {voucher.expirationDate ? (
                                                         <>
-                                                            <b>{voucher.expirationDate.split(/T/)[0]}</b> 止
+                                                            <b>{voucher.expirationDate.split(/T/, 1)[0]}</b> 止
                                                         </>
                                                     ) : null}
                                                 </>

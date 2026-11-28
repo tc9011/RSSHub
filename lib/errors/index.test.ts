@@ -1,77 +1,90 @@
+import Honeybadger from '@honeybadger-io/js';
+import { close, init } from '@sentry/node';
 import { load } from 'cheerio';
-import supertest from 'supertest';
-import { afterAll, describe, expect, it } from 'vitest';
+import { Hono } from 'hono';
+import { http, HttpResponse } from 'msw';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import app from '@/app';
 import { config } from '@/config';
-import server from '@/index';
 
-const request = supertest(server);
-
-afterAll(() => {
-    server.close();
-});
+const requestWithErrorHandler = async (errorHandler: Parameters<Hono['onError']>[0]) => {
+    const testApp = new Hono();
+    testApp.onError(errorHandler);
+    testApp.get('/test/path', () => {
+        throw new Error('boom');
+    });
+    return await testApp.request('/test/path');
+};
 
 describe('error', () => {
-    it(`error`, async () => {
-        const response = await request.get('/test/error');
+    it('error', async () => {
+        const response = await app.request('/test/error');
         expect(response.status).toBe(503);
-        expect(response.text).toMatch(/Error: Error test/);
+        const text = await response.text();
+        expect(text).toMatch(/Error: Error test/);
     });
 });
 
 describe('httperror', () => {
-    it(`httperror`, async () => {
-        const response = await request.get('/test/httperror');
+    it('httperror', async () => {
+        const response = await app.request('/test/httperror');
         expect(response.status).toBe(503);
-        expect(response.text).toContain('FetchError: [GET] &quot;https://httpbingo.org/status/404&quot;: 404 Not Found');
+        const text = await response.text();
+        expect(text).toContain('FetchError: [GET] &quot;https://httpbingo.org&quot;: 404');
     }, 20000);
 });
 
 describe('RequestInProgressError', () => {
-    it(`RequestInProgressError with retry`, async () => {
-        const responses = await Promise.all([request.get('/test/slow'), request.get('/test/slow')]);
-        expect(new Set(responses.map((r) => r.status))).toEqual(new Set([200, 200]));
+    it('RequestInProgressError with retry', async () => {
+        const responses = await Promise.all([app.request('/test/slow'), app.request('/test/slow')]);
+        expect(responses.map((r) => r.status)).toEqual([200, 200]);
     });
-    it(`RequestInProgressError`, async () => {
-        const responses = await Promise.all([request.get('/test/slow4'), request.get('/test/slow4')]);
+    it('RequestInProgressError', async () => {
+        const responses = await Promise.all([app.request('/test/slow4'), app.request('/test/slow4')]);
         expect(new Set(responses.map((r) => r.status))).toEqual(new Set([200, 503]));
-        expect(new Set(responses.map((r) => r.headers['cache-control']))).toEqual(new Set([`public, max-age=${config.cache.routeExpire}`, `public, max-age=${config.requestTimeout / 1000}`]));
-        expect(responses.filter((r) => r.text.includes('RequestInProgressError: This path is currently fetching, please come back later!'))).toHaveLength(1);
+        expect(new Set(responses.map((r) => r.headers.get('cache-control')))).toEqual(new Set([`public, max-age=${config.cache.routeExpire}`, `public, max-age=${config.requestTimeout / 1000}`]));
+        const texts = await Promise.all(responses.map((r) => r.text()));
+        expect(texts.filter((t) => t.includes('RequestInProgressError: This path is currently fetching, please come back later!'))).toHaveLength(1);
     });
 });
 
 describe('config-not-found-error', () => {
-    it(`config-not-found-error`, async () => {
-        const response = await request.get('/test/config-not-found-error');
+    it('config-not-found-error', async () => {
+        const response = await app.request('/test/config-not-found-error');
         expect(response.status).toBe(503);
-        expect(response.text).toMatch('ConfigNotFoundError: Test config not found error');
+        const text = await response.text();
+        expect(text).toMatch('ConfigNotFoundError: Test config not found error');
     }, 20000);
 });
 
 describe('invalid-parameter-error', () => {
-    it(`invalid-parameter-error`, async () => {
-        const response = await request.get('/test/invalid-parameter-error');
+    it('invalid-parameter-error', async () => {
+        const response = await app.request('/test/invalid-parameter-error');
         expect(response.status).toBe(503);
-        expect(response.text).toMatch('InvalidParameterError: Test invalid parameter error');
+        const text = await response.text();
+        expect(text).toMatch('InvalidParameterError: Test invalid parameter error');
     }, 20000);
 });
 
 describe('captcha-error', () => {
-    it(`captcha-error`, async () => {
-        const response = await request.get('/test/captcha-error');
+    it('captcha-error', async () => {
+        const response = await app.request('/test/captcha-error');
         expect(response.status).toBe(503);
-        expect(response.text).toMatch('CaptchaError: Test captcha error');
+        const text = await response.text();
+        expect(text).toMatch('CaptchaError: Test captcha error');
     }, 20000);
 });
 
 describe('route throws an error', () => {
     it('route path error should have path mounted', async () => {
-        await request.get('/test/error');
-        await request.get('/thisDoesNotExist');
-        const response = await request.get('/');
+        await app.request('/test/error');
+        await app.request('/thisDoesNotExist');
+        const response = await app.request('/');
 
-        const $ = load(response.text);
-        $('.debug-item').each((index, item) => {
+        const text = await response.text();
+        const $ = load(text);
+        $('.debug-item').each((_index, item) => {
             const key = $(item).find('.debug-key').text().trim();
             const value = $(item).find('.debug-value').html()?.trim();
             switch (key) {
@@ -95,5 +108,85 @@ describe('route throws an error', () => {
                 default:
             }
         });
+    });
+});
+
+describe('error handler request url', () => {
+    it('hides the path and query of the upstream request url', async () => {
+        const { default: server } = await import('@/setup.test');
+        server.use(http.get('http://rsshub.test/botPATHSECRET/lookup', () => HttpResponse.json({}, { status: 404 })));
+        const { default: ofetch } = await import('@/utils/ofetch');
+        const { errorHandler } = await import('@/errors');
+
+        const testApp = new Hono();
+        testApp.onError(errorHandler);
+        testApp.get('/test/path', () => ofetch('http://rsshub.test/botPATHSECRET/lookup', { query: { key: 'QUERYSECRET' } }));
+
+        const responses = await Promise.all([testApp.request('/test/path'), testApp.request('/test/path?format=json')]);
+        expect(responses.map((r) => r.status)).toEqual([503, 503]);
+        const [html, json] = await Promise.all(responses.map((r) => r.text()));
+        expect(html).toContain('FetchError: [GET] &quot;http://rsshub.test&quot;: 404');
+        expect(JSON.parse(json).error.message).toBe('[GET] "http://rsshub.test": 404 Not Found');
+        expect(html + json).not.toMatch(/PATHSECRET|QUERYSECRET/);
+    });
+});
+
+describe('error handler honeybadger', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.resetModules();
+    });
+
+    it('sends errors to honeybadger when enabled', async () => {
+        process.env.HONEYBADGER_API_KEY = 'hbp_test_key';
+        vi.resetModules();
+
+        const notify = vi.spyOn(Honeybadger, 'notify').mockReturnValue(true);
+        const { default: logger } = await import('@/utils/logger');
+        vi.spyOn(logger, 'error').mockReturnValue(logger);
+
+        const { errorHandler } = await import('@/errors');
+        const response = await requestWithErrorHandler(errorHandler);
+        expect(response.status).toBe(503);
+
+        expect(notify).toHaveBeenCalledWith(expect.any(Error), {
+            context: { name: 'test' },
+        });
+
+        delete process.env.HONEYBADGER_API_KEY;
+    });
+});
+
+describe('error handler sentry', () => {
+    afterEach(async () => {
+        await close();
+        vi.restoreAllMocks();
+        vi.resetModules();
+    });
+
+    it('sends errors to sentry when enabled', async () => {
+        process.env.SENTRY = 'dsn';
+        vi.resetModules();
+
+        const beforeSend = vi.fn(() => null);
+        init({
+            dsn: 'https://public@sentry.example.test/1',
+            beforeSend,
+            defaultIntegrations: false,
+            enableOpenTelemetrySetup: false,
+        });
+
+        const { default: logger } = await import('@/utils/logger');
+        vi.spyOn(logger, 'error').mockReturnValue(logger);
+
+        const { errorHandler } = await import('@/errors');
+        const response = await requestWithErrorHandler(errorHandler);
+        expect(response.status).toBe(503);
+
+        await vi.waitFor(() => {
+            expect(beforeSend).toHaveBeenCalledWith(expect.objectContaining({ tags: expect.objectContaining({ name: 'test' }) }), expect.any(Object));
+        });
+
+        delete process.env.SENTRY;
     });
 });

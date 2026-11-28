@@ -1,7 +1,7 @@
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 const typeMap = {
     '5': '全部公告',
@@ -11,10 +11,6 @@ const typeMap = {
     '22': '其他公告',
 };
 
-/**
- *
- * @param ctx {import('koa').Context}
- */
 export const route: Route = {
     path: '/docs/:dirId?',
     categories: ['programming'],
@@ -31,13 +27,13 @@ export const route: Route = {
     name: '平台公告',
     maintainers: ['blade0910'],
     handler,
-    description: `| 类型    | type    |
-| --------- | ---------- |
-| 全部公告    | 5    |
-| 产品发布    | 19   |
-| 规则变更    | 21   |
-| 维护公告    | 20   |
-| 其他公告    | 22   |`,
+    description: `| 类型     | type |
+| -------- | ---- |
+| 全部公告 | 5    |
+| 产品发布 | 19   |
+| 规则变更 | 21   |
+| 维护公告 | 20   |
+| 其他公告 | 22   |`,
 };
 
 async function handler(ctx) {
@@ -47,23 +43,24 @@ async function handler(ctx) {
 
     const list = response.data.data.articles.map((item) => ({
         title: item.title,
-        id: item.id,
-        dirName: item.dirName,
+        id: String(item.id),
+        category: [item.dirName],
         link: `https://op.jinritemai.com/docs/notice-docs/${dirId}/${item.id}`,
-        pubDate: parseDate(item.updateTime * 1000),
+        pubDate: parseDate(item.createTime * 1000),
+        updated: parseDate(item.updateTime * 1000),
     }));
 
     const result = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
+        list.map(async (item) => {
+            const description = await cache.tryGet(`${item.link}:description`, async () => {
                 const itemResponse = await got({
                     method: 'get',
                     url: `https://op.jinritemai.com/doc/external/open/queryDocArticleDetail?articleId=${item.id}&onlyView=false`,
                 });
-                item.description = itemResponse.data.data.article.content;
-                return item;
-            })
-        )
+                return itemResponse.data.data.article.content;
+            });
+            return { ...item, description };
+        })
     );
 
     return {

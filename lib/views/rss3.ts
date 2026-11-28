@@ -1,4 +1,5 @@
-import dayjs from 'dayjs';
+import type { DataItem } from '@/types';
+import { toInstant } from '@/utils/time';
 
 /**
  * This function should be used by RSSHub middleware only.
@@ -12,9 +13,9 @@ const TYPE = 'feed';
 const PLATFORM = 'RSSHub';
 
 const rss3 = (data) => {
-    const currentUnixTsp = dayjs().unix();
+    const now = Temporal.Now.instant();
     const umsResult = {
-        data: data.item.map((item) => {
+        data: data.item.map((item: DataItem) => {
             const owner = getOwnershipFieldFromURL(item);
             return {
                 owner,
@@ -34,16 +35,16 @@ const rss3 = (data) => {
                         from: owner,
                         to: owner,
                         metadata: {
-                            authors: typeof item.author === 'string' ? [{ name: item.author }] : item.author,
+                            authors: item.author === undefined || Array.isArray(item.author) ? item.author : [{ name: item.author }],
                             description: item.description,
                             pub_date: item.pubDate,
-                            tags: typeof item.category === 'string' ? [item.category] : item.category,
+                            tags: item.category === undefined || Array.isArray(item.category) ? item.category : [item.category],
                             title: item.title,
                         },
                         related_urls: [item.link],
                     },
                 ],
-                timestamp: dayjs(item.updated).unix() || currentUnixTsp,
+                timestamp: Math.floor(((item.updated && toInstant(item.updated)) || now).epochMilliseconds / 1000),
             };
         }),
     };

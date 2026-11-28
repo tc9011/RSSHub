@@ -1,12 +1,10 @@
 import { load } from 'cheerio';
-import dayjs from 'dayjs';
 
 import type { Route } from '@/types';
-import { parseDate } from '@/utils/parse-date';
-import puppeteer from '@/utils/puppeteer';
+import ofetch from '@/utils/ofetch';
+import { parseDateStrict } from '@/utils/time';
 
 const baseIndexUrl = 'https://www.sice.uestc.edu.cn/index.htm';
-const host = 'https://www.sice.uestc.edu.cn/';
 
 export const route: Route = {
     path: '/sice',
@@ -15,7 +13,7 @@ export const route: Route = {
     parameters: {},
     features: {
         requireConfig: false,
-        requirePuppeteer: true,
+        requirePuppeteer: false,
         antiCrawler: false,
         supportBT: false,
         supportPodcast: false,
@@ -33,34 +31,21 @@ export const route: Route = {
 };
 
 async function handler() {
-    const browser = await puppeteer();
-    const page = await browser.newPage();
-    await page.setRequestInterception(true);
-    page.on('request', (request) => {
-        request.resourceType() === 'document' || request.resourceType() === 'script' ? request.continue() : request.abort();
-    });
-    await page.goto(baseIndexUrl, {
-        waitUntil: 'networkidle2',
-    });
-    const content = await page.content();
-    await browser.close();
+    const content = await ofetch(baseIndexUrl);
 
     const $ = load(content);
 
-    const out = $('.notice p')
+    const out = $('.tzlist li')
         .toArray()
         .map((item) => {
-            item = $(item);
-            const now = dayjs();
-            let date = dayjs(now.year() + '-' + item.find('a.date').text());
-            if (now < date) {
-                date = dayjs(now.year() - 1 + '-' + item.find('a.date').text());
-            }
+            const $item = $(item);
+            const yearMonth = $item.find('time em').text();
+            const day = $item.find('time span').text();
 
             return {
-                title: item.find('a[href]').text(),
-                link: host + item.find('a[href]').attr('href'),
-                pubDate: parseDate(date),
+                title: $item.find('.txt p').text(),
+                link: new URL($item.find('a[href]').attr('href')!, baseIndexUrl).href,
+                pubDate: parseDateStrict(`${yearMonth.replace('.', '-')}-${day}`, 'YYYY-MM-DD', 8),
             };
         });
 

@@ -1,9 +1,9 @@
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 import { getLocalName } from './utils';
 
-const getFromAPI = (type) => {
+export const getFromAPI = (type) => {
     const mapping = {
         blog: {
             en: 'reviews',
@@ -32,4 +32,3 @@ const getFromAPI = (type) => {
         };
     };
 };
-export default getFromAPI;

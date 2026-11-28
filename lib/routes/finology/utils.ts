@@ -3,8 +3,7 @@ import { load } from 'cheerio';
 import type { DataItem } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 const getItems = async (url: string, extra: { date: boolean; selector: string }) => {
     const mainUrl = 'https://insider.finology.in';
@@ -12,11 +11,11 @@ const getItems = async (url: string, extra: { date: boolean; selector: string })
     const $ = load(response);
     const listItems = $(extra.selector)
         .toArray()
-        .map((item) => {
+        .map((item): DataItem => {
             const $item = $(item);
             const title = $item.find('p.text-m-height').text();
             const link = $item.find('a').attr('href');
-            const pubDate = extra.date ? timezone(parseDate($item.find('div.text-light p').first().text()), 0) : '';
+            const pubDate = extra.date ? parseDate($item.find('div.text-light p').first().text(), 0) : '';
             const itunes_item_image = $item.find('img').attr('src');
             const category = [$item.find('p.pt025').text()];
             return {
@@ -25,10 +24,10 @@ const getItems = async (url: string, extra: { date: boolean; selector: string })
                 pubDate,
                 itunes_item_image,
                 category,
-            } as DataItem;
+            };
         });
 
-    const items = (
+    const items: DataItem[] = (
         await Promise.allSettled(
             listItems.map((item) => {
                 if (item.link === undefined) {
@@ -59,8 +58,7 @@ const getItems = async (url: string, extra: { date: boolean; selector: string })
         )
     ).map((v, index) => (v.status === 'fulfilled' ? v.value : { ...listItems[index], description: `Website did not load within Timeout Limits. <a href="${listItems[index].link}">Check with Website if the page is slow</a>` }));
     const topicName = $('h1.font-heading.fs1875')?.text();
-    const validItems: DataItem[] = items.filter((item): item is DataItem => item !== null && typeof item !== 'string');
-    return { items: validItems, topicName };
+    return { items, topicName };
 };
 
 export { getItems };

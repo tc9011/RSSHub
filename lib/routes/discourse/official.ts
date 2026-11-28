@@ -1,4 +1,5 @@
-import type { Route } from '@/types';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
+import type { Data, Route } from '@/types';
 import got from '@/utils/got';
 import RSSParser from '@/utils/rss-parser';
 
@@ -16,7 +17,7 @@ export const route: Route = {
         requireConfig: [
             {
                 name: 'DISCOURSE_CONFIG_*',
-                description: `Configure the Discourse environment variables referring to [https://docs.rsshub.app/deploy/config#discourse](https://docs.rsshub.app/deploy/config#discourse).`,
+                description: 'Configure the Discourse environment variables referring to [https://docs.rsshub.app/deploy/config#discourse](https://docs.rsshub.app/deploy/config#discourse).',
             },
         ],
         requirePuppeteer: false,
@@ -31,17 +32,20 @@ export const route: Route = {
 };
 
 async function handler(ctx) {
-    const { link, key } = getConfig(ctx);
-    const path = ctx.req.param('path');
+    const discourseConfig: unknown = getConfig(ctx);
+    const { link, key } = discourseConfig as { link: string; key: string };
+    const segments = ctx.req.param('path').split('/');
+    if (segments.some((segment) => ['', '.', '..'].includes(segment))) {
+        throw new InvalidParameterError('Invalid path');
+    }
 
-    const url = `${link}/${path}.rss`;
+    const url = `${link}/${segments.map((segment) => encodeURIComponent(segment)).join('/')}.rss`;
 
     const feed = await RSSParser.parseString(
         (
             await got(url, {
-                headers: {
-                    'User-Api-Key': key,
-                },
+                headers: key ? { 'User-Api-Key': key } : {},
+                credentialHeaders: ['User-Api-Key'],
             })
         ).data
     );
@@ -52,5 +56,5 @@ async function handler(ctx) {
         ...e,
     }));
 
-    return { item: feed.items, ...feed };
+    return { item: feed.items, ...feed } as Data;
 }

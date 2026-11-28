@@ -1,34 +1,35 @@
-import * as cheerio from 'cheerio';
+import { load } from 'cheerio';
 
 import type { Route } from '@/types';
 import ofetch from '@/utils/ofetch';
-import { parseRelativeDate } from '@/utils/parse-date';
+import { parseDate, parseRelativeDate } from '@/utils/time';
+
+function parseTopicDate(date: string) {
+    const match = /^(\d+天前)\s+(\d{1,2}:\d{2})$/.exec(date);
+    if (match) {
+        const day = parseRelativeDate(match[1])?.toLocaleString('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' });
+        return parseDate(`${day} ${match[2]}`, 'YYYY-MM-DD HH:mm', 8);
+    }
+    return parseRelativeDate(date);
+}
 
 const handler = async () => {
     const url = 'https://www.psnine.com/';
     const response = await ofetch(url);
 
-    const $ = cheerio.load(response);
+    const $ = load(response);
 
-    const out = $('.list li')
+    const out = $('.topic-row')
         .toArray()
         .map((item) => {
             const $item = $(item);
             return {
                 title: $item.find('.title').text(),
                 link: $item.find('.title a').attr('href'),
-                pubDate: parseRelativeDate(
-                    $item
-                        .find('.meta')
-                        .contents()
-                        .filter((_, i) => i.nodeType === 3)
-                        .text()
-                        .trim()
-                        .split(/\s{2,}/)[0]
-                ),
-                author: $item.find('.meta a.psnnode').text(),
+                pubDate: parseTopicDate($item.find('.meta > span:not(.author):not(.replies)').text()),
+                author: $item.find('.meta .author a').text(),
                 category: $item
-                    .find('.meta a.node')
+                    .find('.tag a')
                     .toArray()
                     .map((a) => $(a).text()),
             };

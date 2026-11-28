@@ -3,7 +3,7 @@ import { renderToString } from 'hono/jsx/dom/server';
 
 import type { Route } from '@/types';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/curator/:id/:routeParams?',
@@ -48,7 +48,7 @@ Examples:
             }
         }
 
-        const response = await ofetch(url.toString());
+        const response = await ofetch(url.href);
         const $ = load(response.results_html ?? '');
 
         const items = $('.recommendation')
@@ -62,8 +62,8 @@ Examples:
                 const reviewContent = el.find('.recommendation_desc').text().trim();
                 const reviewDateText = el.find('.curator_review_date').text().trim();
 
-                const notCurrentYearPattern = /,\s\b\d{4}\b$/;
-                const reviewPubDate = notCurrentYearPattern.test(reviewDateText) ? parseDate(reviewDateText) : parseDate(`${reviewDateText}, ${new Date().getFullYear()}`);
+                const notCurrentYearPattern = /,\s\d{4}$/;
+                const reviewPubDate = notCurrentYearPattern.test(reviewDateText) ? parseDate(reviewDateText, 0) : parseDate(`${reviewDateText}, ${Temporal.Now.zonedDateTimeISO('UTC').year}`, 0);
 
                 const description = renderToString(<SteamCuratorDescription image={appImage} description={reviewContent} />);
 
@@ -83,7 +83,7 @@ Examples:
 
         return {
             title: `Steam Curator ${id} Reviews`,
-            link: url.toString(),
+            link: `https://store.steampowered.com/curator/${id}/`,
             item: items,
         };
     },

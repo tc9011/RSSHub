@@ -1,8 +1,7 @@
 import type { Route } from '@/types';
 import { ViewType } from '@/types';
-import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 import { parseItem } from './utils';
 
@@ -34,8 +33,8 @@ export const route: Route = {
     name: '首页',
     maintainers: ['TonyRL'],
     handler,
-    description: `| 推荐            | 股票  | 基金 | 新股       | 研报     |
-| --------------- | ----- | ---- | ---------- | -------- |
+    description: `| 推荐          | 股票  | 基金 | 新股      | 研报     |
+| ------------- | ----- | ---- | --------- | -------- |
 | web_home_page | stock | fund | new_stock | research |`,
 };
 
@@ -56,7 +55,7 @@ async function handler(ctx) {
         };
     });
 
-    const items = await Promise.all(list.map((item) => parseItem(item, cache.tryGet)));
+    const items = await Promise.all(list.map((item) => parseItem(item)));
 
     return {
         title: '格隆汇-财经资讯动态-股市行情',

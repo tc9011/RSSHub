@@ -3,7 +3,7 @@ import { renderToString } from 'hono/jsx/dom/server';
 import type { Route } from '@/types';
 import { ViewType } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 const baseUrl = 'https://www.gelonghui.com';
 
@@ -27,7 +27,7 @@ export const route: Route = {
         },
     ],
     name: '实时快讯',
-    maintainers: [],
+    maintainers: ['TonyRL'],
     handler,
     url: 'gelonghui.com/live',
 };

@@ -5,8 +5,7 @@ import type { Element } from 'domhandler';
 import type { DataItem } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 const rootUrl = 'https://www.jisilu.cn';
 
@@ -39,7 +38,7 @@ const processItems: ($: CheerioAPI, targetEl: Cheerio<Element>, limit: number) =
 
             return {
                 title,
-                pubDate: pubDateStr ? timezone(parseDate(pubDateStr), +8) : undefined,
+                pubDate: pubDateStr ? parseDate(pubDateStr, 8) : undefined,
                 link,
                 category: $item
                     .find('span.aw-question-tags a, a.aw-topic-name')
@@ -52,12 +51,12 @@ const processItems: ($: CheerioAPI, targetEl: Cheerio<Element>, limit: number) =
     return (
         await Promise.all(
             items.map((item) => {
-                if (!item.link && typeof item.link !== 'string') {
+                if (item.link === undefined) {
                     return item;
                 }
 
                 return cache.tryGet(item.link, async (): Promise<DataItem> => {
-                    const detailResponse = await ofetch(item.link);
+                    const detailResponse = await ofetch(item.link!);
                     const $$: CheerioAPI = load(detailResponse);
 
                     const title: string = $$('div.aw-mod-head h1').text();
@@ -68,14 +67,14 @@ const processItems: ($: CheerioAPI, targetEl: Cheerio<Element>, limit: number) =
 
                     const isAnswer: boolean = item.link ? /answer_id/.test(item.link) : false;
 
-                    const description: string = (isAnswer ? $$('div.markitup-box').last() : $$('div.markitup-box').first()).html() ?? '';
+                    const description = (isAnswer ? $$('div.markitup-box').last() : $$('div.markitup-box').first()).html();
 
                     const metaStr: string = $$(isAnswer ? 'div.aw-dynamic-topic-meta' : 'div.aw-question-detail-meta')
                         .find('span.aw-text-color-999')
                         .text();
 
                     const pubDateStr = metaStr.match(isAnswer ? /(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2})/ : /发表时间\s(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2})/)?.[1];
-                    const updatedStr = metaStr.match(/最后修改时间\s(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2})/)?.[1];
+                    const updatedStr = /最后修改时间\s(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2})/.exec(metaStr)?.[1];
 
                     const authorEl: Cheerio<Element> = $$(isAnswer ? 'p.publisher a.aw-user-name' : 'div.aw-side-bar-mod-body a.aw-user-name').first();
                     const author: DataItem['author'] = authorEl.prop('href')
@@ -91,15 +90,14 @@ const processItems: ($: CheerioAPI, targetEl: Cheerio<Element>, limit: number) =
                     return {
                         title,
                         description,
-                        pubDate: pubDateStr ? timezone(parseDate(pubDateStr), +8) : item.pubDate,
+                        pubDate: pubDateStr ? parseDate(pubDateStr, 8) : item.pubDate,
                         link: item.link,
                         category: item.category,
                         author,
                         content: {
                             html: description,
-                            text: $$('div.aw-question-detail-txt').first().text(),
                         },
-                        updated: updatedStr ? timezone(parseDate(updatedStr), +8) : item.updated,
+                        updated: updatedStr ? parseDate(updatedStr, 8) : item.updated,
                     };
                 });
             })

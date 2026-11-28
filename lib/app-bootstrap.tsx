@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { compress } from 'hono/compress';
+import { contextStorage } from 'hono/context-storage';
 import { jsxRenderer } from 'hono/jsx-renderer';
 import { trimTrailingSlash } from 'hono/trailing-slash';
 
@@ -10,6 +11,7 @@ import antiHotlink from '@/middleware/anti-hotlink';
 import cache from '@/middleware/cache';
 import debug from '@/middleware/debug';
 import header from '@/middleware/header';
+import honeybadger from '@/middleware/honeybadger';
 import mLogger from '@/middleware/logger';
 import parameter from '@/middleware/parameter';
 import sentry from '@/middleware/sentry';
@@ -24,6 +26,7 @@ process.on('uncaughtException', (e) => {
 
 const app = new Hono();
 
+app.use(contextStorage());
 app.use(trimTrailingSlash());
 app.use(compress());
 
@@ -35,6 +38,7 @@ app.use(
 );
 app.use(mLogger);
 app.use(trace);
+app.use(honeybadger);
 app.use(sentry);
 app.use(accessControl);
 app.use(debug);

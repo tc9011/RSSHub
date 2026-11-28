@@ -1,6 +1,6 @@
 import type { Route } from '@/types';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/books',
@@ -24,7 +24,7 @@ export const route: Route = {
     maintainers: ['xyqfer'],
     handler,
     url: 'juejin.cn/books',
-    description: `> 掘金小册需要付费订阅，RSS 仅做更新提醒，不含付费内容.`,
+    description: '> 掘金小册需要付费订阅，RSS 仅做更新提醒，不含付费内容.',
 };
 
 async function handler() {

@@ -3,6 +3,7 @@ import { load } from 'cheerio';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/replied/:uid',
@@ -33,17 +34,17 @@ async function handler(ctx) {
     const list = $('div.recent-replied-mod ul.comment-list li')
         .toArray()
         .map((item) => {
-            item = $(item);
-            const p = item.find('p');
+            const $item = $(item);
+            const p = $item.find('p');
             const nid = p
                 .find('a')
-                .attr('href')
-                .match(/%2Fnote%2F(.*?)%2F&type=note/)[1];
+                .attr('href')!
+                .match(/%2Fnote%2F(.*?)%2F&type=note/)![1];
             const title = p.find('a').text();
             p.remove();
 
             return {
-                title: `${item.find('a.lnk-people').text()} - ${title}`,
+                title: `${$item.find('a.lnk-people').text()} - ${title}`,
                 link: `https://www.douban.com/note/${nid}`,
             };
         });
@@ -56,7 +57,7 @@ async function handler(ctx) {
                         method: 'get',
                         url: item.link,
                     });
-                    const match = detailResponse.data.match(/'comments':(.*)}],/);
+                    const match = detailResponse.data.match(/'comments':(.*)\}\],/);
 
                     if (match.length > 1) {
                         const content = load(detailResponse.data);
@@ -64,15 +65,14 @@ async function handler(ctx) {
 
                         const comments = JSON.parse(match[1] + '}]');
 
-                        let latest = new Date(0),
-                            description,
-                            pubDate,
-                            author;
+                        let latest: Temporal.Instant | undefined, description, pubDate, author;
 
-                        for (const c of comments) {
-                            if (c.author.uid === ctx.req.param('uid') && new Date(c.create_time) > new Date(latest)) {
-                                latest = new Date(c.create_time + ' GMT+8');
-                                pubDate = latest.toUTCString();
+                        while (comments.length > 0) {
+                            const c = comments.shift();
+                            const createTime = parseDate(c.create_time, 8);
+                            if (c.author.uid === ctx.req.param('uid') && createTime && (!latest || Temporal.Instant.compare(createTime, latest) > 0)) {
+                                latest = createTime;
+                                pubDate = latest;
                                 description = c.text;
                                 author = c.author.name;
                             } else if (c.replies.length > 0) {

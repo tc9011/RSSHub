@@ -1,26 +1,34 @@
 import type { Route } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 const baseUrl = 'https://www.whwater.com';
 
 export const route: Route = {
     path: '/wuhan/:channelId?',
+    categories: ['forecast'],
+    example: '/tingshuitz/wuhan',
+    parameters: { channelId: '分类，见下表，默认为 68' },
+    description: `| channelId | 分类       |
+| --------- | ---------- |
+| 68        | 计划性停水 |
+| 69        | 突发性停水 |`,
     radar: [
         {
             source: ['whwater.com/IWater.shtml', 'whwater.com/'],
             target: '/wuhan',
         },
     ],
-    name: 'Unknown',
-    maintainers: [],
+    name: '武汉市',
+    maintainers: ['MoonBegonia'],
     handler,
     url: 'whwater.com/IWater.shtml',
 };
 
 async function handler(ctx) {
     const { channelId = 68 } = ctx.req.param();
-    const response = await got.post('https://manager.whwater.com:8900/website/article/findChannelArticle', {
+    const limit = Number.parseInt(ctx.req.query('limit') ?? '30');
+    const response = await got.post('https://manager.whwater.com:4443/website/article/findChannelArticle', {
         form: {
             channelId,
             searchKey: '',
@@ -28,7 +36,7 @@ async function handler(ctx) {
             topStatus: 0,
             recommendStatus: 0,
             page: 1,
-            size: ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit')) : 30,
+            size: limit,
         },
     });
 
@@ -36,8 +44,8 @@ async function handler(ctx) {
     const items = data.articleArray.map((item) => ({
         title: item.title,
         description: item.content,
-        pubDate: parseDate(item.publishTime),
-        link: `https://${baseUrl}/IPolicyDetails.shtml?id=31&sid=${channelId}${item.articleLink}`,
+        pubDate: parseDate(`${item.publishTime} +0800`, 'YYYY-MM-DD ZZ'),
+        link: `${baseUrl}/IPolicyDetails.shtml?id=31&sid=${channelId}${item.articleLink}`,
     }));
 
     return {

@@ -1,12 +1,12 @@
 import { load } from 'cheerio';
 import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { Data, DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/:category?',
@@ -22,6 +22,10 @@ export const route: Route = {
         supportScihub: false,
     },
     radar: [
+        {
+            source: ['blog.simpleinfo.cc/shasha77'],
+            target: '/',
+        },
         {
             source: ['blog.simpleinfo.cc/blog/:category'],
             target: '/:category',
@@ -43,7 +47,7 @@ export const route: Route = {
 | science    | environment-health | acg        | book-sharing | other-topics |`,
 };
 
-async function handler(ctx) {
+async function handler(ctx): Promise<Data> {
     const category = ctx.req.param('category');
     const rootUrl = 'https://blog.simpleinfo.cc';
     const link = `${rootUrl}${category ? (category === 'work' || category === 'talk' ? `/blog/${category}` : `/shasha77?category=${category}`) : '/shasha77'}`;
@@ -54,35 +58,39 @@ async function handler(ctx) {
 
     const list = $('.article-item')
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem => {
+            const $item = $(item);
             return {
-                title: item.find('.title').text(),
-                link: item.find('a').first().attr('href'),
-                category: item.find('.category').text(),
+                title: $item.find('.title').text(),
+                link: new URL($item.find('a').attr('href')!, rootUrl).href,
+                category: $item.find('.category').text(),
             };
         });
 
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
+    const items = await pMap(
+        list,
+        async (item) => {
+            const details = await cache.tryGet(`simpleinfo:article:v3:${item.link}`, async () => {
                 const result = await got(item.link);
                 const content = load(result.data);
-                item.author = content('meta[property="article:author"]').attr('content');
-                item.pubDate = timezone(parseDate(content('meta[property="article:published_time"]').attr('content')), +8);
-                item.description = renderDescription({
-                    image: content('meta[property="og:image"]').attr('content'),
-                    description: content('.article-content').first().html(),
-                });
-                return item;
-            })
-        )
+                return {
+                    author: content('meta[property="article:author"]').attr('content'),
+                    pubDate: parseDate(content('meta[property="article:published_time"]').attr('content')!, 8),
+                    description: renderDescription({
+                        image: content('meta[property="og:image"]').attr('content'),
+                        description: content('.article-content').first().html() ?? undefined,
+                    }),
+                };
+            });
+            return { ...item, ...details };
+        },
+        { concurrency: 3 }
     );
 
     return {
         title,
         link,
-        language: 'zh-tw',
+        language: 'zh-TW',
         item: items,
     };
 }

@@ -1,17 +1,37 @@
 import { load } from 'cheerio';
 import CryptoJS from 'crypto-js';
 
+import { config } from '@/config';
 import { solveWafChallenge } from '@/routes/juejin/utils';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 
 export const rootUrl = 'https://www.36kr.com';
 
-export const ProcessItem = (item, tryGet) =>
-    tryGet(item.link, async () => {
+export const getInitialState = (html: string) => {
+    const stateMatch = /window\.initialState=(\{.*\})/.exec(html);
+    if (!stateMatch) {
+        throw new Error('36kr page does not contain initial state. The source may be serving an anti-bot challenge.');
+    }
+
+    const state = JSON.parse(stateMatch[1]);
+    if (!state.isEncrypt) {
+        return state;
+    }
+
+    return JSON.parse(
+        CryptoJS.AES.decrypt(state.state, CryptoJS.enc.Utf8.parse('efabccee-b754-4c'), {
+            mode: CryptoJS.mode.ECB,
+            padding: CryptoJS.pad.Pkcs7,
+        }).toString(CryptoJS.enc.Utf8)
+    );
+};
+
+export const ProcessItem = (item) =>
+    cache.tryGet(item.link, async () => {
         const detailResponse = await ofetch(item.link);
 
-        const cipherTextList = detailResponse.match(/{"state":"(.*)","isEncrypt":true}/) ?? [];
+        const cipherTextList = detailResponse.match(/\{"state":"(.*)","isEncrypt":true\}/) ?? [];
 
         if (cipherTextList.length === 0) {
             const $ = load(detailResponse);
@@ -22,9 +42,7 @@ export const ProcessItem = (item, tryGet) =>
                 CryptoJS.AES.decrypt(cipherTextList[1], key, {
                     mode: CryptoJS.mode.ECB,
                     padding: CryptoJS.pad.Pkcs7,
-                })
-                    .toString(CryptoJS.enc.Utf8)
-                    .toString()
+                }).toString(CryptoJS.enc.Utf8)
             ).articleDetail.articleDetailData.data;
             item.description = content.widgetContent;
         }
@@ -36,17 +54,26 @@ export const getWafTokenId = () =>
     cache.tryGet(
         '36kr:_waftokenid',
         async () => {
-            const captchaResponse = await ofetch(rootUrl);
+            const captchaResponse = await ofetch(rootUrl, {
+                headers: {
+                    'User-Agent': config.ua,
+                },
+            });
 
             const $ = load(captchaResponse);
             const payload = $('script')
                 .text()
                 .match(/atob\('(.*?)'\)\),/)?.[1];
+            if (!payload) {
+                return;
+            }
+
             const response = solveWafChallenge(payload);
 
             const tokenIdResponse = await ofetch.raw(rootUrl, {
                 headers: {
                     Cookie: `_wafchallengeid=${response};`,
+                    'User-Agent': config.ua,
                 },
                 redirect: 'manual',
             });
@@ -54,10 +81,10 @@ export const getWafTokenId = () =>
             const _wafTokenId = tokenIdResponse.headers
                 .getSetCookie()
                 .find((cookie) => cookie.startsWith('_waftokenid='))
-                ?.split(';')[0]
-                .split('=')[1];
+                ?.split(';', 1)[0]
+                .split('=', 2)[1];
 
-            return _wafTokenId as string;
+            return _wafTokenId;
         },
         300, // server-provided value
         false

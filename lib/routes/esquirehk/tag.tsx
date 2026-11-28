@@ -1,14 +1,29 @@
-import * as cheerio from 'cheerio';
+import { load } from 'cheerio';
 import { destr } from 'destr';
 import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import { renderYoutube } from '@/routes/youtube/utils';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 const topics = new Set(['style', 'watches', 'lifestyle', 'health', 'money-investment', 'gear', 'people', 'watch', 'mens-talk']);
+
+interface ArticleTag {
+    name: string;
+}
+
+interface Article {
+    status?: string;
+    intro: { raw: string };
+    subpages: unknown[];
+    date: { published: string; lastModified: string };
+    author: { name: string };
+    tags: { topic: ArticleTag[]; normal: ArticleTag[] };
+}
 
 const handler = async (ctx) => {
     let { id = 'Fashion' } = ctx.req.param();
@@ -24,38 +39,39 @@ const handler = async (ctx) => {
 
     const response = await ofetch(currentUrl);
 
-    const $ = cheerio.load(response);
+    const $ = load(response);
     const list = [
         ...$('div[class^="max-w-[100%]"] > div > div:nth-child(2) > a')
             .toArray()
             .map((item) => {
-                item = $(item);
+                const $item = $(item);
                 return {
-                    title: item.text().trim(),
-                    link: new URL(item.attr('href'), currentUrl).href,
+                    title: $item.text(),
+                    link: new URL($item.attr('href')!, currentUrl).href,
                 };
             }),
         ...$('div.list-item > div > div:nth-child(2) > a')
             .toArray()
             .map((item) => {
-                item = $(item);
+                const $item = $(item);
                 return {
-                    title: item.text().trim(),
-                    link: new URL(item.attr('href'), currentUrl).href,
+                    title: $item.text(),
+                    link: new URL($item.attr('href')!, currentUrl).href,
                 };
             }),
     ]
-        .map((item) => ({
+        .map((item): DataItem & { slug: string; link: string } => ({
             ...item,
             slug: item.link.replace(rootUrl, ''),
         }))
         .filter((item) => !item.slug.startsWith('/campaign'));
 
-    const items = await Promise.all(
-        list.map((item) =>
+    const items = await pMap(
+        list,
+        (item) =>
             cache.tryGet(item.link, async () => {
                 const resp = await ofetch(`https://api.esquirehk.com${item.slug}`);
-                const response = destr(resp) as any;
+                const response = destr<Article>(resp);
                 if (response.status === '404') {
                     return item;
                 }
@@ -67,8 +83,8 @@ const handler = async (ctx) => {
                 item.category = [...response.tags.topic.map((tag) => tag.name), ...response.tags.normal.map((tag) => tag.name)];
 
                 return item;
-            })
-        )
+            }),
+        { concurrency: 3 }
     );
 
     return {
@@ -81,80 +97,57 @@ const handler = async (ctx) => {
     };
 };
 
+const renderPageMedia = (page, index) => {
+    switch (page.type) {
+        case 'image': {
+            const image = page.image?.large || page.image?.desktop || page.image?.mobile;
+            return <img key={`image-${index}`} src={image?.src} alt={image?.alt} />;
+        }
+        case 'video_block': {
+            const videoId = page.source?.split('&', 1)[0];
+            return <div key={`video-${index}`}>{raw(renderYoutube(true, videoId))}</div>;
+        }
+        case 'ctc_product_list':
+            return (
+                <span key={`products-${index}`}>
+                    {page.products?.map((product, productIndex) => {
+                        const img = product.image?.desktop || product.image?.mobile;
+                        return (
+                            <span key={`product-${productIndex}`}>
+                                <img src={img?.src} alt={img?.alt} />
+                                <br />
+                                {product.brand}
+                                <br />
+                                {product.name}
+                                <br />
+                                HKD ${product.price}
+                                <br />
+                                <a href={product.url}>SHOP NOW</a>
+                            </span>
+                        );
+                    })}
+                </span>
+            );
+        default:
+            return null;
+    }
+};
+
 const renderSubpages = (subpages): string =>
     renderToString(
         <>
-            {subpages?.map((page, index) => {
-                const blocks: Array<JSX.Element | null> = [];
-
-                switch (page.type) {
-                    case 'image': {
-                        const image = page.image?.large || page.image?.desktop || page.image?.mobile;
-                        blocks.push(<img key={`image-${index}`} src={image?.src} alt={image?.alt} />);
-
-                        break;
-                    }
-                    case 'video_block': {
-                        const videoId = page.source?.split('&')[0];
-                        blocks.push(
-                            <iframe
-                                key={`video-${index}`}
-                                id="ytplayer"
-                                type="text/html"
-                                width="640"
-                                height="360"
-                                src={`https://www.youtube-nocookie.com/embed/${videoId}`}
-                                frameborder="0"
-                                allowfullscreen
-                                referrerpolicy="strict-origin-when-cross-origin"
-                            ></iframe>
-                        );
-
-                        break;
-                    }
-                    case 'ctc_product_list':
-                        blocks.push(
-                            <span key={`products-${index}`}>
-                                {page.products?.map((product, productIndex) => {
-                                    const img = product.image?.desktop || product.image?.mobile;
-                                    return (
-                                        <span key={`product-${productIndex}`}>
-                                            <img src={img?.src} alt={img?.alt} />
-                                            <br />
-                                            {product.brand}
-                                            <br />
-                                            {product.name}
-                                            <br />
-                                            HKD ${product.price}
-                                            <br />
-                                            <a href={product.url}>SHOP NOW</a>
-                                        </span>
-                                    );
-                                })}
-                            </span>
-                        );
-
-                        break;
-
-                    default:
-                        blocks.push(<span key={`unknown-${index}`}>UNHANDLED PAGE TYPE: {page.type}</span>);
-                }
-
-                if (page.title) {
-                    blocks.push(
+            {subpages?.map((page, index) => (
+                <span key={`page-${index}`}>
+                    {renderPageMedia(page, index)}
+                    {page.title ? (
                         <h2 key={`title-${index}`}>
                             {page.order ? `${page.order} ` : ''}
                             {page.title}
                         </h2>
-                    );
-                }
-
-                if (page.description?.raw) {
-                    blocks.push(<span key={`description-${index}`}>{raw(page.description.raw)}</span>);
-                }
-
-                return <span key={`page-${index}`}>{blocks}</span>;
-            })}
+                    ) : null}
+                    {page.description?.raw ? <span key={`description-${index}`}>{raw(page.description.raw)}</span> : null}
+                </span>
+            ))}
         </>
     );
 

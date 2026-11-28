@@ -1,10 +1,11 @@
 import { load } from 'cheerio';
 import { renderToString } from 'hono/jsx/dom/server';
+import pMap from 'p-map';
 
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
+import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 const renderDescription = (desc: { description?: string; imglink?: string }) => renderToString(<WarthunderDescription description={desc.description} imglink={desc.imglink} />);
 
@@ -38,8 +39,8 @@ export const route: Route = {
     maintainers: ['axojhf'],
     handler,
     url: 'warthunder.com/en/news',
-    description: `News data from [https://warthunder.com/en/news/](https://warthunder.com/en/news/)
-  The \`pubDate\` provided under UTC time zone, so please ignore the specific time!!!`,
+    description: `News data from <https://warthunder.com/en/news/>
+The \`pubDate\` provided under UTC time zone, so please ignore the specific time!!!`,
 };
 
 async function handler() {
@@ -49,37 +50,49 @@ async function handler() {
 
     const $ = load(response);
 
-    const pageFace = $('div.showcase__item.widget')
+    const list = $('div.showcase__item.widget')
         .toArray()
         .map((item) => {
-            item = $(item);
-            let pubDate = parseDate(item.find('div.widget__content > ul > li.widget-meta__item.widget-meta__item--right').text(), 'D MMMM YYYY', 'en');
-            pubDate = timezone(pubDate, 0);
-            const category = [];
-            if (item.find('div.widget__pin').length !== 0) {
+            const $item = $(item);
+            const pubDate = parseDate($item.find('div.widget__content > ul > li.widget-meta__item.widget-meta__item--right').text(), 'D MMMM YYYY', 0);
+            const category: string[] = [];
+            if ($item.find('div.widget__pin').length !== 0) {
                 category.push('pinned');
             }
-            if (item.find('a.widget__decal').length !== 0) {
+            if ($item.find('a.widget__decal').length !== 0) {
                 category.push('decal');
             }
-            if (item.find('div.widget__badge').length !== 0) {
-                category.push(item.find('div.widget__badge').text());
+            if ($item.find('div.widget__badge').length !== 0) {
+                category.push($item.find('div.widget__badge').text());
             }
             return {
-                link: `https://warthunder.com${item.find('a.widget__link').attr('href')}`,
-                title: item.find('div.widget__content > div.widget__title').text(),
+                link: `https://warthunder.com${$item.find('a.widget__link').attr('href')}`,
+                title: $item.find('div.widget__content > div.widget__title').text(),
                 pubDate,
                 description: renderDescription({
-                    description: item.find('div.widget__content > div.widget__comment').text(),
-                    imglink: item.find('div.widget__poster > img.widget__poster-media').attr('data-src'),
+                    description: $item.find('div.widget__content > div.widget__comment').text(),
+                    imglink: $item.find('div.widget__poster > img.widget__poster-media').attr('data-src'),
                 }),
                 category,
             };
         });
 
+    const items = await pMap(
+        list,
+        async (item) => {
+            const details = await cache.tryGet<Pick<DataItem, 'description'>>(`warthunder:detail:${item.link}`, async () => {
+                const response = await ofetch(item.link);
+                const $ = load(response);
+                return { description: $('section.article').html() };
+            });
+            return { ...item, ...details };
+        },
+        { concurrency: 3 }
+    );
+
     return {
         title: 'War Thunder News',
         link: 'https://warthunder.com/en/news/',
-        item: pageFace,
+        item: items,
     };
 }

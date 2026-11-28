@@ -1,16 +1,18 @@
-import md5 from '@/utils/md5';
+import { md5 } from '@/utils/hash';
 import ofetch from '@/utils/ofetch';
 
 const uuid = (length = 20) => {
-    const e = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' + Date.now();
+    const e = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' + Temporal.Now.instant().epochMilliseconds;
     const r: string[] = [];
     for (let i = 0; i < length; i++) {
-        r.push(e.charAt(Math.floor(Math.random() * e.length)));
+        const index = Math.floor(Math.random() * e.length);
+        r.push(e.charAt(index));
     }
     return r.join('');
 };
 
-const cookieMap = new Map([['token', uuid(32).toLowerCase()]]);
+const deviceNo = uuid(32).toLowerCase();
+const cookieMap = new Map([['token', deviceNo]]);
 
 const devioceInfo = {
     vendorName: '',
@@ -35,16 +37,16 @@ const getAccessToken = async () => {
     return cookieMap.get('accessToken');
 };
 
-const post = async (requestPath: string, accessToken = md5(Date.now().toString()), payload?: any) => {
-    const traceId = uuid(32) + Date.now();
+const post = async (requestPath: string, accessToken = md5(Temporal.Now.instant().epochMilliseconds.toString()), payload?: any) => {
+    const traceId = uuid(32) + Temporal.Now.instant().epochMilliseconds;
 
     const response = await ofetch(`https://www.showstart.com/api${requestPath}`, {
         method: 'POST',
         headers: {
             cdeviceinfo: encodeURIComponent(JSON.stringify(devioceInfo)),
-            cdeviceno: cookieMap.get('token'),
-            cookie: [...cookieMap.entries()].map(([key, value]) => `${key}=${value}`).join('; '),
-            crpsign: md5(accessToken + /* sign/cusut (empty) + idToken (empty) + userInfo.userId (empty) + */ 'web' + cookieMap.get('token') + (payload ? JSON.stringify(payload) : '') + requestPath + '999web' + traceId),
+            cdeviceno: deviceNo,
+            cookie: [...cookieMap].map(([key, value]) => `${key}=${value}`).join('; '),
+            crpsign: md5(accessToken + /* sign/cusut (empty) + idToken (empty) + userInfo.userId (empty) + */ 'web' + deviceNo + (payload ? JSON.stringify(payload) : '') + requestPath + '999web' + traceId),
             crtraceid: traceId,
             csappid: 'web',
             cterminal: 'web',
@@ -54,7 +56,7 @@ const post = async (requestPath: string, accessToken = md5(Date.now().toString()
             cusname: '',
             cusut: '',
             cversion: '999',
-        } as HeadersInit,
+        },
         body: payload,
     });
 
@@ -62,15 +64,7 @@ const post = async (requestPath: string, accessToken = md5(Date.now().toString()
 };
 
 function sortBy(items: any[], key: string) {
-    return items.toSorted((a, b) => {
-        if (a[key] < b[key]) {
-            return -1;
-        }
-        if (a[key] > b[key]) {
-            return 1;
-        }
-        return 0;
-    });
+    return items.toSorted((a, b) => a[key].localeCompare(b[key]));
 }
 
 function uniqBy(items: any[], key: string) {
@@ -84,4 +78,4 @@ function uniqBy(items: any[], key: string) {
     });
 }
 
-export { getAccessToken, post, sortBy, uniqBy, uuid };
+export { getAccessToken, post, sortBy, uniqBy };

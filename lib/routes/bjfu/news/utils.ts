@@ -1,8 +1,7 @@
 import { load } from 'cheerio';
 
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 // 完整文章页
 async function loadContent(link) {
@@ -14,13 +13,11 @@ async function loadContent(link) {
     const $ = load(data);
 
     // 解析日期
-    const pubDate = timezone(
-        parseDate(
-            $('.article')
-                .text()
-                .match(/\d{4}(?:\/\d{2}){2}/)
-        ),
-        +8
+    const pubDate = parseDate(
+        $('.article')
+            .text()
+            .match(/\d{4}(?:\/\d{2}){2}/)?.[0] ?? '',
+        8
     );
 
     // 提取内容
@@ -39,7 +36,7 @@ const ProcessFeed = (base, list, caches) =>
 
             const $title = $('a');
             // 还原相对链接为绝对链接
-            const itemUrl = new URL($title.attr('href'), base).href; // 感谢@hoilc指导
+            const itemUrl = new URL($title.attr('href')!, base).href; // 感谢@hoilc指导
 
             // 使用tryGet方法从缓存获取内容。
             // 当缓存中无法获取到链接内容的时候，则使用load方法加载文章内容。

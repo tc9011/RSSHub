@@ -1,16 +1,25 @@
 import { load } from 'cheerio';
 import { renderToString } from 'hono/jsx/dom/server';
 
-import type { Route } from '@/types';
+import type { Language, Route } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/publish/:category{.+}?',
-    name: 'Unknown',
-    maintainers: [],
+    categories: ['other'],
+    example: '/wmc-bj/publish/CRA-Reanalysis/2m-Temperature/6-hour/index.html',
+    parameters: {
+        category: 'Category, can be found in URL, `CRA-Reanalysis/2m-Temperature/6-hour/index.html` by default',
+    },
+    name: 'Publish',
+    maintainers: ['nczitzk'],
     handler,
+    description: `::: tip
+\`category\` is the text after \`publish/\` in the URL.
+
+eg. The URL for [Monitoring_CMA-RA_2m-Temperature_6-hour](http://www.wmc-bj.net/publish/CRA-Reanalysis/2m-Temperature/6-hour/index.html) is <http://www.wmc-bj.net/publish/CRA-Reanalysis/2m-Temperature/6-hour/index.html>. The \`category\` for route can be represented as [\`/wmc-bj/publish/CRA-Reanalysis/2m-Temperature/6-hour/index.html\`](https://rsshub.app/wmc-bj/publish/CRA-Reanalysis/2m-Temperature/6-hour/index.html).
+:::`,
 };
 
 async function handler(ctx) {
@@ -27,7 +36,13 @@ async function handler(ctx) {
     const author = 'World Meteorological Centre BeiJing';
 
     const img = $('#imgpath');
-    const datetime = img.prop('data-time');
+    const imageSource = img.prop('src');
+    if (!imageSource) {
+        throw new Error('No published weather image was found. Check that the category points to a current product page on wmc-bj.net.');
+    }
+    const datetime = img.attr('data-time');
+    const timestamp = img.attr('data-id')?.match(/_(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})\d{3}(?:\.|$)/);
+    const pubDate = timestamp ? parseDate(`${timestamp[1]}-${timestamp[2]}-${timestamp[3]}T${timestamp[4]}:${timestamp[5]}:${timestamp[6]}Z`) : undefined;
     const categories = $('ol.breadcrumb li')
         .slice(2)
         .toArray()
@@ -38,15 +53,13 @@ async function handler(ctx) {
             title: `${datetime} ${title}`,
             link: currentUrl,
             description: renderToString(
-                img.prop('src') ? (
-                    <figure>
-                        <img src={img.prop('src').replace(/\/medium\//, '/')} />
-                    </figure>
-                ) : null
+                <figure>
+                    <img src={imageSource.replace(/\/medium\//, '/')} />
+                </figure>
             ),
             category: categories,
-            guid: `${currentUrl}#${datetime}`,
-            pubDate: timezone(parseDate(/^[A-Za-z]{3}/.test(datetime) ? datetime.replace(/^\w+/, '') : datetime, ['DD MMM HH:mm', 'MM/DD HH:mm']), +0),
+            guid: `${currentUrl}#${timestamp ? timestamp.slice(1).join('') : datetime}`,
+            pubDate,
         },
     ];
 
@@ -57,12 +70,11 @@ async function handler(ctx) {
         item: items,
         title,
         link: currentUrl,
-        language: 'en',
+        language: 'en' as const satisfies Language,
         image,
         icon,
         logo: icon,
         subtitle: categories.join(' > '),
         author,
-        allowEmpty: true,
     };
 }

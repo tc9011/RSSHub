@@ -17,10 +17,10 @@ export const route: Route = {
         supportScihub: false,
     },
     name: '一周口碑榜',
-    maintainers: ['numm233', 'nczitzk'],
+    maintainers: ['umm233', 'nczitzk'],
     handler,
-    description: `| 一周口碑电影榜      | 华语口碑剧集榜            |
-| ------------------- | ------------------------- |
+    description: `| 一周口碑电影榜    | 华语口碑剧集榜         |
+| ----------------- | ---------------------- |
 | movie_weekly_best | tv_chinese_best_weekly |`,
 };
 
@@ -61,7 +61,6 @@ async function handler(ctx) {
             return {
                 title,
                 description: renderDescription({
-                    title,
                     card_subtitle,
                     description,
                     rate,
@@ -74,10 +73,9 @@ async function handler(ctx) {
     };
 }
 
-const renderDescription = ({ title, rate, card_subtitle, description, cover_url, photos }: { title: string; rate?: string; card_subtitle?: string; description?: string; cover_url?: string; photos?: string[] }): string =>
+const renderDescription = ({ rate, card_subtitle, description, cover_url, photos }: { rate?: string; card_subtitle?: string; description?: string; cover_url?: string; photos?: string[] }): string =>
     renderToString(
         <>
-            <p>标题：{title}</p>
             <p>评分：{rate}</p>
             <p>标签：{card_subtitle}</p>
             <p>影片信息：{description}</p>

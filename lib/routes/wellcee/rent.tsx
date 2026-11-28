@@ -4,7 +4,7 @@ import { renderToString } from 'hono/jsx/dom/server';
 import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Route } from '@/types';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 import type { District, House } from './types';
 import { baseUrl, getCitys, getDistricts } from './utils';
@@ -12,6 +12,7 @@ import { baseUrl, getCitys, getDistricts } from './utils';
 const render = (item: House) =>
     renderToString(
         <>
+            {item.personalDesc && <p>{item.personalDesc}</p>}
             租金: {item.rent}
             <br />
             {item.dailyRent ? (
@@ -72,7 +73,7 @@ async function handler(ctx: Context) {
         districtInfo = d;
     }
 
-    const response = await ofetch(`${baseUrl}/api/house/filter`, {
+    const response = await ofetch<{ data: { list: House[] } }>(`${baseUrl}/api/house/filter`, {
         method: 'POST',
         body: {
             districtIds: districtInfo?.id ? [districtInfo.id] : [],
@@ -87,7 +88,7 @@ async function handler(ctx: Context) {
         },
     });
 
-    const items = (response.data.list as House[]).map((item) => ({
+    const items = response.data.list.map((item) => ({
         title: item.address,
         link: `${baseUrl}/rent-apartment/${item.id}`,
         description: render(item),

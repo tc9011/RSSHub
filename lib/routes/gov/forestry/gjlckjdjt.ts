@@ -1,14 +1,17 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import InvalidParameterError from '@/errors/types/invalid-parameter';
+import type { DataItem, Language, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
+import { compareDates, parseDate } from '@/utils/time';
+import { isValidHost } from '@/utils/valid-host';
 
 import { renderDescription } from './templates/description';
 
 export const route: Route = {
-    path: '/forestry/gjlckjdjt/:category?',
+    path: '/gjlckjdjt/:category?',
     categories: ['government'],
     example: '/gov/forestry/gjlckjdjt',
     parameters: { category: '分类，见下表，默认为全部' },
@@ -35,9 +38,13 @@ export const route: Route = {
 
 async function handler(ctx) {
     const { category = 'gjlckjdjt' } = ctx.req.param();
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 30;
+    if (!isValidHost(category)) {
+        throw new InvalidParameterError('Invalid category');
+    }
 
-    const rootUrl = 'http://www.forestry.gov.cn';
+    const limit = getRouteLimit(ctx, 30);
+
+    const rootUrl = 'https://www.forestry.gov.cn';
     const currentUrl = new URL(`${category}.jhtml`, rootUrl).href;
 
     const { data: response } = await got(currentUrl);
@@ -45,27 +52,30 @@ async function handler(ctx) {
     const $ = load(response);
 
     let items = $('a.items')
-        .slice(0, limit)
         .toArray()
-        .map((item) => {
-            item = $(item);
+        .map((item): DataItem & { link: string; description: string } => {
+            const $item = $(item);
 
-            const title = item.find('p.name').text();
-            const link = new URL(item.prop('href'), rootUrl).href;
-            const pubDateMatches = link.match(/\/\d{8}\//);
+            const title = $item.find('p.name').text();
+            const link = new URL($item.prop('href')!, rootUrl).href;
 
             return {
                 title,
                 link,
+                // Keep existing feed identities when restoring the same source paths over HTTPS.
+                guid: new URL($item.prop('href')!, 'http://www.forestry.gov.cn').href,
                 description: renderDescription({
                     image: {
-                        src: item.find('img').prop('src'),
+                        src: $item.find('img').prop('src'),
                         alt: title,
                     },
                 }),
-                pubDate: pubDateMatches ? parseDate(pubDateMatches[1]) : undefined,
+                pubDate: getPublicationDate(link),
             };
         });
+
+    items.sort((a, b) => compareDates(b.pubDate, a.pubDate));
+    items = items.slice(0, limit);
 
     items = await Promise.all(
         items.map((item) =>
@@ -75,32 +85,34 @@ async function handler(ctx) {
                 const content = load(detailResponse);
 
                 content('p').each((_, e) => {
-                    e = content(e);
-                    if (e.find('img, video, embed.edui-faked-video').length === 0 && /^\s*$/.test(e.text())) {
-                        e.remove();
+                    const $e = content(e);
+                    if ($e.find('img, video, embed.edui-faked-video').length === 0 && /^\s*$/.test($e.text())) {
+                        $e.remove();
                     }
                 });
 
                 content('video, embed.edui-faked-video').each((_, e) => {
-                    e = content(e);
+                    const $e = content(e);
 
-                    const src = e.prop('src');
-                    item.enclosure_url = item.enclosure_url ?? src;
+                    const videoUrl = new URL($e.prop('src')!, item.link).href;
+                    item.enclosure_url ??= videoUrl;
 
-                    e.replaceWith(
+                    $e.replaceWith(
                         renderDescription({
                             video: {
-                                src,
+                                src: videoUrl,
                             },
                         })
                     );
                 });
 
-                const pubDateMatches = item.link.match(/\/\d{8}\//);
-
                 item.title = content('div.tit').text();
+                item.author = content('.tit1')
+                    .text()
+                    .split(/\s+单\s*位/, 1)[0]
+                    .replace(/^授课专家[：:]/, '');
                 item.description += content('div.zhengwen').html();
-                item.pubDate = pubDateMatches ? parseDate(pubDateMatches[1]) : undefined;
+                item.pubDate = getPublicationDate(item.link);
                 item.enclosure_type = item.enclosure_url ? 'video/mp4' : undefined;
 
                 return item;
@@ -110,16 +122,25 @@ async function handler(ctx) {
 
     const icon = new URL('favicon.ico', rootUrl).href;
 
+    const language = $('html').prop('lang') as Language;
+
     return {
         item: items,
         title: $('title').text(),
         link: currentUrl,
-        language: $('html').prop('lang'),
+        language,
         image: new URL('r/cms/www/default/zhuanti/2021djt/images/top.png', rootUrl).href,
         icon,
         logo: icon,
         subtitle: $('div.weizhi').contents().last().text(),
         author: '国家林业和草原局',
-        allowEmpty: true,
     };
+}
+
+function getPublicationDate(link: string) {
+    const date = /\/(\d{8})\//.exec(link)?.[1];
+    if (!date) {
+        return;
+    }
+    return parseDate(date, 'YYYYMMDD', 8);
 }

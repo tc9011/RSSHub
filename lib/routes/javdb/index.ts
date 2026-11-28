@@ -21,19 +21,21 @@ export const route: Route = {
 | -------- | ---------- | ------- |
 | censored | uncensored | western |
 
-  排序
+排序
 
 | 发布日期排序 | 磁鏈更新排序 |
 | ------------ | ------------ |
 | 1            | 2            |
 
-  过滤
+过滤
 
 | 全部 | 可下载 | 含字幕 | 含短評 |
 | ---- | ------ | ------ | ------ |
 | 0    | 1      | 2      | 3      |`,
     features: {
         nsfw: true,
+        requirePuppeteer: false,
+        antiCrawler: true,
     },
 };
 
@@ -42,7 +44,7 @@ async function handler(ctx) {
     const sort = ctx.req.param('sort') ?? '2';
     const filter = ctx.req.param('filter') ?? '1';
 
-    const currentUrl = `${category === 'censored' ? '' : category}?vft=${filter}&vst=${sort}`;
+    const currentUrl = `${category === 'censored' ? '' : encodeURIComponent(category)}?vft=${encodeURIComponent(filter)}&vst=${encodeURIComponent(sort)}`;
 
     const categories = {
         censored: '有碼',

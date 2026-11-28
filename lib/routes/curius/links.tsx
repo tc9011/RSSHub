@@ -3,7 +3,7 @@ import { renderToString } from 'hono/jsx/dom/server';
 
 import type { Route } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/links/:name',
@@ -60,13 +60,12 @@ async function handler(ctx) {
         title: `${name} - Curius`,
         link: `https://curius.app/${username}`,
         description: `${name} - Curius`,
-        allowEmpty: true,
         item: items,
     };
 }
 
 const renderDescription = (item): string => {
-    const fullText = item.metadata?.full_text ? item.metadata.full_text.replaceAll(/\n/gm, '<br>') : '';
+    const fullText = item.metadata?.full_text ? item.metadata.full_text.replaceAll('\n', '<br>') : '';
     const firstComment = item.comments?.length ? item.comments[0].text.slice(0, 100) : '';
 
     return renderToString(

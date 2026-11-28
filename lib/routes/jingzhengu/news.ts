@@ -1,8 +1,7 @@
-import type { Route } from '@/types';
+import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
 import type { NewsDetail, NewsInfo } from './types';
 import { sign } from './utils';
@@ -25,9 +24,9 @@ export const route: Route = {
 async function handler() {
     const baseUrl = 'https://www.jingzhengu.com';
 
-    const payload = new Map<string, any>([
+    const payload = new Map<string, number | string>([
         ['pageNo', 1],
-        ['middleware', String(Date.now())],
+        ['middleware', String(Temporal.Now.instant().epochMilliseconds)],
     ]);
     const response = await ofetch<NewsInfo>(`${baseUrl}/news/makeNewsInfo`, {
         method: 'POST',
@@ -37,24 +36,25 @@ async function handler() {
         },
     });
 
-    const list = response.data.articles.map((item) => ({
-        title: item.title,
-        description: item.summary,
-        link: `${baseUrl}/#/cn/Details_${item.addDate.split(' ')[0].replaceAll('-', '')}${item.id}.html`,
-        pubDate: timezone(parseDate(item.addDate, 'YYYY-MM-DD HH:mm:ss'), 8),
-        author: item.author,
-        id: item.id,
-    }));
-
     const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(item.link, async () => {
-                const payload = new Map<string, any>([
-                    ['id', item.id],
-                    ['middleware', String(Date.now())],
+        response.data.articles.map((article) => {
+            const link = `${baseUrl}/#/cn/Details_${article.addDate.split(' ', 1)[0].replaceAll('-', '')}${article.id}.html`;
+            const item: DataItem = {
+                title: article.title,
+                description: article.summary,
+                link,
+                pubDate: parseDate(article.addDate, 'YYYY-MM-DD HH:mm:ss', 8),
+                author: article.author,
+                id: String(article.id),
+            };
+
+            return cache.tryGet(link, async () => {
+                const payload = new Map<string, number | string>([
+                    ['id', article.id],
+                    ['middleware', String(Temporal.Now.instant().epochMilliseconds)],
                 ]);
 
-                const response = await ofetch<NewsDetail>(`${baseUrl}/news/makeNewsDetail`, {
+                const detail = await ofetch<NewsDetail>(`${baseUrl}/news/makeNewsDetail`, {
                     method: 'POST',
                     body: {
                         ...Object.fromEntries(payload),
@@ -62,11 +62,11 @@ async function handler() {
                     },
                 });
 
-                item.description = response.data.content;
+                item.description = detail.data.content;
 
                 return item;
-            })
-        )
+            });
+        })
     );
 
     return {

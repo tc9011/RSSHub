@@ -1,8 +1,10 @@
-import * as cheerio from 'cheerio';
+import { load } from 'cheerio';
+import pMap from 'p-map';
 
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import { baseUrl as rootUrl, getItem } from './utils';
 
@@ -77,7 +79,7 @@ export const route: Route = {
     path: '/:category?',
     categories: ['traditional-media'],
     example: '/qstheory',
-    parameters: { industry: '分类，见下表' },
+    parameters: { category: '分类，见下表' },
     radar: [
         {
             source: ['www.qstheory.cn/v9zhuanqu/:category/index.htm', 'www.qstheory.cn/qszq/:category/index.htm', 'www.qstheory.cn/:category/index.htm'],
@@ -86,33 +88,34 @@ export const route: Route = {
     name: '分类',
     maintainers: ['nczitzk'],
     handler,
-    description: `
-| 头条    | 网评 | 视频 | 原创   | 经济    | 政治     | 文化    | 社会    | 党建 | 科教    | 生态    | 国防    | 国际          | 图书  | 学习笔记 | 理论文选 |
+    description: `| 头条    | 网评 | 视频 | 原创   | 经济    | 政治     | 文化    | 社会    | 党建 | 科教    | 生态    | 国防    | 国际          | 图书  | 学习笔记 | 理论文选 |
 | ------- | ---- | ---- | ------ | ------- | -------- | ------- | ------- | ---- | ------- | ------- | ------- | ------------- | ----- | -------- | -------- |
 | toutiao | qswp | qssp | qslgxd | economy | politics | culture | society | cpc  | science | zoology | defense | international | books | xxbj     | llwx     |`,
 };
 
 async function handler(ctx) {
     const { category = 'toutiao' } = ctx.req.param();
-    const limit = Number.parseInt(ctx.req.query('limit')) || 50;
+    const limit = getRouteLimit(ctx, 50);
 
     const currentUrl = config[category].url;
     const response = await ofetch(currentUrl);
 
-    const $ = cheerio.load(response);
+    const $ = load(response);
 
     const list = $('.list-style1 ul li a, .text h2 a, .no-pic ul li a')
-        .slice(0, limit)
         .toArray()
         .map((item) => {
             const $item = $(item);
             return {
                 title: $item.text(),
-                link: $item.attr('href')!,
+                link: new URL($item.attr('href')!, rootUrl).href,
             };
-        });
+        })
+        // The page shows some articles in more than one section
+        .filter((item, index, items) => items.findIndex((candidate) => candidate.link === item.link) === index)
+        .slice(0, limit);
 
-    const items = await Promise.all(list.map((item) => cache.tryGet(item.link, () => getItem(item))));
+    const items = await pMap(list, (item) => cache.tryGet(item.link, () => getItem(item)), { concurrency: 3 });
 
     return {
         title: $('title').text(),

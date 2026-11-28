@@ -1,6 +1,6 @@
 import type { Route } from '@/types';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/article/:type?',
@@ -28,37 +28,32 @@ export const route: Route = {
 | --------- | -------- | -------- | --------- | -------- | -------- |
 | recommend | quality  | growth   | community | material | industry |`,
 };
-
 async function handler(ctx) {
     const { type = 'recommend' } = ctx.req.param();
     const response = await got({
         method: 'put',
         url: `https://e.zaozao.run/article/page/${type}`,
         headers: {
-            Referer: `https://www.zaozao.run/`,
+            Referer: 'https://www.zaozao.run/',
         },
         body: JSON.stringify({
             pageNo: 1,
             pageSize: 100,
         }),
     });
-
-    const { status, statusMessage } = response;
-    if (status !== 200) {
-        throw new Error(statusMessage);
+    if (!response.data.success) {
+        throw new Error('The article API did not return a successful article list.');
     }
-
     const { data } = response.data;
-
     return {
-        title: `前端早早聊 - 文章`,
+        title: '前端早早聊 - 文章',
         link: `https://www.zaozao.run/article/${type}`,
-        description: `前端早早聊 - 文章`,
+        description: '前端早早聊 - 文章',
         item: data.map((item) => ({
             title: item.title,
             link: item.url,
             author: item.recommenderName,
-            pubDate: parseDate(item.updateAt),
+            pubDate: item.updateAt ? parseDate(item.updateAt) : undefined,
         })),
     };
 }

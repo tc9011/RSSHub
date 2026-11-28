@@ -1,6 +1,14 @@
 import type { Route } from '@/types';
+import MarkdownIt from '@/utils/markdown-it';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
+
+const md = MarkdownIt({
+    breaks: true,
+    html: true,
+    linkify: true,
+    typographer: true,
+});
 
 export const route: Route = {
     path: '/characters',
@@ -13,6 +21,10 @@ export const route: Route = {
         nsfw: true,
     },
 };
+
+function convertUndefinedToString(value: any): string {
+    return value === undefined ? '' : value.toString();
+}
 
 async function handler() {
     const hostURL = 'https://www.chub.ai/characters';
@@ -52,13 +64,13 @@ async function handler() {
         link: hostURL,
         item: nodes.map((item) => ({
             title: item.name,
-            description: `${item.tagline}<br><br>${item.description}`,
+            description: `<div><img src="${item.avatar_url}" /></div><div>${item.tagline}</div><div>${md.render(convertUndefinedToString(item.description))}</div>`,
             pubDate: parseDate(item.createdAt),
             updated: parseDate(item.lastActivityAt),
             link: `${hostURL}/${item.fullPath}`,
             author: String(item.fullPath.split('/', 1)),
-            enclosure_url: item.avatar_url,
-            enclosure_type: `image/webp`,
+            enclosure_url: item.max_res_url,
+            enclosure_type: 'image/png',
             category: item.topics,
         })),
     };

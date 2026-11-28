@@ -2,7 +2,7 @@ import { load } from 'cheerio';
 
 import type { Route } from '@/types';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/app/:appId/:appSlug?',
@@ -59,6 +59,6 @@ async function handler(ctx) {
         logo: appData.logo.source,
         icon: appData.logo.source,
         item: [item],
-        language: 'en',
+        language: 'en' as const,
     };
 }

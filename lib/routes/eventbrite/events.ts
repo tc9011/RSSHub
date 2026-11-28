@@ -4,13 +4,13 @@ import type { Context } from 'hono';
 import type { Data, DataItem, Route } from '@/types';
 import { toTitleCase } from '@/utils/common-utils';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/:region/:eventType?/:includePromoted?',
     categories: ['other'],
     example: '/eventbrite/canada--toronto/all-events',
-    parameters: { eventType: 'category of events for filtering', region: 'Region or scope of events' },
+    parameters: { eventType: 'category of events for filtering', region: 'Region or scope of events', includePromoted: 'Include promoted events, `false` by default' },
     features: {
         requireConfig: false,
         requirePuppeteer: false,
@@ -61,7 +61,7 @@ export const route: Route = {
             if (eventData === undefined) {
                 const pElements = el.find('p');
                 return {
-                    title: fallbackTitle,
+                    title: fallbackTitle ?? '',
                     author: pElements.length > 1 ? $(pElements[1]).text() : undefined,
                 };
             }

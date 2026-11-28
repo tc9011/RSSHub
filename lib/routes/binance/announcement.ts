@@ -2,7 +2,8 @@ import { config } from '@/config';
 import type { Route } from '@/types';
 import { ViewType } from '@/types';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
+import { parseDate } from '@/utils/time';
 
 interface ArticleItem {
     code: string;
@@ -23,23 +24,23 @@ interface ArticleListResponse {
     } | null;
 }
 
-const TYPE_CATALOG_ID_MAP: Record<string, number> = {
-    'new-cryptocurrency-listing': 48,
-    'latest-binance-news': 49,
-    'latest-activities': 93,
-    'new-fiat-listings': 50,
-    'api-updates': 51,
-    'crypto-airdrop': 128,
-    'wallet-maintenance-updates': 157,
-    delisting: 161,
-};
+const TYPE_CATALOG_ID_MAP = new Map([
+    ['new-cryptocurrency-listing', 48],
+    ['latest-binance-news', 49],
+    ['latest-activities', 93],
+    ['new-fiat-listings', 50],
+    ['api-updates', 51],
+    ['crypto-airdrop', 128],
+    ['wallet-maintenance-updates', 157],
+    ['delisting', 161],
+]);
 
-const LANGUAGE_ALIASES: Record<string, string> = {
-    'en-US': 'en',
-    zh: 'zh-CN',
-};
+const LANGUAGE_ALIASES = new Map([
+    ['en-US', 'en'],
+    ['zh', 'zh-CN'],
+]);
 
-const normalizeLanguage = (lang?: string) => (lang ? (LANGUAGE_ALIASES[lang] ?? lang) : 'zh-CN');
+const normalizeLanguage = (lang?: string) => (lang ? (LANGUAGE_ALIASES.get(lang) ?? lang) : 'zh-CN');
 
 const isLanguageCode = (lang: string) => {
     const normalized = normalizeLanguage(lang);
@@ -50,8 +51,7 @@ const handler: Route['handler'] = async (ctx) => {
     const baseUrl = 'https://www.binance.com';
     const rawType = ctx.req.param('type');
     const rawLang = ctx.req.param('lang');
-    const limit = Number.parseInt(ctx.req.query('limit') ?? '20', 10);
-    const pageSize = Number.isNaN(limit) || limit <= 0 ? 20 : limit;
+    const limit = getRouteLimit(ctx, 20);
 
     let type = rawType;
     let language = normalizeLanguage(rawLang);
@@ -67,7 +67,7 @@ const handler: Route['handler'] = async (ctx) => {
 
     let catalogId: number | undefined;
     if (type) {
-        const mappedCatalogId = TYPE_CATALOG_ID_MAP[type];
+        const mappedCatalogId = TYPE_CATALOG_ID_MAP.get(type);
         if (!mappedCatalogId) {
             throw new Error(`${type} is not supported`);
         }
@@ -78,7 +78,7 @@ const handler: Route['handler'] = async (ctx) => {
     const listUrl = new URL(`${baseUrl}/bapi/apex/v1/public/apex/cms/article/list/query`);
     listUrl.searchParams.set('type', '1');
     listUrl.searchParams.set('pageNo', '1');
-    listUrl.searchParams.set('pageSize', String(pageSize));
+    listUrl.searchParams.set('pageSize', String(limit));
     if (catalogId) {
         listUrl.searchParams.set('catalogId', String(catalogId));
     }
@@ -90,7 +90,7 @@ const handler: Route['handler'] = async (ctx) => {
         lang: language,
     };
 
-    const response = (await ofetch<ArticleListResponse>(listUrl.toString(), { headers })) as ArticleListResponse;
+    const response = await ofetch<ArticleListResponse>(listUrl.href, { headers });
     const catalogs = response.data?.catalogs ?? [];
 
     const itemsWithDate = catalogs.flatMap((catalog) =>
@@ -105,7 +105,7 @@ const handler: Route['handler'] = async (ctx) => {
 
     const item = itemsWithDate
         .toSorted((a, b) => b.releaseDate - a.releaseDate)
-        .slice(0, pageSize)
+        .slice(0, limit)
         .map(({ releaseDate: _releaseDate, ...rest }) => rest);
 
     const catalogName = catalogId ? catalogs.find((catalog) => catalog.catalogId === catalogId)?.catalogName : undefined;
@@ -127,7 +127,7 @@ export const route: Route = {
     radar: [
         {
             source: ['www.binance.com/:lang/messages/v2/group/announcement'],
-            target: '/binance/announcement/all/:lang',
+            target: '/announcement/all/:lang',
         },
     ],
     parameters: {

@@ -3,31 +3,30 @@ import { load } from 'cheerio';
 import type { Element } from 'domhandler';
 import type { Context } from 'hono';
 
-import type { Data, DataItem, Route } from '@/types';
+import type { Data, DataItem, Language, Route } from '@/types';
 import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
+import { parseDate } from '@/utils/time';
 
 import { renderDescription } from './templates/description';
 
-export const handler = async (ctx: Context): Promise<Data> => {
+const handler = async (ctx: Context): Promise<Data> => {
     const { category } = ctx.req.param();
-    const limit: number = Number.parseInt(ctx.req.query('limit') ?? '20', 10);
+    const limit = getRouteLimit(ctx, 20);
 
     const baseUrl = 'http://banshujiang.cn';
-    const targetUrl: string = new URL(`${category ? 'e_books' : `category/${category}`}/page/1`, baseUrl).href;
+    const targetUrl: string = new URL(`${category ? `category/${category}` : 'e_books'}/page/1`, baseUrl).href;
 
     const response = await ofetch(targetUrl);
     const $: CheerioAPI = load(response);
-    const language = $('html').attr('lang') ?? 'zh';
+    const language = ($('html').attr('lang') ?? 'zh') as Language;
 
-    let items: DataItem[] = [];
-
-    items = $('ul.small-list li.row')
+    let items: DataItem[] = $('ul.small-list li.row')
         .slice(0, limit)
         .toArray()
-        .map((el): Element => {
+        .map((el) => {
             const $el: Cheerio<Element> = $(el);
             const $aEl: Cheerio<Element> = $el.find('span.book-property__title').first().next('a');
 
@@ -42,7 +41,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
                           },
                       ]
                     : undefined,
-                description: $el.find('div.small-list__item-desc').html(),
+                description: $el.find('div.small-list__item-desc').html() ?? undefined,
             });
             const pubDateStr: string | undefined = image?.split(/\?timestamp=/).pop();
             const linkUrl: string | undefined = $aEl.attr('href');
@@ -78,7 +77,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
             }
 
             return cache.tryGet(item.link, async (): Promise<DataItem> => {
-                const detailResponse = await ofetch(item.link);
+                const detailResponse = await ofetch(item.link!);
                 const $$: CheerioAPI = load(detailResponse);
 
                 const title: string = $$('div.ebook-title').text().trim();
@@ -92,7 +91,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
                               },
                           ]
                         : undefined,
-                    description: ($$('table').first().parent().html() ?? '') + ($$('div.ebook-markdown').html() ?? ''),
+                    description: ($$('div.ebook-markdown').html() ?? '') + ($$('ul.inline').parent().html() ?? ''),
                 });
 
                 $$('ul.inline').parent().parent().remove();
@@ -103,6 +102,7 @@ export const handler = async (ctx: Context): Promise<Data> => {
                     ...new Set(
                         $$('table tr')
                             .toArray()
+                            .filter((el) => ['语言：', '编程语言：', '移动开发：', '操作系统：', '数据库：', '开源软件：', '其他分类：'].includes($$(el).find('td').first().text()))
                             .map((el) => $$(el).find('td').last().text())
                             .filter(Boolean)
                     ),
@@ -144,7 +144,6 @@ export const handler = async (ctx: Context): Promise<Data> => {
         description: title.split(/-/).pop()?.trim(),
         link: targetUrl,
         item: items,
-        allowEmpty: true,
         image: new URL('logo.png?imageView2/2/w/128/h/128/q/100', baseUrl).href,
         author: $('a.brand').text(),
         language,
@@ -395,7 +394,7 @@ export const route: Route = {
 | [C#](http://www.banshujiang.cn/category/programming_language/C%23)                            | [category/programming_language/C%23](https://rsshub.app/banshujiang/programming_language/C%23)                     |
 | [C++](http://www.banshujiang.cn/category/programming_language/C++)                            | [category/programming_language/C++](https://rsshub.app/banshujiang/programming_language/C++)                       |
 | [CoffeeScript](http://www.banshujiang.cn/category/programming_language/CoffeeScript)          | [category/programming_language/CoffeeScript](https://rsshub.app/banshujiang/programming_language/CoffeeScript)     |
-| [CSS](http://www.banshujiang.cn/category/programming_language/CSS)                            | [category/programming_language/CSS)                                                                                |
+| [CSS](http://www.banshujiang.cn/category/programming_language/CSS)                            | \\[category/programming_language/CSS)                                                                               |
 | [Dart](http://www.banshujiang.cn/category/programming_language/Dart)                          | [category/programming_language/Dart](https://rsshub.app/banshujiang/programming_language/Dart)                     |
 | [Elixir](http://www.banshujiang.cn/category/programming_language/Elixir)                      | [category/programming_language/Elixir](https://rsshub.app/banshujiang/programming_language/Elixir)                 |
 | [Erlang](http://www.banshujiang.cn/category/programming_language/Erlang)                      | [category/programming_language/Erlang](https://rsshub.app/banshujiang/programming_language/Erlang)                 |
@@ -456,25 +455,24 @@ export const route: Route = {
 | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | [Apache 项目](http://www.banshujiang.cn/category/open_source/Apache项目/page/1) | [category/open_source/Apache 项目](https://rsshub.app/banshujiang/open_source/Apache项目) |
 | [Web 开发](http://www.banshujiang.cn/category/open_source/Web开发/page/1)       | [category/open_source/Web 开发](https://rsshub.app/banshujiang/open_source/Web开发)       |
-| [区块链](http://www.banshujiang.cn/category/open_source/区块链/page/1)          | [category/open_source/区块链](https://rsshub.app/banshujiang/open_source/区块链)          |
-| [程序开发](http://www.banshujiang.cn/category/open_source/程序开发/page/1)      | [category/open_source/程序开发](https://rsshub.app/banshujiang/open_source/程序开发)      |
+| [区块链](http://www.banshujiang.cn/category/open_source/区块链/page/1)          | [category/open_source/ 区块链](https://rsshub.app/banshujiang/open_source/区块链)         |
+| [程序开发](http://www.banshujiang.cn/category/open_source/程序开发/page/1)      | [category/open_source/ 程序开发](https://rsshub.app/banshujiang/open_source/程序开发)     |
 
 #### 其他
 
-| 分类                                                                 | ID                                                                       |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| [人工智能](http://www.banshujiang.cn/category/other/人工智能/page/1) | [category/other/人工智能](https://rsshub.app/banshujiang/other/人工智能) |
-| [容器技术](http://www.banshujiang.cn/category/other/容器技术/page/1) | [category/other/容器技术](https://rsshub.app/banshujiang/other/容器技术) |
+| 分类                                                                 | ID                                                                        |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| [人工智能](http://www.banshujiang.cn/category/other/人工智能/page/1) | [category/other/ 人工智能](https://rsshub.app/banshujiang/other/人工智能) |
+| [容器技术](http://www.banshujiang.cn/category/other/容器技术/page/1) | [category/other/ 容器技术](https://rsshub.app/banshujiang/other/容器技术) |
 
 #### 语言
 
-| 分类                                                            | ID                                                                     |
-| --------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| [中文](http://www.banshujiang.cn/category/language/中文/page/1) | [category/language/中文](https://rsshub.app/banshujiang/language/中文) |
-| [英文](http://www.banshujiang.cn/category/language/英文/page/1) | [category/language/英文](https://rsshub.app/banshujiang/language/英文) |
+| 分类                                                            | ID                                                                      |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| [中文](http://www.banshujiang.cn/category/language/中文/page/1) | [category/language/ 中文](https://rsshub.app/banshujiang/language/中文) |
+| [英文](http://www.banshujiang.cn/category/language/英文/page/1) | [category/language/ 英文](https://rsshub.app/banshujiang/language/英文) |
 
-</details>
-`,
+</details>`,
     categories: ['reading'],
     features: {
         requireConfig: false,

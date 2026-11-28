@@ -2,7 +2,7 @@ import { load } from 'cheerio';
 
 import type { Route } from '@/types';
 import ofetch from '@/utils/ofetch';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 export const route: Route = {
     path: '/ai/blog',
@@ -20,7 +20,7 @@ export const route: Route = {
 };
 
 async function handler(ctx) {
-    const limit = Number.parseInt(ctx.req.query('limit') || 12, 10);
+    const limit = Number(ctx.req.query('limit') || 12);
     const link = 'https://ai.meta.com/blog/';
 
     const res = await ofetch(link, {
@@ -33,7 +33,7 @@ async function handler(ctx) {
         },
     });
     const $ = load(res);
-    const script = $('script:contains("DTSGInitialData"):first').text();
+    const script = $('script:contains("DTSGInitialData")').text();
     const serverJs = JSON.parse(script.match(/\(new ServerJS\(\)\)\.handle\((\{[\s\S]*?\})\);/)?.[1] || '{}');
 
     type ServerData = {
@@ -54,15 +54,17 @@ async function handler(ctx) {
             hsi: '',
             __spin_r: 0,
             __spin_b: 'trunk',
-            __spin_t: Date.now(),
+            __spin_t: Temporal.Now.instant().epochMilliseconds,
         },
     };
 
     for (const obj of serverJs.define) {
         const key = obj[0];
         const value = obj[2];
-        server[key as keyof ServerData] = value;
+        server[key] = value;
     }
+
+    const spinT = String(server.SiteData.__spin_t || Temporal.Now.instant().epochMilliseconds);
 
     const data = await ofetch('https://ai.meta.com/api/graphql/', {
         method: 'POST',
@@ -92,8 +94,8 @@ async function handler(ctx) {
             lsd: server.LSD.token,
             // jazoest: '',
             __spin_r: String(server.SiteData.__spin_r || ''),
-            __spin_b: String(server.SiteData.__spin_b || 'trunk'),
-            __spin_t: String(server.SiteData.__spin_t || Date.now()),
+            __spin_b: server.SiteData.__spin_b || 'trunk',
+            __spin_t: spinT,
             fb_api_caller_class: 'RelayModern',
             fb_api_req_friendly_name: 'MetaAIBlogRecentPostSearchQuery',
             variables: JSON.stringify({ input: { query: '', from: 0, limit, tags: [], excludeObjectIDs: ['27568536916124137'] } }),
@@ -107,7 +109,7 @@ async function handler(ctx) {
         title: item.title,
         description: item.description,
         link: item.href,
-        pubDate: parseDate(item.date),
+        pubDate: parseDate(item.date, 'MMMM D, YYYY'),
         category: [item.research_area],
         image: item.image,
     }));

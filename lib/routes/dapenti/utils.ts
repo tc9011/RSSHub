@@ -1,77 +1,81 @@
 import { load } from 'cheerio';
-import iconv from 'iconv-lite';
 
+import type { DataItem } from '@/types';
 import cache from '@/utils/cache';
-import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import ofetch from '@/utils/ofetch';
+import { parseDate } from '@/utils/time';
+
+export const channels = {
+    agile: '乐活',
+    aieverything: 'AI Everything',
+    caijing: '财经风云',
+    changyuedu: '长阅读',
+    dianying: '乐影',
+    fushihui: '浮世汇',
+    piaoquan: '铂程的票圈',
+    shijieguan: '世界观',
+    tugua: '喷嚏图卦',
+    xilei: '铂程斋',
+    youxuan: '喷嚏优选',
+};
+
+const legacyIds = {
+    70: 'tugua',
+    105: 'shijieguan',
+    182: 'changyuedu',
+    184: 'fushihui',
+    188: 'youxuan',
+    189: 'aieverything',
+};
 
 export default {
-    parseFeed: async ({ subjectid }) => {
-        const url = `https://www.dapenti.com/blog/blog.asp?name=xilei&subjectid=${subjectid}`;
-        const listRes = await got({
-            method: 'get',
-            url,
-            headers: {
-                Referer: url,
+    parseFeed: async ({ subjectid: subjectId }) => {
+        const channel = legacyIds[subjectId] ?? subjectId;
+        const response = await ofetch('https://www.dapenti.com/blog/member-search/api.asp', {
+            query: {
+                channel,
+                sort: 'newest',
+                cursor: 0,
+                limit: 30,
             },
-            // 喷嚏网编码为GBK，需要转码
-            // 转码需要设定返回数据的格式，其可选项是arraybuffer,blob,document,json,text,stream
-            // 默认为json
-            responseType: 'buffer',
         });
-        // 转码
-        const data = iconv.decode(listRes.data, 'gb2312');
-        const $ = load(data);
-        // 只取最近的三个，取全文rss
-        const list = $('li', 'ul').slice(0, 3).toArray();
+        const list: DataItem[] = response.hits.map((hit) => {
+            const link = new URL(hit.source_url, 'https://www.dapenti.com');
+            return {
+                title: hit.topic,
+                link: link.href,
+                author: link.searchParams.get('name')!,
+                pubDate: parseDate(hit.addtime, 8),
+                description: hit.snippet.replaceAll('\n', '<br>'),
+            };
+        });
 
-        const result_item = await Promise.all(
-            list.map((item) =>
-                cache.tryGet(`https://www.dapenti.com/blog/${$(item).find('a').attr('href')}`, async () => {
-                    const el = $(item);
-                    const url = `https://www.dapenti.com/blog/${el.find('a').attr('href')}`;
-                    const original_data = await got({
-                        method: 'get',
-                        url,
-                        headers: {
-                            Referer: url,
-                        },
-                        responseType: 'buffer',
+        const items = await Promise.all(
+            // Fetch the latest three entries with their full public content.
+            list.slice(0, 3).map((item) =>
+                cache.tryGet(item.link!, async () => {
+                    const articleResponse = await ofetch(item.link!, {
+                        responseType: 'arrayBuffer',
                     });
-                    const convert_data = iconv.decode(original_data.data, 'gbk');
-                    const description = load(convert_data, {
-                        decodeEntities: false,
-                    })('body > table > tbody > tr > td.oblog_t_2 > div > table > tbody > tr:nth-child(2) > td');
-                    const pubInfo = description.find('span span.oblog_text').text().split('发布于');
-                    description.find('table, .adsbygoogle').remove();
-
-                    // remove header
-                    const count = subjectid.toString() === '70' ? 7 : 3;
-                    for (let index = 0; index < count; index++) {
-                        description.children().first().remove();
+                    const articleHtml = new TextDecoder('gbk').decode(articleResponse);
+                    const $article = load(articleHtml);
+                    const description = $article('.article-content');
+                    if (channel === 'tugua') {
+                        description.children(':contains("每天一图卦，让我们更清楚地了解这个世界")').prevAll().remove();
+                    }
+                    if (description.find('h2:contains("会员专属内容")').length === 0) {
+                        item.description = description.html()!;
                     }
 
-                    // remove footer
-                    for (let index = 0; index < 8; index++) {
-                        description.children().last().remove();
-                    }
-                    const single = {
-                        title: el.text(),
-                        author: pubInfo[0].trim(),
-                        description: description.html(),
-                        pubDate: timezone(parseDate(pubInfo[1]?.trim()), +8),
-                        link: url,
-                    };
-                    return single;
+                    return item;
                 })
             )
         );
 
         return {
-            title: `喷嚏-${subjectid}`,
-            link: url,
-            item: result_item,
+            title: `${channels[channel]} - 喷嚏网`,
+            link: `https://www.dapenti.com/blog/member-channel.asp?channel=${channel}`,
+            item: items,
         };
     },
 };

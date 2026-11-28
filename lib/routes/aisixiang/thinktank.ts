@@ -2,8 +2,8 @@ import { load } from 'cheerio';
 
 import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Route } from '@/types';
-import cache from '@/utils/cache';
 import got from '@/utils/got';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import { ossUrl, ProcessFeed, rootUrl } from './utils';
 
@@ -29,7 +29,7 @@ export const route: Route = {
 
 async function handler(ctx) {
     const { id, type = '' } = ctx.req.param();
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 30;
+    const limit = getRouteLimit(ctx, 30);
 
     const currentUrl = new URL(`thinktank/${id}.html`, rootUrl).href;
 
@@ -37,9 +37,7 @@ async function handler(ctx) {
 
     const $ = load(response);
 
-    const title = `${$('h2').first().text().trim()}${type}`;
-
-    let items = [];
+    const title = `${$('h2').first().text()}${type}`;
 
     const targetList = $('h3')
         .toArray()
@@ -48,25 +46,24 @@ async function handler(ctx) {
         throw new InvalidParameterError(`Not found ${type} in ${id}: ${currentUrl}`);
     }
 
-    for (const l of targetList) {
-        items = [...items, ...$(l).parent().find('ul li a').toArray()];
-    }
+    const items = targetList
+        .flatMap((l) => $(l).parent().find('ul li a').toArray())
+        .slice(0, limit)
+        .map((item) => {
+            const $item = $(item);
 
-    items = items.slice(0, limit).map((item) => {
-        item = $(item);
-
-        return {
-            title: item.text().split('：').pop(),
-            link: new URL(item.prop('href'), rootUrl).href,
-        };
-    });
+            return {
+                title: $item.text().split('：').pop(),
+                link: new URL($item.prop('href')!, rootUrl).href,
+            };
+        });
 
     return {
-        item: await ProcessFeed(limit, cache.tryGet, items),
+        item: await ProcessFeed(limit, items),
         title: `爱思想 - ${title}`,
         link: currentUrl,
         description: $('div.thinktank-author-description-box p').text(),
-        language: 'zh-cn',
+        language: 'zh-CN' as const,
         image: new URL('images/logo_thinktank.jpg', ossUrl).href,
         subtitle: title,
     };

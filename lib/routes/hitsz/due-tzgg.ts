@@ -1,30 +1,20 @@
 import { load } from 'cheerio';
+import { html } from 'hono/html';
+import pMap from 'p-map';
 
 import type { Route } from '@/types';
+import cache from '@/utils/cache';
 import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+import { parseDate } from '@/utils/time';
 
-export const handler = async () => {
+const handler = async () => {
     const baseUrl = 'http://due.hitsz.edu.cn';
     const baseListPath = 'index/tzggqb';
 
     // 只抓取第一页
     const firstPageUrl = new URL(`${baseListPath}.htm`, baseUrl).href;
 
-    let response;
-    try {
-        response = await got(firstPageUrl);
-    } catch {
-        // 返回空结果
-        return {
-            title: '哈尔滨工业大学（深圳）教务部通知公告',
-            description: '哈尔滨工业大学（深圳）教务部通知公告',
-            link: firstPageUrl,
-            item: [],
-            author: '哈尔滨工业大学（深圳）教务部',
-        };
-    }
+    const response = await got(firstPageUrl);
 
     const $ = load(response.data);
 
@@ -44,22 +34,39 @@ export const handler = async () => {
             }
 
             const title = $el.find('span').text().trim();
-            const pubDateStr = $el.find('label').text().trim();
+            const pubDateStr = $el.find('label').text();
 
             return {
                 title,
                 link: new URL(linkUrl, baseUrl).href,
-                pubDate: pubDateStr ? timezone(parseDate(pubDateStr), 8) : null,
-                description: title,
+                pubDate: parseDate(pubDateStr, 8),
             };
         })
-        .filter(Boolean);
+        .filter((item) => item !== null);
+
+    const detailedItems = await pMap(
+        items,
+        async (item) => ({
+            ...item,
+            ...(await cache.tryGet(item.link, async () => {
+                const response = await got(item.link);
+                const $ = load(response.data);
+                const content = $('.v_news_content').html() ?? '';
+                const attachments = $('.page-main-fj a[href]')
+                    .toArray()
+                    .map((element) => String(html`<p><a href="${new URL($(element).attr('href')!, item.link).href}">${$(element).text()}</a></p>`))
+                    .join('');
+                return { description: content + attachments || undefined };
+            })),
+        }),
+        { concurrency: 3 }
+    );
 
     return {
         title: `${author} - ${pageTitle}`,
         description: pageTitle,
         link: firstPageUrl,
-        item: items,
+        item: detailedItems,
         author,
     };
 };
@@ -73,7 +80,7 @@ export const route: Route = {
     handler,
     example: '/hitsz/due/tzgg',
     parameters: {},
-    description: `:::tip
+    description: `::: tip
 订阅 [通知公告](http://due.hitsz.edu.cn/index/tzggqb.htm)，其源网址为 \`http://due.hitsz.edu.cn/index/tzggqb.htm\`，请参考该 URL 指定部分构成参数，此时路由为 [\`/hitsz/due/tzgg\`](https://rsshub.app/hitsz/due/tzgg)。
 :::
 如需获取教务学务和学位管理所有栏目的新闻汇总，请使用 [\`/hitsz/due/general\`](https://rsshub.app/hitsz/due/general) 路由。
@@ -81,12 +88,11 @@ export const route: Route = {
 <details>
 <summary>更多栏目</summary>
 
-| 栏目 | ID |
-| - | - |
+| 栏目                                                 | ID                                        |
+| ---------------------------------------------------- | ----------------------------------------- |
 | [通知公告](http://due.hitsz.edu.cn/index/tzggqb.htm) | [tzgg](https://rsshub.app/hitsz/due/tzgg) |
 
-</details>
-`,
+</details>`,
     categories: ['university'],
     features: {
         requireConfig: false,
@@ -99,13 +105,13 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['due.hitsz.edu.cn', 'due.hitsz.edu.cn/index/:id/list.htm'],
-            target: '/hitsz/due/:id',
+            source: ['due.hitsz.edu.cn', 'due.hitsz.edu.cn/index.htm'],
+            target: '/due/tzgg',
         },
         {
             title: '通知公告',
             source: ['due.hitsz.edu.cn/index/tzggqb.htm'],
-            target: '/hitsz/due/tzgg',
+            target: '/due/tzgg',
         },
     ],
 };

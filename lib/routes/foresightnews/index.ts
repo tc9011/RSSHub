@@ -1,4 +1,4 @@
-import type { Route } from '@/types';
+import type { Language, Route } from '@/types';
 
 import { apiRootUrl, icon, image, processItems, rootUrl } from './util';
 
@@ -12,6 +12,14 @@ export const route: Route = {
             target: '',
         },
     ],
+    features: {
+        requireConfig: false,
+        requirePuppeteer: false,
+        antiCrawler: false,
+        supportBT: false,
+        supportPodcast: false,
+        supportScihub: false,
+    },
     name: '精选资讯',
     maintainers: ['nczitzk'],
     handler,
@@ -19,22 +27,19 @@ export const route: Route = {
 };
 
 async function handler(ctx) {
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 50;
+    const apiUrl = new URL('v2/feed', apiRootUrl).href;
 
-    const apiUrl = new URL(`v2/feed`, apiRootUrl).href;
-
-    const { items } = await processItems(apiUrl, limit);
+    const { items } = await processItems(apiUrl, ctx);
 
     return {
         item: items,
         title: 'Foresight News - 精选资讯',
         link: rootUrl,
         description: 'FN精选 - Foresight News',
-        language: 'zh-cn',
+        language: 'zh-CN' as const satisfies Language,
         image,
         icon,
         logo: icon,
-        subtitle: '精选资讯',
         author: 'Foresight News',
     };
 }

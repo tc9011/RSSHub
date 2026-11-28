@@ -1,7 +1,7 @@
 import { config } from '@/config';
 import ConfigNotFoundError from '@/errors/types/config-not-found';
 import type { DataItem, Route } from '@/types';
-import { parseDate } from '@/utils/parse-date';
+import { parseDate } from '@/utils/time';
 
 import { baseUrl, getQuests } from './discord-api';
 
@@ -48,7 +48,7 @@ async function handler() {
             author: quest.config.messages.game_publisher,
             pubDate: parseDate(quest.config.starts_at),
             category: tasks,
-            link: quest.config.application.link.split('?')[0],
+            link: quest.config.application.link.split('?', 1)[0],
             guid: quest.id,
         };
     });

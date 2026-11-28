@@ -3,9 +3,11 @@ import type { FC } from 'hono/jsx';
 import { config } from '@/config';
 import { getDebugInfo } from '@/utils/debug-info';
 import { gitDate, gitHash } from '@/utils/git-hash';
+import { toRFC822 } from '@/utils/time';
 import { Layout } from '@/views/layout';
 
-const startTime = Date.now();
+const startTime = performance.now();
+const getUptime = () => performance.now() - startTime;
 
 const Index: FC<{ debugQuery: string | undefined }> = ({ debugQuery }) => {
     const debug = getDebugInfo();
@@ -13,7 +15,7 @@ const Index: FC<{ debugQuery: string | undefined }> = ({ debugQuery }) => {
     const showDebug = !config.debugInfo || config.debugInfo === 'false' ? false : config.debugInfo === 'true' || config.debugInfo === debugQuery;
     const { disallowRobot, nodeName, cache } = config;
 
-    const duration = Date.now() - startTime;
+    const duration = getUptime();
 
     const info = {
         showDebug,
@@ -43,7 +45,7 @@ const Index: FC<{ debugQuery: string | undefined }> = ({ debugQuery }) => {
                 ? [
                       {
                           name: 'Git Date',
-                          value: gitDate.toUTCString(),
+                          value: toRFC822(gitDate),
                       },
                   ]
                 : []),
@@ -129,7 +131,7 @@ const Index: FC<{ debugQuery: string | undefined }> = ({ debugQuery }) => {
     return (
         <Layout>
             <div
-                className="pointer-events-none absolute w-full min-h-screen"
+                className="pointer-events-none absolute w-full min-h-screen dark:invert"
                 style={{
                     backgroundImage: `url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHZpZXdCb3g9JzAgMCAzMiAzMicgd2lkdGg9JzMyJyBoZWlnaHQ9JzMyJyBmaWxsPSdub25lJyBzdHJva2U9J3JnYigxNSAyMyA0MiAvIDAuMDQpJz48cGF0aCBkPSdNMCAuNUgzMS41VjMyJy8+PC9zdmc+')`,
                     maskImage: 'linear-gradient(transparent, black, transparent)',
@@ -140,23 +142,43 @@ const Index: FC<{ debugQuery: string | undefined }> = ({ debugQuery }) => {
                 <h1 className="text-4xl font-bold">
                     Welcome to <span className="text-[#F5712C]">RSSHub</span>!
                 </h1>
-                <p className="text-xl font-medium text-zinc-600">The world's largest RSS Network.</p>
-                <p className="text-zinc-500">If you see this page, the RSSHub is successfully installed and working.</p>
-                <div className="font-bold space-x-4 text-sm">
-                    <a target="_blank" href="https://docs.rsshub.app">
-                        <button className="text-white bg-[#F5712C] hover:bg-[#DD4A15] py-2 px-4 rounded-full transition-colors">Home</button>
+                <p className="text-xl font-medium text-zinc-600 dark:text-zinc-300">The world&apos;s largest RSS Network.</p>
+                <p className="text-zinc-500 dark:text-zinc-400">If you see this page, the RSSHub is successfully installed and working.</p>
+                <p className="max-w-xl text-center text-zinc-500 dark:text-zinc-400">
+                    Pair your feeds with{' '}
+                    <a target="_blank" rel="noreferrer" href="https://folo.is/" className="text-[#F5712C]">
+                        Folo
                     </a>
-                    <a target="_blank" href="https://github.com/DIYgod/RSSHub">
-                        <button className="bg-zinc-200 hover:bg-zinc-300 py-2 px-4 rounded-full transition-colors">GitHub</button>
+                    , an AI RSS reader built for feed discovery and modern reading workflows. Source code is available on{' '}
+                    <a target="_blank" rel="noreferrer" href="https://github.com/RSSNext/Folo" className="text-[#F5712C]">
+                        GitHub
+                    </a>
+                    .
+                </p>
+                <div className="font-bold space-x-4 text-sm">
+                    <a target="_blank" rel="noreferrer" href="https://docs.rsshub.app">
+                        <button type="button" className="text-white bg-[#F5712C] hover:bg-[#DD4A15] py-2 px-4 rounded-full transition-colors">
+                            Home
+                        </button>
+                    </a>
+                    <a target="_blank" rel="noreferrer" href="https://folo.is/">
+                        <button type="button" className="bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 py-2 px-4 rounded-full transition-colors">
+                            Try Folo
+                        </button>
+                    </a>
+                    <a target="_blank" rel="noreferrer" href="https://github.com/DIYgod/RSSHub">
+                        <button type="button" className="bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 py-2 px-4 rounded-full transition-colors">
+                            GitHub
+                        </button>
                     </a>
                 </div>
                 {info.showDebug ? (
                     <details className="text-xs w-96 !mt-8 max-h-[400px] overflow-auto">
                         <summary className="text-sm cursor-pointer">Debug Info</summary>
                         {info.debug.map((item) => (
-                            <div class="debug-item my-3 pl-8">
-                                <span class="debug-key w-32 text-right inline-block mr-2">{item.name}: </span>
-                                <span class="debug-value inline-block break-all align-top">{item.value}</span>
+                            <div className="debug-item my-3 pl-8">
+                                <span className="debug-key w-32 text-right inline-block mr-2">{item.name}: </span>
+                                <span className="debug-value inline-block break-all align-top">{item.value}</span>
                             </div>
                         ))}
                     </details>
@@ -165,33 +187,39 @@ const Index: FC<{ debugQuery: string | undefined }> = ({ debugQuery }) => {
 
             <div className="text-center pt-4 pb-8 w-full text-sm font-medium space-y-2">
                 <p className="space-x-4">
-                    <a target="_blank" href="https://github.com/DIYgod/RSSHub">
-                        <img className="inline" src="https://icons.ly/github/_/fff" alt="github" width="20" height="20" />
+                    <a target="_blank" rel="noreferrer" href="https://github.com/DIYgod/RSSHub">
+                        <picture>
+                            <source srcset="https://cdn.simpleicons.org/github/_/fff" media="(prefers-color-scheme: dark)" />
+                            <img className="inline" src="https://cdn.simpleicons.org/github" alt="github" width="20" height="20" />
+                        </picture>
                     </a>
-                    <a target="_blank" href="https://t.me/rsshub">
-                        <img className="inline" src="https://icons.ly/telegram" alt="telegram group" width="20" height="20" />
+                    <a target="_blank" rel="noreferrer" href="https://t.me/rsshub">
+                        <img className="inline" src="https://cdn.simpleicons.org/telegram" alt="telegram group" width="20" height="20" />
                     </a>
-                    <a target="_blank" href="https://t.me/awesomeRSSHub">
-                        <img className="inline" src="https://icons.ly/telegram" alt="telegram channel" width="20" height="20" />
+                    <a target="_blank" rel="noreferrer" href="https://t.me/awesomeRSSHub">
+                        <img className="inline" src="https://cdn.simpleicons.org/telegram" alt="telegram channel" width="20" height="20" />
                     </a>
-                    <a target="_blank" href="https://x.com/intent/follow?screen_name=_RSSHub" className="text-[#F5712C]">
-                        <img className="inline" src="https://icons.ly/x" alt="X" width="20" height="20" />
+                    <a target="_blank" rel="noreferrer" href="https://x.com/intent/follow?screen_name=_RSSHub" className="text-[#F5712C]">
+                        <picture>
+                            <source srcset="https://cdn.simpleicons.org/x/_/fff" media="(prefers-color-scheme: dark)" />
+                            <img className="inline" src="https://cdn.simpleicons.org/x" alt="X" width="20" height="20" />
+                        </picture>
                     </a>
                 </p>
                 <p className="!mt-6">
                     Please consider{' '}
-                    <a target="_blank" href="https://docs.rsshub.app/sponsor" className="text-[#F5712C]">
+                    <a target="_blank" rel="noreferrer" href="https://docs.rsshub.app/sponsor" className="text-[#F5712C]">
                         sponsoring
                     </a>{' '}
                     to help keep this open source project alive.
                 </p>
                 <p>
                     Made with ❤️ by{' '}
-                    <a target="_blank" href="https://diygod.cc" className="text-[#F5712C]">
+                    <a target="_blank" rel="noreferrer" href="https://diygod.cc" className="text-[#F5712C]">
                         DIYgod
                     </a>{' '}
                     and{' '}
-                    <a target="_blank" href="https://github.com/DIYgod/RSSHub/graphs/contributors" className="text-[#F5712C]">
+                    <a target="_blank" rel="noreferrer" href="https://github.com/DIYgod/RSSHub/graphs/contributors" className="text-[#F5712C]">
                         Contributors
                     </a>{' '}
                     under AGPL-3.0 License.
